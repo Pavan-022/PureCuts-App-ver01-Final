@@ -1,0 +1,264 @@
+﻿import 'package:flutter/material.dart';
+import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/core/constants/app_constants.dart';
+import 'package:purecuts/core/widgets/product_card.dart';
+import 'package:purecuts/core/widgets/shimmer_widgets.dart';
+import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
+
+class ProductListScreen extends StatefulWidget {
+  final String? initialCategory;
+  const ProductListScreen({super.key, this.initialCategory});
+
+  @override
+  State<ProductListScreen> createState() => _ProductListScreenState();
+}
+
+class _ProductListScreenState extends State<ProductListScreen> {
+  String _selectedCategory = 'All';
+  String _sort = 'popular';
+  bool _loading = true;
+  final _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+
+  final List<String> _categories = [
+    'All',
+    ...AppConstants.categories.map((c) => c['name'] as String),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialCategory != null) {
+      _selectedCategory = widget.initialCategory!;
+    }
+    Future.delayed(const Duration(milliseconds: 600), () {
+      if (mounted) setState(() => _loading = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<Map<String, dynamic>> get _filtered {
+    var list = List<Map<String, dynamic>>.from(AppConstants.products);
+    if (_selectedCategory != 'All') {
+      list = list
+          .where((p) =>
+              (p['category'] as String).toLowerCase() ==
+              _selectedCategory.toLowerCase())
+          .toList();
+    }
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      list = list
+          .where((p) =>
+              (p['name'] as String).toLowerCase().contains(q) ||
+              (p['brand'] as String).toLowerCase().contains(q))
+          .toList();
+    }
+    if (_sort == 'low') {
+      list.sort((a, b) => (a['price'] as num).compareTo(b['price'] as num));
+    } else if (_sort == 'high') {
+      list.sort((a, b) => (b['price'] as num).compareTo(a['price'] as num));
+    } else if (_sort == 'rating') {
+      list.sort(
+          (a, b) => (b['rating'] as num).compareTo(a['rating'] as num));
+    }
+    return list;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final products = _filtered;
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('Products',
+            style: TextStyle(
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w700,
+                fontSize: 17)),
+        centerTitle: true,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: PopupMenuButton<String>(
+              icon: const Icon(Icons.sort, color: AppColors.textPrimary),
+              onSelected: (v) => setState(() => _sort = v),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                    value: 'popular', child: Text('Most Popular')),
+                const PopupMenuItem(
+                    value: 'rating', child: Text('Top Rated')),
+                const PopupMenuItem(
+                    value: 'low', child: Text('Price: Low to High')),
+                const PopupMenuItem(
+                    value: 'high', child: Text('Price: High to Low')),
+              ],
+            ),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Search bar
+          Container(
+            color: Colors.white,
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: TextField(
+              controller: _searchCtrl,
+              onChanged: (v) => setState(() => _searchQuery = v),
+              decoration: InputDecoration(
+                hintText: 'Search products...',
+                hintStyle: const TextStyle(
+                    color: AppColors.textHint, fontSize: 14),
+                prefixIcon: const Icon(Icons.search,
+                    color: AppColors.textHint, size: 20),
+                suffixIcon: _searchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear,
+                            color: AppColors.textHint, size: 18),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          setState(() => _searchQuery = '');
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: AppColors.background,
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(vertical: 12),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none),
+              ),
+            ),
+          ),
+          // Category chips
+          SizedBox(
+            height: 52,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 8),
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemCount: _categories.length,
+              itemBuilder: (_, i) {
+                final cat = _categories[i];
+                final selected = cat == _selectedCategory;
+                return GestureDetector(
+                  onTap: () =>
+                      setState(() => _selectedCategory = cat),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? AppColors.primary
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: selected
+                            ? AppColors.primary
+                            : AppColors.border,
+                      ),
+                    ),
+                    child: Text(
+                      cat,
+                      style: TextStyle(
+                        color: selected
+                            ? Colors.white
+                            : AppColors.textSecondary,
+                        fontSize: 13,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          // Product count
+          Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 6),
+            child: Row(
+              children: [
+                Text(
+                  '${products.length} products',
+                  style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+          ),
+          // Grid
+          Expanded(
+            child: _loading
+                ? GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 0.65,
+                    ),
+                    itemCount: 6,
+                    itemBuilder: (_, __) =>
+                        const ProductCardShimmer(),
+                  )
+                : products.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.search_off,
+                                color: AppColors.textHint, size: 52),
+                            const SizedBox(height: 12),
+                            const Text('No products found',
+                                style: TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      )
+                    : GridView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: 0.65,
+                        ),
+                        itemCount: products.length,
+                        itemBuilder: (_, i) =>
+                            ProductCard(product: products[i]),
+                      ),
+          ),
+          const StickyCartBar(),
+        ],
+      ),
+    );
+  }
+}

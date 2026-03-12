@@ -1,0 +1,106 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+class UserModel {
+  final String uid;
+  final String name;
+  final String email;
+  final String? phone;
+  final String? salonName;
+  final String? ownerName;
+  final String? gst;
+  final String? address;
+  final String? country;
+  final String? state;
+  final String? pincode;
+  final String role;
+  final DateTime? createdAt;
+
+  const UserModel({
+    required this.uid,
+    required this.name,
+    required this.email,
+    this.phone,
+    this.salonName,
+    this.ownerName,
+    this.gst,
+    this.address,
+    this.country,
+    this.state,
+    this.pincode,
+    this.role = 'salon_owner',
+    this.createdAt,
+  });
+
+  factory UserModel.fromMap(Map<String, dynamic> map, String uid) {
+    return UserModel(
+      uid: uid,
+      name: map['name'] ?? '',
+      email: map['email'] ?? '',
+      phone: map['phone'],
+      salonName: map['salonName'],
+      ownerName: map['ownerName'],
+      gst: map['gst'],
+      address: map['address'],
+      country: map['country'],
+      state: map['state'],
+      pincode: map['pincode'],
+      role: map['role'] ?? 'salon_owner',
+      createdAt: map['createdAt'] != null
+          ? (map['createdAt'] as Timestamp).toDate()
+          : null,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'name': name,
+      'email': email,
+      'phone': phone,
+      'salonName': salonName,
+      'ownerName': ownerName,
+      'gst': gst,
+      'address': address,
+      'country': country,
+      'state': state,
+      'pincode': pincode,
+      'role': role,
+      'createdAt': createdAt != null
+          ? Timestamp.fromDate(createdAt!)
+          : FieldValue.serverTimestamp(),
+    };
+  }
+
+  UserModel copyWith({
+    String? uid,
+    String? name,
+    String? email,
+    String? phone,
+    String? salonName,
+    String? ownerName,
+    String? gst,
+    Object? address = _sentinel,
+    String? country,
+    String? state,
+    String? pincode,
+    String? role,
+    DateTime? createdAt,
+  }) {
+    return UserModel(
+      uid: uid ?? this.uid,
+      name: name ?? this.name,
+      email: email ?? this.email,
+      phone: phone ?? this.phone,
+      salonName: salonName ?? this.salonName,
+      ownerName: ownerName ?? this.ownerName,
+      gst: gst ?? this.gst,
+      address: address == _sentinel ? this.address : address as String?,
+      country: country ?? this.country,
+      state: state ?? this.state,
+      pincode: pincode ?? this.pincode,
+      role: role ?? this.role,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+}
+
+const Object _sentinel = Object();
