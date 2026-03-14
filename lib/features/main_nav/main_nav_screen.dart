@@ -1,9 +1,9 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/features/home/home_screen.dart';
-import 'package:purecuts/features/products/product_list_screen.dart';
-import 'package:purecuts/features/orders/order_history_screen.dart';
-import 'package:purecuts/features/profile/profile_screen.dart';
+import 'package:purecuts/features/previously_bought/previously_bought_screen.dart';
+import 'package:purecuts/features/categories/categories_screen.dart';
+import 'package:purecuts/features/brands/brands_screen.dart';
 
 class MainNavScreen extends StatefulWidget {
   const MainNavScreen({super.key});
@@ -16,9 +16,9 @@ class _MainNavScreenState extends State<MainNavScreen> {
 
   final List<Widget> _screens = const [
     HomeScreen(),
-    ProductListScreen(),
-    OrderHistoryScreen(),
-    ProfileScreen(),
+    PreviouslyBoughtScreen(),
+    CategoriesScreen(),
+    BrandsScreen(),
   ];
 
   @override
@@ -67,19 +67,19 @@ class _MainNavScreenState extends State<MainNavScreen> {
               label: 'Home',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.shopping_bag_outlined),
-              activeIcon: Icon(Icons.shopping_bag_rounded),
-              label: 'Shop',
+              icon: Icon(Icons.history_rounded),
+              activeIcon: Icon(Icons.history_rounded),
+              label: 'Order Again',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.receipt_long_outlined),
-              activeIcon: Icon(Icons.receipt_long_rounded),
-              label: 'Orders',
+              icon: Icon(Icons.grid_view_rounded),
+              activeIcon: Icon(Icons.grid_view_rounded),
+              label: 'Categories',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.person_outline_rounded),
-              activeIcon: Icon(Icons.person_rounded),
-              label: 'Profile',
+              icon: Icon(Icons.storefront_outlined),
+              activeIcon: Icon(Icons.storefront_rounded),
+              label: 'Brands',
             ),
           ],
         ),

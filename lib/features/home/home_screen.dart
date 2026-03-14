@@ -3,12 +3,16 @@ import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
 import 'package:purecuts/core/widgets/shimmer_widgets.dart';
+import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
+import 'package:purecuts/features/categories/categories_screen.dart';
 import 'package:purecuts/features/cart/cart_screen.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/location/location_picker_sheet.dart';
+import 'package:purecuts/features/previously_bought/previously_bought_screen.dart';
 import 'package:purecuts/features/products/product_list_screen.dart';
+import 'package:purecuts/features/profile/profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -18,6 +22,80 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final ScrollController _recommendedScrollController = ScrollController();
+
+  void _addToCart(Map<String, dynamic> product) {
+    context.read<CartModel>().add(product);
+  }
+
+  Future<void> _refreshHomeData() async {
+    await context.read<HomeProvider>().loadData();
+  }
+
+  String _normalizeImagePath(String raw) {
+    final path = raw.trim();
+    if (path.isEmpty) return '';
+
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+
+    if (path.startsWith('gs://')) {
+      final withoutScheme = path.substring(5);
+      final slash = withoutScheme.indexOf('/');
+      if (slash <= 0 || slash == withoutScheme.length - 1) return path;
+      final bucket = withoutScheme.substring(0, slash);
+      final objectPath = withoutScheme.substring(slash + 1);
+      return 'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(objectPath)}?alt=media';
+    }
+
+    if (path.startsWith('assets/')) return path;
+
+    return 'https://firebasestorage.googleapis.com/v0/b/purecuts-11a7c.firebasestorage.app/o/${Uri.encodeComponent(path)}?alt=media';
+  }
+
+  Widget _buildProductImage(
+    String imagePath, {
+    double? width,
+    double? height,
+    BoxFit fit = BoxFit.contain,
+  }) {
+    final resolved = _normalizeImagePath(imagePath);
+
+    if (resolved.isEmpty) {
+      return Container(
+        width: width,
+        height: height,
+        color: AppColors.surface,
+        child: const Icon(Icons.image, color: AppColors.textHint, size: 32),
+      );
+    }
+
+    if (!resolved.startsWith('assets/')) {
+      return Image.network(
+        resolved,
+        width: width,
+        height: height,
+        fit: fit,
+        errorBuilder: (_, __, ___) => Container(
+          width: width,
+          height: height,
+          color: AppColors.surface,
+          child: const Icon(Icons.image, color: AppColors.textHint, size: 32),
+        ),
+      );
+    }
+
+    return Image.asset(
+      resolved,
+      width: width,
+      height: height,
+      fit: fit,
+      errorBuilder: (_, __, ___) => Container(
+        width: width,
+        height: height,
+        color: AppColors.surface,
+        child: const Icon(Icons.image, color: AppColors.textHint, size: 32),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -33,27 +111,31 @@ class _HomeScreenState extends State<HomeScreen> {
     Future.delayed(const Duration(milliseconds: 500), () {
       if (_recommendedScrollController.hasClients) {
         final maxScroll = _recommendedScrollController.position.maxScrollExtent;
-        
+
         // Scroll to end slowly
-        _recommendedScrollController.animateTo(
-          maxScroll,
-          duration: const Duration(seconds: 15),
-          curve: Curves.linear,
-        ).then((_) {
-          // Wait briefly, then scroll back
-          Future.delayed(const Duration(milliseconds: 500), () {
-            if (_recommendedScrollController.hasClients) {
-              _recommendedScrollController.animateTo(
-                0,
-                duration: const Duration(seconds: 15),
-                curve: Curves.linear,
-              ).then((_) {
-                // Repeat
-                _startAutoScroll();
+        _recommendedScrollController
+            .animateTo(
+              maxScroll,
+              duration: const Duration(seconds: 15),
+              curve: Curves.linear,
+            )
+            .then((_) {
+              // Wait briefly, then scroll back
+              Future.delayed(const Duration(milliseconds: 500), () {
+                if (_recommendedScrollController.hasClients) {
+                  _recommendedScrollController
+                      .animateTo(
+                        0,
+                        duration: const Duration(seconds: 15),
+                        curve: Curves.linear,
+                      )
+                      .then((_) {
+                        // Repeat
+                        _startAutoScroll();
+                      });
+                }
               });
-            }
-          });
-        });
+            });
       }
     });
   }
@@ -108,16 +190,27 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           SafeArea(
-            child: Column(
-              children: [
-                _buildHeader(),
-                Expanded(
-                  child: home.loading ? _buildShimmer() : _buildContent(home),
+            child: RefreshIndicator(
+              onRefresh: _refreshHomeData,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildHeader(),
+                    home.loading ? _buildShimmer() : _buildContent(home),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ],
+      ),
+      bottomNavigationBar: Consumer<CartModel>(
+        builder: (context, cart, _) {
+          if (cart.itemCount == 0) return const SizedBox.shrink();
+          return const StickyCartBar();
+        },
       ),
     );
   }
@@ -149,8 +242,7 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           // Location + Cart + Avatar row
           Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
               children: [
                 GestureDetector(
@@ -162,8 +254,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: AppColors.primary.withOpacity(0.10),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.location_on,
-                        color: AppColors.primary, size: 20),
+                    child: const Icon(
+                      Icons.location_on,
+                      color: AppColors.primary,
+                      size: 20,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -184,8 +279,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                 letterSpacing: 0.8,
                               ),
                             ),
-                            Icon(Icons.expand_more,
-                                color: AppColors.primary, size: 14),
+                            Icon(
+                              Icons.expand_more,
+                              color: AppColors.primary,
+                              size: 14,
+                            ),
                           ],
                         ),
                         Text(
@@ -213,8 +311,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 // Cart icon
                 Consumer<CartModel>(
                   builder: (_, cart, __) => GestureDetector(
-                    onTap: () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) => const CartScreen())),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const CartScreen()),
+                    ),
                     child: Stack(
                       clipBehavior: Clip.none,
                       children: [
@@ -222,8 +322,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           width: 40,
                           height: 40,
                           alignment: Alignment.center,
-                          child: const Icon(Icons.shopping_cart_outlined,
-                              color: AppColors.textPrimary, size: 22),
+                          child: const Icon(
+                            Icons.shopping_cart_outlined,
+                            color: AppColors.textPrimary,
+                            size: 22,
+                          ),
                         ),
                         if (cart.itemCount > 0)
                           Positioned(
@@ -240,9 +343,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                 child: Text(
                                   '${cart.itemCount}',
                                   style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w700),
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
                               ),
                             ),
@@ -251,35 +355,44 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ),
+
                 const SizedBox(width: 8),
-                // Avatar with initials
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.20),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                        color: AppColors.primary.withOpacity(0.20)),
+                // Avatar with initials — taps to Profile
+                GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ProfileScreen()),
                   ),
-                  child: Center(
-                    child: user != null
-                        ? Text(
-                            (user.ownerName ?? user.name)
-                                .trim()
-                                .isNotEmpty
-                                ? (user.ownerName ?? user.name)
-                                    .trim()[0]
-                                    .toUpperCase()
-                                : '?',
-                            style: const TextStyle(
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withOpacity(0.20),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: AppColors.primary.withOpacity(0.20),
+                      ),
+                    ),
+                    child: Center(
+                      child: user != null
+                          ? Text(
+                              (user.ownerName ?? user.name).trim().isNotEmpty
+                                  ? (user.ownerName ?? user.name)
+                                        .trim()[0]
+                                        .toUpperCase()
+                                  : '?',
+                              style: const TextStyle(
+                                color: AppColors.primary,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.person,
                               color: AppColors.primary,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
+                              size: 20,
                             ),
-                          )
-                        : const Icon(Icons.person,
-                            color: AppColors.primary, size: 20),
+                    ),
                   ),
                 ),
               ],
@@ -289,8 +402,10 @@ class _HomeScreenState extends State<HomeScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             child: GestureDetector(
-              onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const ProductListScreen())),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProductListScreen()),
+              ),
               child: Container(
                 height: 48,
                 decoration: BoxDecoration(
@@ -308,14 +423,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 12),
-                      child: Icon(Icons.search,
-                          color: AppColors.textHint, size: 20),
+                      child: Icon(
+                        Icons.search,
+                        color: AppColors.textHint,
+                        size: 20,
+                      ),
                     ),
                     const Expanded(
                       child: Text(
                         'Search hair color, scissors, shampoos...',
                         style: TextStyle(
-                            color: AppColors.textHint, fontSize: 13),
+                          color: AppColors.textHint,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                   ],
@@ -330,7 +450,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildShimmer() {
-    return SingleChildScrollView(
+    return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
@@ -355,80 +475,169 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildContent(HomeProvider home) {
     final products = home.productMaps;
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Categories section
-          _buildSectionHeader('Categories', 'View All'),
-          const SizedBox(height: 12),
-          _buildCategoriesGrid(home),
-          const SizedBox(height: 20),
-          // Recently Ordered horizontal scroll
-          _buildSectionHeader('Recently Ordered', null),
-          const SizedBox(height: 12),
-          _buildRecentlyOrdered(products),
-          const SizedBox(height: 20),
-          // Recommended section
-          Container(
-            color: const Color(0xFFFAF8FF),
-            child: Column(
-              children: [
-                Padding(
-                  padding:
-                      const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Recommended for Your Salon',
-                        style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
+    final user = context.watch<AuthProvider>().user;
+    final createdAt = user?.createdAt;
+    final isNewUser =
+        createdAt == null || DateTime.now().difference(createdAt).inDays <= 14;
+    final browseItems = isNewUser ? _recommendedForNewUser(products) : products;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Categories section
+        _buildSectionHeader('Categories', 'View All'),
+        const SizedBox(height: 12),
+        _buildCategoriesGrid(home),
+        const SizedBox(height: 20),
+        // Previously Bought section
+        _buildPreviouslyBoughtHeader(context, isNewUser),
+        const SizedBox(height: 12),
+        _buildRecentlyOrdered(browseItems),
+        const SizedBox(height: 20),
+        // Recommended section
+        Container(
+          color: const Color(0xFFFAF8FF),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Recommended for Your Salon',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
                       ),
-                    ],
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(
+                height: 200,
+                child: ListView.separated(
+                  controller: _recommendedScrollController,
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  scrollDirection: Axis.horizontal,
+                  itemCount: products.length > 4 ? 4 : products.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  itemBuilder: (_, i) {
+                    final p = products[i];
+                    return _buildRecommendedCard(p);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        // Most Bought Products section
+        _buildSectionHeader('Most Bought Products', 'See all'),
+        const SizedBox(height: 12),
+        _buildMostBought(products),
+        const SizedBox(height: 20),
+        // Popular Products grid
+        _buildSectionHeader('Popular Products', 'See all'),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 0.63,
+            ),
+            itemCount: products.length,
+            itemBuilder: (_, i) =>
+                ProductCard(product: products[i], onAddToCart: _addToCart),
+          ),
+        ),
+        const SizedBox(height: 100),
+      ],
+    );
+  }
+
+  List<Map<String, dynamic>> _recommendedForNewUser(
+    List<Map<String, dynamic>> products,
+  ) {
+    final sorted = List<Map<String, dynamic>>.from(products)
+      ..sort((a, b) {
+        final aScore =
+            ((a['rating'] as num?) ?? 0) * 100 + ((a['reviews'] as num?) ?? 0);
+        final bScore =
+            ((b['rating'] as num?) ?? 0) * 100 + ((b['reviews'] as num?) ?? 0);
+        return bScore.compareTo(aScore);
+      });
+    return sorted.take(8).toList();
+  }
+
+  Widget _buildPreviouslyBoughtHeader(BuildContext context, bool isNewUser) {
+    final title = isNewUser ? 'Start your first order' : 'Previously Bought';
+    final subtitle = isNewUser
+        ? 'Recommended for you'
+        : 'Order again with one tap';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  color: AppColors.textHint,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => isNewUser
+                    ? const ProductListScreen()
+                    : const PreviouslyBoughtScreen(),
+              ),
+            ),
+            child: Row(
+              children: [
+                Text(
+                  isNewUser ? 'Shop now' : 'See all',
+                  style: TextStyle(
+                    color: AppColors.primary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
                   ),
                 ),
-                SizedBox(
-                  height: 200,
-                  child: ListView.separated(
-                    controller: _recommendedScrollController,
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    scrollDirection: Axis.horizontal,
-                    itemCount: products.length > 4 ? 4 : products.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
-                    itemBuilder: (_, i) {
-                      final p = products[i];
-                      return _buildRecommendedCard(p);
-                    },
-                  ),
+                const SizedBox(width: 2),
+                const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  color: AppColors.primary,
+                  size: 10,
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 20),
-          // Popular Products grid
-          _buildSectionHeader('Popular Products', 'See all'),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate:
-                  const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: 0.63,
-              ),
-              itemCount: products.length,
-              itemBuilder: (_, i) => ProductCard(product: products[i]),
-            ),
-          ),
-          const SizedBox(height: 100),
         ],
       ),
     );
@@ -450,8 +659,10 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           if (action != null)
             GestureDetector(
-              onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const ProductListScreen())),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CategoriesScreen()),
+              ),
               child: Text(
                 action,
                 style: const TextStyle(
@@ -468,20 +679,33 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCategoriesGrid(HomeProvider home) {
-    final cats = home.categories.take(4).toList();
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        children: cats.map((cat) {
-          return Expanded(
+    final cats = home.categories;
+    return SizedBox(
+      height: 108,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        scrollDirection: Axis.horizontal,
+        itemCount: cats.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (_, i) {
+          final cat = cats[i];
+          final iconPath = (cat['icon'] ?? cat['image']) as String?;
+          final categoryName = cat['name'] as String? ?? 'Category';
+
+          return SizedBox(
+            width: 82,
             child: GestureDetector(
-              onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const ProductListScreen())),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      CategoriesScreen(initialCategory: categoryName),
+                ),
+              ),
               child: Column(
                 children: [
                   Container(
                     height: 70,
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(16),
@@ -494,18 +718,43 @@ class _HomeScreenState extends State<HomeScreen> {
                       ],
                     ),
                     child: Center(
-                      child: Image.asset(
-                        cat['icon'] as String,
-                        width: 36,
-                        height: 36,
-                        fit: BoxFit.contain,
-                      ),
+                      child: iconPath == null || iconPath.isEmpty
+                          ? const Icon(
+                              Icons.category_outlined,
+                              color: AppColors.textHint,
+                              size: 32,
+                            )
+                          : iconPath.startsWith('assets/')
+                          ? Image.asset(
+                              iconPath,
+                              width: 36,
+                              height: 36,
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) => const Icon(
+                                Icons.category_outlined,
+                                color: AppColors.textHint,
+                                size: 32,
+                              ),
+                            )
+                          : Image.network(
+                              iconPath,
+                              width: 36,
+                              height: 36,
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) => const Icon(
+                                Icons.category_outlined,
+                                color: AppColors.textHint,
+                                size: 32,
+                              ),
+                            ),
                     ),
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    cat['name'] as String,
+                    categoryName,
                     textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: AppColors.textSecondary,
                       fontSize: 11,
@@ -516,7 +765,147 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           );
-        }).toList(),
+        },
+      ),
+    );
+  }
+
+  Widget _buildMostBought(List<Map<String, dynamic>> products) {
+    // Sort by reviews count as a proxy for most bought
+    final sorted = List<Map<String, dynamic>>.from(products)
+      ..sort(
+        (a, b) => ((b['reviews'] as num?) ?? 0).compareTo(
+          (a['reviews'] as num?) ?? 0,
+        ),
+      );
+    final top = sorted.take(6).toList();
+    return SizedBox(
+      height: 175,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        scrollDirection: Axis.horizontal,
+        itemCount: top.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (_, i) {
+          final p = top[i];
+          return Container(
+            width: 130,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x0A000000),
+                  blurRadius: 10,
+                  offset: Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(14),
+                      ),
+                      child: _buildProductImage(
+                        (p['image'] ?? '').toString(),
+                        height: 100,
+                        width: 130,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFF6B35),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.local_fire_department,
+                              color: Colors.white,
+                              size: 9,
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              '${p['reviews']}+ sold',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 8,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        p['name'] as String,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            '\u20B9${p['price']}',
+                            style: const TextStyle(
+                              color: AppColors.primary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          Consumer<CartModel>(
+                            builder: (_, cart, __) => GestureDetector(
+                              onTap: () => _addToCart(p),
+                              child: Container(
+                                width: 24,
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Icon(
+                                  Icons.add,
+                                  color: Colors.white,
+                                  size: 14,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -554,18 +943,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child: Image.asset(
-                          p['image'] as String,
+                        child: _buildProductImage(
+                          (p['image'] ?? '').toString(),
                           height: 110,
                           width: 120,
                           fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => Container(
-                            height: 110,
-                            width: 120,
-                            color: AppColors.surface,
-                            child: const Icon(Icons.image,
-                                color: AppColors.textHint, size: 32),
-                          ),
                         ),
                       ),
                     ),
@@ -574,7 +956,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       right: 6,
                       child: Consumer<CartModel>(
                         builder: (_, cart, __) => GestureDetector(
-                          onTap: () => cart.add(p),
+                          onTap: () => _addToCart(p),
                           child: Container(
                             width: 28,
                             height: 28,
@@ -583,12 +965,16 @@ class _HomeScreenState extends State<HomeScreen> {
                               borderRadius: BorderRadius.circular(8),
                               boxShadow: [
                                 BoxShadow(
-                                    color: Colors.black.withOpacity(0.10),
-                                    blurRadius: 6)
+                                  color: Colors.black.withOpacity(0.10),
+                                  blurRadius: 6,
+                                ),
                               ],
                             ),
-                            child: const Icon(Icons.add,
-                                color: AppColors.primary, size: 16),
+                            child: const Icon(
+                              Icons.add,
+                              color: AppColors.primary,
+                              size: 16,
+                            ),
                           ),
                         ),
                       ),
@@ -599,7 +985,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 Text(
                   p['brand'] as String,
                   style: const TextStyle(
-                      color: AppColors.textHint, fontSize: 10),
+                    color: AppColors.textHint,
+                    fontSize: 10,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
@@ -644,27 +1032,18 @@ class _HomeScreenState extends State<HomeScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           ClipRRect(
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(16)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
             child: Stack(
               children: [
                 Container(
                   height: 95,
                   width: double.infinity,
                   color: Colors.white,
-                  child: Image.asset(
-                    p['image'] as String,
+                  child: _buildProductImage(
+                    (p['image'] ?? '').toString(),
                     height: 95,
                     width: double.infinity,
                     fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => Container(
-                      height: 95,
-                      color: AppColors.surface,
-                      child: const Center(
-                        child: Icon(Icons.image,
-                            color: AppColors.textHint, size: 32),
-                      ),
-                    ),
                   ),
                 ),
                 if ((p['tag'] as String).isNotEmpty)
@@ -673,7 +1052,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     left: 8,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: AppColors.primary,
                         borderRadius: BorderRadius.circular(6),
@@ -716,7 +1097,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           Text(
                             p['brand'] as String,
                             style: const TextStyle(
-                                color: AppColors.textHint, fontSize: 11),
+                              color: AppColors.textHint,
+                              fontSize: 11,
+                            ),
                           ),
                         ],
                       ),
@@ -759,10 +1142,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         textStyle: const TextStyle(
-                            fontSize: 11, fontWeight: FontWeight.w700),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
                         elevation: 0,
                       ),
-                      onPressed: () => cart.add(p),
+                      onPressed: () => _addToCart(p),
                       child: const Text('Add to Cart'),
                     ),
                   ),

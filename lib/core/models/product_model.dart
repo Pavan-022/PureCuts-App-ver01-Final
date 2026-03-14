@@ -3,6 +3,7 @@ class ProductModel {
   final String name;
   final String brand;
   final String category;
+  final String subCategory;
   final int price;
   final int originalPrice;
   final double rating;
@@ -19,6 +20,7 @@ class ProductModel {
     required this.name,
     required this.brand,
     required this.category,
+    this.subCategory = '',
     required this.price,
     required this.originalPrice,
     required this.rating,
@@ -37,11 +39,13 @@ class ProductModel {
       name: map['name'] ?? '',
       brand: map['brand'] ?? '',
       category: map['category'] ?? '',
+      subCategory:
+          map['subCategory'] ?? map['subcategory'] ?? map['sub_category'] ?? '',
       price: (map['price'] as num?)?.toInt() ?? 0,
       originalPrice: (map['originalPrice'] as num?)?.toInt() ?? 0,
       rating: (map['rating'] as num?)?.toDouble() ?? 0.0,
       reviews: (map['reviews'] as num?)?.toInt() ?? 0,
-      image: map['image'] ?? '',
+      image: map['image'] ?? map['imageUrl'] ?? '',
       tag: map['tag'] ?? '',
       size: map['size'] ?? '',
       deliveryTime: map['deliveryTime'] ?? '',
@@ -55,6 +59,7 @@ class ProductModel {
       'name': name,
       'brand': brand,
       'category': category,
+      'subCategory': subCategory,
       'price': price,
       'originalPrice': originalPrice,
       'rating': rating,
@@ -75,11 +80,13 @@ class ProductModel {
       'name': name,
       'brand': brand,
       'category': category,
+      'subCategory': subCategory,
       'price': price,
       'originalPrice': originalPrice,
       'rating': rating,
       'reviews': reviews,
       'image': image,
+      'imageUrl': image,
       'tag': tag,
       'size': size,
       'deliveryTime': deliveryTime,

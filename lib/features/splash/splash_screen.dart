@@ -73,8 +73,9 @@ class _SplashScreenState extends State<SplashScreen>
         }
       }
       if (!mounted) return;
-      final Widget destination =
-          isLoggedIn ? const MainNavScreen() : const LoginScreen();
+      final Widget destination = isLoggedIn
+          ? const MainNavScreen()
+          : const LoginScreen();
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(
@@ -147,46 +148,14 @@ class _SplashScreenState extends State<SplashScreen>
                         // Logo box
                         ScaleTransition(
                           scale: _scaleAnim,
-                          child: Container(
-                            width: 96,
-                            height: 96,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(24),
-                              border: Border.all(
-                                color: Colors.white.withOpacity(0.30),
-                                width: 1.5,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.1),
-                                  blurRadius: 20,
-                                  offset: const Offset(0, 10),
-                                ),
-                              ],
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(22),
-                              child: Padding(
-                                padding: const EdgeInsets.all(12),
-                                child: Image.asset(
-                                  AppConstants.logoPath,
-                                  fit: BoxFit.contain,
-                                ),
-                              ),
-                            ),
+                          child: Image.asset(
+                            AppConstants.logoPath,
+                            width: 200,
+                            height: 200,
+                            fit: BoxFit.contain,
                           ),
                         ),
-                        const SizedBox(height: 28),
-                        const Text(
-                          'PureCuts',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 44,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -1,
-                          ),
-                        ),
+
                         const SizedBox(height: 8),
                         Text(
                           'PREMIUM PROFESSIONAL GROOMING',

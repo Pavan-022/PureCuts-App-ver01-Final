@@ -5,6 +5,8 @@ import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/home/home_provider.dart';
+import 'package:purecuts/features/orders/order_provider.dart';
+
 import 'package:purecuts/features/splash/splash_screen.dart';
 import 'firebase_options.dart';
 
@@ -24,6 +26,7 @@ class PureCutsApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => CartModel()),
         ChangeNotifierProvider(create: (_) => HomeProvider()),
+        ChangeNotifierProvider(create: (_) => OrderProvider()),
       ],
       child: MaterialApp(
         title: 'PureCuts',

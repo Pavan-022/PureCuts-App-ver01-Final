@@ -1,8 +1,11 @@
+// lib/features/orders/order_confirm_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/features/main_nav/main_nav_screen.dart';
+import 'package:purecuts/features/orders/order_provider.dart';
 
 class OrderConfirmScreen extends StatefulWidget {
   final int total;
@@ -17,15 +20,49 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
   late AnimationController _controller;
   late Animation<double> _scaleAnim;
   String _status = 'Placed';
-  final List<String> _steps = ['Placed', 'Confirmed', 'Processing', 'Delivered'];
+  final List<String> _steps = [
+    'Placed',
+    'Confirmed',
+    'Processing',
+    'Delivered',
+  ];
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
     _scaleAnim = CurvedAnimation(parent: _controller, curve: Curves.elasticOut);
     _controller.forward();
-    context.read<CartModel>().clear();
+
+    // ✅ Save cart items to OrderProvider BEFORE clearing the cart
+    final cart = context.read<CartModel>();
+    final orders = context.read<OrderProvider>();
+
+    orders.addOrderedItems(
+      cart.items
+          .map(
+            (item) => {
+              'id': item.id,
+              'name': item.name,
+              'brand': item.brand,
+              'image': item.image,
+              'price': item.price,
+              'originalPrice': item.price,
+              'size': '',
+              'tag': '',
+              'quantity': item.quantity,
+            },
+          )
+          .toList(),
+    );
+
+    // ✅ Clear cart AFTER saving
+    cart.clear();
+
     _simulateProgress();
   }
 
@@ -69,7 +106,11 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
                       ),
                     ],
                   ),
-                  child: const Icon(Icons.check_rounded, color: Colors.white, size: 52),
+                  child: const Icon(
+                    Icons.check_rounded,
+                    color: Colors.white,
+                    size: 52,
+                  ),
                 ),
               ),
               const SizedBox(height: 28),
@@ -84,7 +125,10 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
               const SizedBox(height: 8),
               Text(
                 '₹${widget.total} • ORD-${DateTime.now().millisecondsSinceEpoch % 10000}',
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 14,
+                ),
               ),
               const SizedBox(height: 40),
               // Status stepper
@@ -120,15 +164,23 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
                               width: 28,
                               height: 28,
                               decoration: BoxDecoration(
-                                color: isDone ? AppColors.primary : AppColors.surface,
+                                color: isDone
+                                    ? AppColors.primary
+                                    : AppColors.surface,
                                 shape: BoxShape.circle,
                                 border: Border.all(
-                                  color: isDone ? AppColors.primary : AppColors.divider,
+                                  color: isDone
+                                      ? AppColors.primary
+                                      : AppColors.divider,
                                   width: 2,
                                 ),
                               ),
                               child: isDone
-                                  ? const Icon(Icons.check, color: Colors.white, size: 14)
+                                  ? const Icon(
+                                      Icons.check,
+                                      color: Colors.white,
+                                      size: 14,
+                                    )
                                   : null,
                             ),
                             const SizedBox(width: 12),
@@ -138,9 +190,11 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
                                 color: isActive
                                     ? AppColors.accent
                                     : isDone
-                                        ? AppColors.textPrimary
-                                        : AppColors.textHint,
-                                fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                                    ? AppColors.textPrimary
+                                    : AppColors.textHint,
+                                fontWeight: isActive
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
                                 fontSize: 14,
                               ),
                             ),
@@ -154,7 +208,7 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
                                   strokeWidth: 2,
                                 ),
                               ),
-                            ]
+                            ],
                           ],
                         ),
                       );

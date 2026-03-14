@@ -1,9 +1,10 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
-import 'package:purecuts/core/constants/app_constants.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
 import 'package:purecuts/core/widgets/shimmer_widgets.dart';
 import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
+import 'package:purecuts/features/home/home_provider.dart';
 
 class ProductListScreen extends StatefulWidget {
   final String? initialCategory;
@@ -16,14 +17,12 @@ class ProductListScreen extends StatefulWidget {
 class _ProductListScreenState extends State<ProductListScreen> {
   String _selectedCategory = 'All';
   String _sort = 'popular';
-  bool _loading = true;
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
 
-  final List<String> _categories = [
-    'All',
-    ...AppConstants.categories.map((c) => c['name'] as String),
-  ];
+  Future<void> _refreshProducts() async {
+    await context.read<HomeProvider>().loadData();
+  }
 
   @override
   void initState() {
@@ -31,8 +30,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
     if (widget.initialCategory != null) {
       _selectedCategory = widget.initialCategory!;
     }
-    Future.delayed(const Duration(milliseconds: 600), () {
-      if (mounted) setState(() => _loading = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<HomeProvider>().loadData();
     });
   }
 
@@ -42,37 +41,24 @@ class _ProductListScreenState extends State<ProductListScreen> {
     super.dispose();
   }
 
-  List<Map<String, dynamic>> get _filtered {
-    var list = List<Map<String, dynamic>>.from(AppConstants.products);
-    if (_selectedCategory != 'All') {
-      list = list
-          .where((p) =>
-              (p['category'] as String).toLowerCase() ==
-              _selectedCategory.toLowerCase())
-          .toList();
-    }
-    if (_searchQuery.isNotEmpty) {
-      final q = _searchQuery.toLowerCase();
-      list = list
-          .where((p) =>
-              (p['name'] as String).toLowerCase().contains(q) ||
-              (p['brand'] as String).toLowerCase().contains(q))
-          .toList();
-    }
-    if (_sort == 'low') {
-      list.sort((a, b) => (a['price'] as num).compareTo(b['price'] as num));
-    } else if (_sort == 'high') {
-      list.sort((a, b) => (b['price'] as num).compareTo(a['price'] as num));
-    } else if (_sort == 'rating') {
-      list.sort(
-          (a, b) => (b['rating'] as num).compareTo(a['rating'] as num));
-    }
-    return list;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final products = _filtered;
+    final home = context.watch<HomeProvider>();
+    final categories = [
+      'All',
+      ...home.categories.map((c) => (c['name'] ?? '').toString()),
+    ].where((c) => c.trim().isNotEmpty).toSet().toList();
+
+    if (_selectedCategory != 'All' && !categories.contains(_selectedCategory)) {
+      _selectedCategory = 'All';
+    }
+
+    final products = home.filteredProducts(
+      category: _selectedCategory,
+      query: _searchQuery,
+      sort: _sort,
+    );
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -89,6 +75,11 @@ class _ProductListScreenState extends State<ProductListScreen> {
                 fontSize: 17)),
         centerTitle: true,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: AppColors.textPrimary),
+            onPressed: _refreshProducts,
+            tooltip: 'Refresh products',
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: PopupMenuButton<String>(
@@ -155,9 +146,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
               padding: const EdgeInsets.symmetric(
                   horizontal: 16, vertical: 8),
               separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemCount: _categories.length,
+              itemCount: categories.length,
               itemBuilder: (_, i) {
-                final cat = _categories[i];
+                final cat = categories[i];
                 final selected = cat == _selectedCategory;
                 return GestureDetector(
                   onTap: () =>
@@ -212,49 +203,67 @@ class _ProductListScreenState extends State<ProductListScreen> {
           ),
           // Grid
           Expanded(
-            child: _loading
-                ? GridView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: 0.65,
-                    ),
-                    itemCount: 6,
-                    itemBuilder: (_, __) =>
-                        const ProductCardShimmer(),
-                  )
-                : products.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.search_off,
-                                color: AppColors.textHint, size: 52),
-                            const SizedBox(height: 12),
-                            const Text('No products found',
-                                style: TextStyle(
-                                    color: AppColors.textSecondary,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600)),
-                          ],
-                        ),
-                      )
-                    : GridView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          mainAxisSpacing: 12,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: 0.65,
-                        ),
-                        itemCount: products.length,
-                        itemBuilder: (_, i) =>
-                            ProductCard(product: products[i]),
+            child: RefreshIndicator(
+              onRefresh: _refreshProducts,
+              child: home.loading
+                  ? GridView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        mainAxisSpacing: 12,
+                        crossAxisSpacing: 12,
+                        childAspectRatio: 0.65,
                       ),
+                      itemCount: 6,
+                      itemBuilder: (_, __) => const ProductCardShimmer(),
+                    )
+                  : products.isEmpty
+                      ? ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: [
+                            SizedBox(
+                              height: 280,
+                              child: Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.search_off,
+                                      color: AppColors.textHint,
+                                      size: 52,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    const Text(
+                                      'No products found',
+                                      style: TextStyle(
+                                        color: AppColors.textSecondary,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      : GridView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            mainAxisSpacing: 12,
+                            crossAxisSpacing: 12,
+                            childAspectRatio: 0.65,
+                          ),
+                          itemCount: products.length,
+                          itemBuilder: (_, i) =>
+                              ProductCard(product: products[i]),
+                        ),
+            ),
           ),
           const StickyCartBar(),
         ],

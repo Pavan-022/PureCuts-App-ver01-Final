@@ -5,12 +5,88 @@ import '../../core/models/cart_model.dart';
 
 class ProductCard extends StatelessWidget {
   final Map<String, dynamic> product;
-  const ProductCard({super.key, required this.product});
+  final ValueChanged<Map<String, dynamic>>? onAddToCart;
+
+  const ProductCard({
+    super.key,
+    required this.product,
+    this.onAddToCart,
+  });
+
+  void _handleAddToCart(BuildContext context) {
+    if (onAddToCart != null) {
+      onAddToCart!(product);
+      return;
+    }
+    context.read<CartModel>().add(product);
+  }
+
+  String _normalizeImagePath(String raw) {
+    final path = raw.trim();
+    if (path.isEmpty) return '';
+
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+
+    if (path.startsWith('gs://')) {
+      final withoutScheme = path.substring(5);
+      final slash = withoutScheme.indexOf('/');
+      if (slash <= 0 || slash == withoutScheme.length - 1) return path;
+      final bucket = withoutScheme.substring(0, slash);
+      final objectPath = withoutScheme.substring(slash + 1);
+      return 'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(objectPath)}?alt=media';
+    }
+
+    if (path.startsWith('assets/')) return path;
+
+    // Raw storage object path, e.g. "products/image.png"
+    return 'https://firebasestorage.googleapis.com/v0/b/purecuts-11a7c.firebasestorage.app/o/${Uri.encodeComponent(path)}?alt=media';
+  }
+
+  Widget _buildProductImage(String imagePath) {
+    final resolved = _normalizeImagePath(imagePath);
+    if (resolved.isEmpty) {
+      return Container(
+        height: 110,
+        color: AppColors.surface,
+        child: const Icon(Icons.image, color: AppColors.textHint, size: 40),
+      );
+    }
+
+    if (!resolved.startsWith('assets/')) {
+      return Image.network(
+        resolved,
+        height: 110,
+        width: double.infinity,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => Container(
+          height: 110,
+          color: AppColors.surface,
+          child: const Icon(Icons.image, color: AppColors.textHint, size: 40),
+        ),
+      );
+    }
+
+    return Image.asset(
+      resolved,
+      height: 110,
+      width: double.infinity,
+      fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => Container(
+        height: 110,
+        color: AppColors.surface,
+        child: const Icon(Icons.image, color: AppColors.textHint, size: 40),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final cart = context.watch<CartModel>();
     final qty = cart.quantityOf(product['id']);
+
+    final hasDiscount =
+        (product['originalPrice'] as num? ?? 0) >
+        (product['price'] as num? ?? 0);
 
     return Container(
       decoration: BoxDecoration(
@@ -20,33 +96,19 @@ class ProductCard extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min, // ← key fix: don't expand unbounded
         children: [
-          // Image with heart icon, size badge, and ADD button
+          // ── Image area ───────────────────────────────────────────
           Stack(
             children: [
-              Container(
-                height: 110,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(12),
                 ),
-                child: ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                  child: Image.asset(
-                    product['image'],
-                    height: 110,
-                    width: double.infinity,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => Container(
-                      height: 110,
-                      color: AppColors.surface,
-                      child: const Icon(Icons.image, color: AppColors.textHint, size: 40),
-                    ),
-                  ),
-                ),
+                child: _buildProductImage((product['image'] ?? '').toString()),
               ),
-              // Heart icon (top-right)
+
+              // Heart
               Positioned(
                 top: 6,
                 right: 6,
@@ -56,19 +118,48 @@ class ProductCard extends StatelessWidget {
                     color: Colors.white,
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(
+                  child: const Icon(
                     Icons.favorite_border,
                     size: 16,
                     color: AppColors.textHint,
                   ),
                 ),
               ),
-              // Size badge (bottom-left)
+
+              // Discount badge
+              if (hasDiscount)
+                Positioned(
+                  top: 6,
+                  left: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF3B30),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '-${(((product['originalPrice'] as num) - (product['price'] as num)) / (product['originalPrice'] as num) * 100).round()}%',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+
+              // Size badge
               Positioned(
                 bottom: 6,
                 left: 6,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(4),
@@ -95,19 +186,26 @@ class ProductCard extends StatelessWidget {
                   ),
                 ),
               ),
-              // ADD button (bottom-right)
+
+              // ADD / stepper button
               Positioned(
                 bottom: 6,
                 right: 6,
                 child: qty == 0
                     ? GestureDetector(
-                        onTap: () => context.read<CartModel>().add(product),
+                        onTap: () => _handleAddToCart(context),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 5,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: AppColors.success, width: 1.5),
+                            border: Border.all(
+                              color: AppColors.success,
+                              width: 1.5,
+                            ),
                           ),
                           child: Text(
                             'ADD',
@@ -128,28 +226,41 @@ class ProductCard extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             GestureDetector(
-                              onTap: () => context.read<CartModel>().remove(product['id']),
-                              child: const Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                                child: Icon(Icons.remove, color: Colors.white, size: 14),
+                              onTap: () => context.read<CartModel>().remove(
+                                product['id'],
                               ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4),
-                              child: Text(
-                                '$qty',
-                                style: const TextStyle(
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 4,
+                                ),
+                                child: Icon(
+                                  Icons.remove,
                                   color: Colors.white,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 12,
+                                  size: 14,
                                 ),
                               ),
                             ),
+                            Text(
+                              '$qty',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                              ),
+                            ),
                             GestureDetector(
-                              onTap: () => context.read<CartModel>().add(product),
+                              onTap: () => _handleAddToCart(context),
                               child: const Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                                child: Icon(Icons.add, color: Colors.white, size: 14),
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 4,
+                                ),
+                                child: Icon(
+                                  Icons.add,
+                                  color: Colors.white,
+                                  size: 14,
+                                ),
                               ),
                             ),
                           ],
@@ -158,87 +269,101 @@ class ProductCard extends StatelessWidget {
               ),
             ],
           ),
-          // Product details
+
+          // ── Product details ───────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.all(6),
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                // Brand name
+                // Brand
                 Text(
-                  product['brand'],
+                  product['brand'] ?? '',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 10,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-                const SizedBox(height: 1),
-                // Product name
+                const SizedBox(height: 2),
+
+                // Name
                 Text(
-                  product['name'],
+                  product['name'] ?? '',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    height: 1.2,
+                    height: 1.25,
                   ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 4),
+
                 // Rating
                 Row(
                   children: [
                     Icon(Icons.star, color: AppColors.warning, size: 11),
                     const SizedBox(width: 2),
                     Text(
-                      '${product['rating']}',
+                      '${product['rating'] ?? ''}',
                       style: const TextStyle(
                         color: AppColors.textSecondary,
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '(${product['reviews']})',
-                      style: TextStyle(
-                        color: AppColors.textHint,
-                        fontSize: 10,
+                    const SizedBox(width: 3),
+                    Flexible(
+                      child: Text(
+                        '(${product['reviews'] ?? ''})',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.textHint,
+                          fontSize: 10,
+                        ),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 4),
-                // Price
+
+                // Price row
                 Row(
                   children: [
                     Text(
                       '₹${product['price']}',
                       style: const TextStyle(
                         color: AppColors.textPrimary,
-                        fontSize: 14,
+                        fontSize: 13,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '₹${product['originalPrice']}',
-                      style: TextStyle(
-                        color: AppColors.textHint,
-                        fontSize: 11,
-                        decoration: TextDecoration.lineThrough,
-                        decorationColor: AppColors.textHint,
+                    const SizedBox(width: 5),
+                    if (hasDiscount)
+                      Flexible(
+                        child: Text(
+                          '₹${product['originalPrice']}',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.textHint,
+                            fontSize: 10,
+                            decoration: TextDecoration.lineThrough,
+                            decorationColor: AppColors.textHint,
+                          ),
+                        ),
                       ),
-                    ),
                   ],
                 ),
-                const SizedBox(height: 3),
-                // See more like this
+                const SizedBox(height: 4),
+
+                // See more
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
                       'See more like this',

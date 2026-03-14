@@ -59,10 +59,13 @@ class FirestoreService {
   // ── Fetch categories ──────────────────────────────────────────────────────
 
   Future<List<Map<String, dynamic>>> getCategories() async {
-    final snap = await _db
-        .collection('categories')
-        .orderBy('order')
-        .get();
+    final snap = await _db.collection('categories').orderBy('order').get();
+    if (snap.docs.isEmpty) return [];
+    return snap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> getSubCategories() async {
+    final snap = await _db.collection('subCategories').get();
     if (snap.docs.isEmpty) return [];
     return snap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
   }

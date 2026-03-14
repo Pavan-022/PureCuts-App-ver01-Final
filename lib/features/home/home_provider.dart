@@ -4,26 +4,126 @@ import 'package:purecuts/core/models/product_model.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
 
 class HomeProvider extends ChangeNotifier {
+  static const Set<String> _hiddenCategoryNames = {
+    'nail',
+    'beard',
+    'wax',
+    'offers',
+  };
+
   final FirestoreService _service = FirestoreService();
 
   List<ProductModel> _products = [];
   List<Map<String, dynamic>> _categories = [];
+  List<Map<String, dynamic>> _subCategories = [];
   bool _loading = false;
   String? _error;
 
   List<ProductModel> get products => _products;
-  List<Map<String, dynamic>> get categories =>
-      _categories.isNotEmpty ? _categories : AppConstants.categories;
+
+  List<Map<String, dynamic>> get categories {
+    final source = _categories.isNotEmpty
+        ? _categories
+        : AppConstants.categories;
+    final merged = <String, Map<String, dynamic>>{};
+
+    for (final category in source) {
+      final normalized = _normalizeCategory(category);
+      final key = _normalizedKey(normalized['name'] as String?);
+      if (_hiddenCategoryNames.contains(key)) continue;
+      merged[key] = normalized;
+    }
+
+    for (final category in AppConstants.categories) {
+      final normalized = _normalizeCategory(category);
+      final key = _normalizedKey(normalized['name'] as String?);
+      if (_hiddenCategoryNames.contains(key)) continue;
+      merged.putIfAbsent(key, () => normalized);
+    }
+
+    return merged.values.toList();
+  }
+
+  List<Map<String, dynamic>> get subCategories {
+    final source = _subCategories.isNotEmpty
+        ? _subCategories
+        : AppConstants.subCategories;
+    final merged = <String, Map<String, dynamic>>{};
+
+    for (final subCategory in source) {
+      final normalized = _normalizeSubCategory(subCategory);
+      final parentKey = _normalizedKey(normalized['parentCategory'] as String?);
+      if (_hiddenCategoryNames.contains(parentKey)) continue;
+      final key =
+          '$parentKey::${_normalizedKey(normalized['name'] as String?)}';
+      merged[key] = normalized;
+    }
+
+    for (final subCategory in AppConstants.subCategories) {
+      final normalized = _normalizeSubCategory(subCategory);
+      final parentKey = _normalizedKey(normalized['parentCategory'] as String?);
+      if (_hiddenCategoryNames.contains(parentKey)) continue;
+      final key =
+          '$parentKey::${_normalizedKey(normalized['name'] as String?)}';
+      merged.putIfAbsent(key, () => normalized);
+    }
+
+    final items = merged.values.toList();
+    items.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+    return items;
+  }
+
   bool get loading => _loading;
   String? get error => _error;
 
+  String _normalizedKey(String? value) {
+    final normalized = (value ?? '').trim().toLowerCase();
+    return normalized.replaceAll(RegExp(r'[^a-z0-9]+'), '');
+  }
+
+  Map<String, dynamic> _normalizeCategory(Map<String, dynamic> category) {
+    return {
+      ...category,
+      'name': category['name'] ?? 'Category',
+      'icon': category['icon'] ?? category['image'],
+    };
+  }
+
+  Map<String, dynamic> _normalizeSubCategory(Map<String, dynamic> subCategory) {
+    return {
+      ...subCategory,
+      'name': subCategory['name'] ?? 'Subcategory',
+      'parentCategory':
+          subCategory['parentCategory'] ??
+          subCategory['category'] ??
+          subCategory['parent'] ??
+          '',
+      'icon': subCategory['icon'] ?? subCategory['image'],
+    };
+  }
+
+  List<Map<String, dynamic>> subCategoriesFor(String category) {
+    final categoryKey = _normalizedKey(category);
+    return subCategories
+        .where(
+          (subCategory) =>
+              _normalizedKey(subCategory['parentCategory'] as String?) ==
+              categoryKey,
+        )
+        .toList();
+  }
+
+  String productSubCategory(Map<String, dynamic> product) {
+    return (product['subCategory'] ??
+            product['subcategory'] ??
+            product['sub_category'] ??
+            '')
+        .toString();
+  }
+
   /// Returns all products as the legacy Map format (for widgets that expect Map)
-  /// Falls back to AppConstants.products when Firestore has no products yet.
   List<Map<String, dynamic>> get productMaps {
-    if (_products.isNotEmpty) {
-      return _products.map((p) => p.toProductMap()).toList();
-    }
-    return AppConstants.products;
+    return _products.map((p) => p.toProductMap()).toList();
   }
 
   Future<void> loadData() async {
@@ -36,11 +136,14 @@ class HomeProvider extends ChangeNotifier {
       final results = await Future.wait([
         _service.getProducts(),
         _service.getCategories(),
+        _service.getSubCategories(),
       ]);
       _products = results[0] as List<ProductModel>;
       final cats = results[1] as List<Map<String, dynamic>>;
+      final subCats = results[2] as List<Map<String, dynamic>>;
       // If Firestore has categories, use them; otherwise fall back to constants
       if (cats.isNotEmpty) _categories = cats;
+      if (subCats.isNotEmpty) _subCategories = subCats;
     } catch (e) {
       _error = e.toString();
     }
@@ -51,25 +154,43 @@ class HomeProvider extends ChangeNotifier {
 
   List<Map<String, dynamic>> filteredProducts({
     String category = 'All',
+    String? subCategory,
     String query = '',
     String sort = 'popular',
   }) {
-    var list = productMaps;
+    var list = List<Map<String, dynamic>>.from(productMaps);
 
     if (category != 'All') {
       list = list
-          .where((p) =>
-              (p['category'] as String).toLowerCase() ==
-              category.toLowerCase())
+          .where(
+            (p) =>
+                _normalizedKey(p['category'] as String?) ==
+                _normalizedKey(category),
+          )
+          .toList();
+    }
+
+    final hasStructuredSubCategories = list.any(
+      (product) => productSubCategory(product).trim().isNotEmpty,
+    );
+    if ((subCategory ?? '').trim().isNotEmpty && hasStructuredSubCategories) {
+      list = list
+          .where(
+            (product) =>
+                _normalizedKey(productSubCategory(product)) ==
+                _normalizedKey(subCategory),
+          )
           .toList();
     }
 
     if (query.isNotEmpty) {
       final q = query.toLowerCase();
       list = list
-          .where((p) =>
-              (p['name'] as String).toLowerCase().contains(q) ||
-              (p['brand'] as String).toLowerCase().contains(q))
+          .where(
+            (p) =>
+                (p['name'] as String).toLowerCase().contains(q) ||
+                (p['brand'] as String).toLowerCase().contains(q),
+          )
           .toList();
     }
 
