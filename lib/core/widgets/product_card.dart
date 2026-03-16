@@ -2,16 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/models/cart_model.dart';
+import '../../features/products/product_detail_screen.dart';
 
 class ProductCard extends StatelessWidget {
   final Map<String, dynamic> product;
   final ValueChanged<Map<String, dynamic>>? onAddToCart;
 
-  const ProductCard({
-    super.key,
-    required this.product,
-    this.onAddToCart,
-  });
+  const ProductCard({super.key, required this.product, this.onAddToCart});
 
   void _handleAddToCart(BuildContext context) {
     if (onAddToCart != null) {
@@ -19,6 +16,13 @@ class ProductCard extends StatelessWidget {
       return;
     }
     context.read<CartModel>().add(product);
+  }
+
+  void _openProductDetail(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ProductDetailScreen(product: product)),
+    );
   }
 
   String _normalizeImagePath(String raw) {
@@ -88,48 +92,76 @@ class ProductCard extends StatelessWidget {
         (product['originalPrice'] as num? ?? 0) >
         (product['price'] as num? ?? 0);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.divider.withOpacity(0.5)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min, // ← key fix: don't expand unbounded
-        children: [
-          // ── Image area ───────────────────────────────────────────
-          Stack(
-            children: [
-              ClipRRect(
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(12),
-                ),
-                child: _buildProductImage((product['image'] ?? '').toString()),
-              ),
-
-              // Heart
-              Positioned(
-                top: 6,
-                right: 6,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
+    return GestureDetector(
+      onTap: () => _openProductDetail(context),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.divider.withOpacity(0.5)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min, // ← key fix: don't expand unbounded
+          children: [
+            // ── Image area ───────────────────────────────────────────
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(12),
                   ),
-                  child: const Icon(
-                    Icons.favorite_border,
-                    size: 16,
-                    color: AppColors.textHint,
+                  child: _buildProductImage(
+                    (product['image'] ?? '').toString(),
                   ),
                 ),
-              ),
 
-              // Discount badge
-              if (hasDiscount)
+                // Heart
                 Positioned(
                   top: 6,
+                  right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.favorite_border,
+                      size: 16,
+                      color: AppColors.textHint,
+                    ),
+                  ),
+                ),
+
+                // Discount badge
+                if (hasDiscount)
+                  Positioned(
+                    top: 6,
+                    left: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF3B30),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        '-${(((product['originalPrice'] as num) - (product['price'] as num)) / (product['originalPrice'] as num) * 100).round()}%',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // Size badge
+                Positioned(
+                  bottom: 6,
                   left: 6,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
@@ -137,254 +169,231 @@ class ProductCard extends StatelessWidget {
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFF3B30),
+                      color: Colors.white,
                       borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.grey.shade300),
                     ),
-                    child: Text(
-                      '-${(((product['originalPrice'] as num) - (product['price'] as num)) / (product['originalPrice'] as num) * 100).round()}%',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.inventory_2_outlined,
+                          size: 10,
+                          color: AppColors.success,
+                        ),
+                        const SizedBox(width: 2),
+                        Text(
+                          product['size'] ?? '100 g',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
 
-              // Size badge
-              Positioned(
-                bottom: 6,
-                left: 6,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 5,
-                    vertical: 2,
+                // ADD / stepper button
+                Positioned(
+                  bottom: 6,
+                  right: 6,
+                  child: qty == 0
+                      ? GestureDetector(
+                          onTap: () => _handleAddToCart(context),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: AppColors.success,
+                                width: 1.5,
+                              ),
+                            ),
+                            child: Text(
+                              'ADD',
+                              style: TextStyle(
+                                color: AppColors.success,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        )
+                      : Container(
+                          decoration: BoxDecoration(
+                            color: AppColors.success,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              GestureDetector(
+                                onTap: () => context.read<CartModel>().remove(
+                                  product['id'],
+                                ),
+                                child: const Padding(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 4,
+                                  ),
+                                  child: Icon(
+                                    Icons.remove,
+                                    color: Colors.white,
+                                    size: 14,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                '$qty',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              GestureDetector(
+                                onTap: () => _handleAddToCart(context),
+                                child: const Padding(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 4,
+                                  ),
+                                  child: Icon(
+                                    Icons.add,
+                                    color: Colors.white,
+                                    size: 14,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                ),
+              ],
+            ),
+
+            // ── Product details ───────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Brand
+                  Text(
+                    product['brand'] ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.grey.shade300),
+                  const SizedBox(height: 2),
+
+                  // Name
+                  Text(
+                    product['name'] ?? '',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      height: 1.25,
+                    ),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                  const SizedBox(height: 4),
+
+                  // Rating
+                  Row(
                     children: [
-                      Icon(
-                        Icons.inventory_2_outlined,
-                        size: 10,
-                        color: AppColors.success,
-                      ),
+                      Icon(Icons.star, color: AppColors.warning, size: 11),
                       const SizedBox(width: 2),
                       Text(
-                        product['size'] ?? '100 g',
-                        style: TextStyle(
-                          fontSize: 9,
+                        '${product['rating'] ?? ''}',
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 10,
                           fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(width: 3),
+                      Flexible(
+                        child: Text(
+                          '(${product['reviews'] ?? ''})',
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.textHint,
+                            fontSize: 10,
+                          ),
                         ),
                       ),
                     ],
                   ),
-                ),
-              ),
+                  const SizedBox(height: 4),
 
-              // ADD / stepper button
-              Positioned(
-                bottom: 6,
-                right: 6,
-                child: qty == 0
-                    ? GestureDetector(
-                        onTap: () => _handleAddToCart(context),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: AppColors.success,
-                              width: 1.5,
-                            ),
-                          ),
-                          child: Text(
-                            'ADD',
-                            style: TextStyle(
-                              color: AppColors.success,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      )
-                    : Container(
-                        decoration: BoxDecoration(
-                          color: AppColors.success,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            GestureDetector(
-                              onTap: () => context.read<CartModel>().remove(
-                                product['id'],
-                              ),
-                              child: const Padding(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 4,
-                                ),
-                                child: Icon(
-                                  Icons.remove,
-                                  color: Colors.white,
-                                  size: 14,
-                                ),
-                              ),
-                            ),
-                            Text(
-                              '$qty',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 12,
-                              ),
-                            ),
-                            GestureDetector(
-                              onTap: () => _handleAddToCart(context),
-                              child: const Padding(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 4,
-                                ),
-                                child: Icon(
-                                  Icons.add,
-                                  color: Colors.white,
-                                  size: 14,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-              ),
-            ],
-          ),
-
-          // ── Product details ───────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Brand
-                Text(
-                  product['brand'] ?? '',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 2),
-
-                // Name
-                Text(
-                  product['name'] ?? '',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    height: 1.25,
-                  ),
-                ),
-                const SizedBox(height: 4),
-
-                // Rating
-                Row(
-                  children: [
-                    Icon(Icons.star, color: AppColors.warning, size: 11),
-                    const SizedBox(width: 2),
-                    Text(
-                      '${product['rating'] ?? ''}',
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(width: 3),
-                    Flexible(
-                      child: Text(
-                        '(${product['reviews'] ?? ''})',
-                        overflow: TextOverflow.ellipsis,
+                  // Price row
+                  Row(
+                    children: [
+                      Text(
+                        '₹${product['price']}',
                         style: const TextStyle(
-                          color: AppColors.textHint,
-                          fontSize: 10,
+                          color: AppColors.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-
-                // Price row
-                Row(
-                  children: [
-                    Text(
-                      '₹${product['price']}',
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                    if (hasDiscount)
-                      Flexible(
-                        child: Text(
-                          '₹${product['originalPrice']}',
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: AppColors.textHint,
-                            fontSize: 10,
-                            decoration: TextDecoration.lineThrough,
-                            decorationColor: AppColors.textHint,
+                      const SizedBox(width: 5),
+                      if (hasDiscount)
+                        Flexible(
+                          child: Text(
+                            '₹${product['originalPrice']}',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: AppColors.textHint,
+                              fontSize: 10,
+                              decoration: TextDecoration.lineThrough,
+                              decorationColor: AppColors.textHint,
+                            ),
                           ),
                         ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 4),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
 
-                // See more
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'See more like this',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: AppColors.success,
-                        fontWeight: FontWeight.w600,
+                  // See more
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'See more like this',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.success,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 2),
-                    Icon(
-                      Icons.arrow_forward_ios,
-                      size: 8,
-                      color: AppColors.success,
-                    ),
-                  ],
-                ),
-              ],
+                      const SizedBox(width: 2),
+                      Icon(
+                        Icons.arrow_forward_ios,
+                        size: 8,
+                        color: AppColors.success,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -8,7 +8,8 @@ import 'package:purecuts/features/home/home_provider.dart';
 
 class ProductListScreen extends StatefulWidget {
   final String? initialCategory;
-  const ProductListScreen({super.key, this.initialCategory});
+  final String? initialBrand;
+  const ProductListScreen({super.key, this.initialCategory, this.initialBrand});
 
   @override
   State<ProductListScreen> createState() => _ProductListScreenState();
@@ -16,6 +17,7 @@ class ProductListScreen extends StatefulWidget {
 
 class _ProductListScreenState extends State<ProductListScreen> {
   String _selectedCategory = 'All';
+  String? _selectedBrand;
   String _sort = 'popular';
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
@@ -29,6 +31,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
     super.initState();
     if (widget.initialCategory != null) {
       _selectedCategory = widget.initialCategory!;
+    }
+    if (widget.initialBrand != null && widget.initialBrand!.trim().isNotEmpty) {
+      _selectedBrand = widget.initialBrand!.trim();
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<HomeProvider>().loadData();
@@ -53,11 +58,22 @@ class _ProductListScreenState extends State<ProductListScreen> {
       _selectedCategory = 'All';
     }
 
-    final products = home.filteredProducts(
-      category: _selectedCategory,
-      query: _searchQuery,
-      sort: _sort,
-    );
+    final products = home
+        .filteredProducts(
+          category: _selectedCategory,
+          query: _searchQuery,
+          sort: _sort,
+        )
+        .where((p) {
+          if ((_selectedBrand ?? '').trim().isEmpty) return true;
+          return (p['brand'] ?? '').toString().trim().toLowerCase() ==
+              _selectedBrand!.trim().toLowerCase();
+        })
+        .toList();
+
+    final title = (_selectedBrand ?? '').trim().isNotEmpty
+        ? _selectedBrand!
+        : 'Products';
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -68,11 +84,14 @@ class _ProductListScreenState extends State<ProductListScreen> {
           icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('Products',
-            style: TextStyle(
-                color: AppColors.textPrimary,
-                fontWeight: FontWeight.w700,
-                fontSize: 17)),
+        title: Text(
+          title,
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w700,
+            fontSize: 17,
+          ),
+        ),
         centerTitle: true,
         actions: [
           IconButton(
@@ -86,16 +105,22 @@ class _ProductListScreenState extends State<ProductListScreen> {
               icon: const Icon(Icons.sort, color: AppColors.textPrimary),
               onSelected: (v) => setState(() => _sort = v),
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
+                borderRadius: BorderRadius.circular(12),
+              ),
               itemBuilder: (_) => [
                 const PopupMenuItem(
-                    value: 'popular', child: Text('Most Popular')),
+                  value: 'popular',
+                  child: Text('Most Popular'),
+                ),
+                const PopupMenuItem(value: 'rating', child: Text('Top Rated')),
                 const PopupMenuItem(
-                    value: 'rating', child: Text('Top Rated')),
+                  value: 'low',
+                  child: Text('Price: Low to High'),
+                ),
                 const PopupMenuItem(
-                    value: 'low', child: Text('Price: Low to High')),
-                const PopupMenuItem(
-                    value: 'high', child: Text('Price: High to Low')),
+                  value: 'high',
+                  child: Text('Price: High to Low'),
+                ),
               ],
             ),
           ),
@@ -106,21 +131,28 @@ class _ProductListScreenState extends State<ProductListScreen> {
           // Search bar
           Container(
             color: Colors.white,
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: TextField(
               controller: _searchCtrl,
               onChanged: (v) => setState(() => _searchQuery = v),
               decoration: InputDecoration(
                 hintText: 'Search products...',
                 hintStyle: const TextStyle(
-                    color: AppColors.textHint, fontSize: 14),
-                prefixIcon: const Icon(Icons.search,
-                    color: AppColors.textHint, size: 20),
+                  color: AppColors.textHint,
+                  fontSize: 14,
+                ),
+                prefixIcon: const Icon(
+                  Icons.search,
+                  color: AppColors.textHint,
+                  size: 20,
+                ),
                 suffixIcon: _searchQuery.isNotEmpty
                     ? IconButton(
-                        icon: const Icon(Icons.clear,
-                            color: AppColors.textHint, size: 18),
+                        icon: const Icon(
+                          Icons.clear,
+                          color: AppColors.textHint,
+                          size: 18,
+                        ),
                         onPressed: () {
                           _searchCtrl.clear();
                           setState(() => _searchQuery = '');
@@ -130,11 +162,11 @@ class _ProductListScreenState extends State<ProductListScreen> {
                 filled: true,
                 fillColor: AppColors.background,
                 isDense: true,
-                contentPadding:
-                    const EdgeInsets.symmetric(vertical: 12),
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none),
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
               ),
             ),
           ),
@@ -143,29 +175,25 @@ class _ProductListScreenState extends State<ProductListScreen> {
             height: 52,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               separatorBuilder: (_, __) => const SizedBox(width: 8),
               itemCount: categories.length,
               itemBuilder: (_, i) {
                 final cat = categories[i];
                 final selected = cat == _selectedCategory;
                 return GestureDetector(
-                  onTap: () =>
-                      setState(() => _selectedCategory = cat),
+                  onTap: () => setState(() => _selectedCategory = cat),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 6),
+                      horizontal: 14,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
-                      color: selected
-                          ? AppColors.primary
-                          : Colors.white,
+                      color: selected ? AppColors.primary : Colors.white,
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(
-                        color: selected
-                            ? AppColors.primary
-                            : AppColors.border,
+                        color: selected ? AppColors.primary : AppColors.border,
                       ),
                     ),
                     child: Text(
@@ -185,18 +213,45 @@ class _ProductListScreenState extends State<ProductListScreen> {
               },
             ),
           ),
+          if ((_selectedBrand ?? '').trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Text(
+                      'Brand: $_selectedBrand',
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           // Product count
           Padding(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 16, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             child: Row(
               children: [
                 Text(
                   '${products.length} products',
                   style: const TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500),
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ],
             ),
@@ -211,58 +266,57 @@ class _ProductListScreenState extends State<ProductListScreen> {
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                       gridDelegate:
                           const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        mainAxisSpacing: 12,
-                        crossAxisSpacing: 12,
-                        childAspectRatio: 0.65,
-                      ),
-                      itemCount: 6,
-                      itemBuilder: (_, __) => const ProductCardShimmer(),
-                    )
-                  : products.isEmpty
-                      ? ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          children: [
-                            SizedBox(
-                              height: 280,
-                              child: Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.search_off,
-                                      color: AppColors.textHint,
-                                      size: 52,
-                                    ),
-                                    const SizedBox(height: 12),
-                                    const Text(
-                                      'No products found',
-                                      style: TextStyle(
-                                        color: AppColors.textSecondary,
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        )
-                      : GridView.builder(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: 2,
                             mainAxisSpacing: 12,
                             crossAxisSpacing: 12,
                             childAspectRatio: 0.65,
                           ),
-                          itemCount: products.length,
-                          itemBuilder: (_, i) =>
-                              ProductCard(product: products[i]),
+                      itemCount: 6,
+                      itemBuilder: (_, __) => const ProductCardShimmer(),
+                    )
+                  : products.isEmpty
+                  ? ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        SizedBox(
+                          height: 280,
+                          child: Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.search_off,
+                                  color: AppColors.textHint,
+                                  size: 52,
+                                ),
+                                const SizedBox(height: 12),
+                                const Text(
+                                  'No products found',
+                                  style: TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
+                      ],
+                    )
+                  : GridView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            mainAxisSpacing: 12,
+                            crossAxisSpacing: 12,
+                            childAspectRatio: 0.65,
+                          ),
+                      itemCount: products.length,
+                      itemBuilder: (_, i) => ProductCard(product: products[i]),
+                    ),
             ),
           ),
           const StickyCartBar(),

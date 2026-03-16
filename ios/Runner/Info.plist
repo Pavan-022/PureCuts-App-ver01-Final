@@ -45,5 +45,13 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Allow Purecuts to access your photos so you can attach review images.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Allow Purecuts to save media related to your product reviews.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Allow Purecuts to use camera for capturing review media.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Allow Purecuts to record audio when capturing review videos.</string>
 </dict>
 </plist>

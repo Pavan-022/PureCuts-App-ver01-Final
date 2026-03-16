@@ -1,0 +1,85 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.admin == true;
+    }
+
+    function hasPurchasedProduct(productId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.purchasedProductIds.hasAny([productId]);
+    }
+
+    // ── Mobile app customers (read-only public data) ──────────────────────────
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+
+      match /variants/{variantId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+
+      match /reviews/{reviewId} {
+        allow read: if true;
+        allow create, update: if isSignedIn() &&
+          request.auth.uid == reviewId &&
+          hasPurchasedProduct(productId);
+        allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == reviewId);
+      }
+    }
+
+    match /brands/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /categories/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /subCategories/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ── Attributes (admin-managed, app reads for variant display) ─────────────
+    match /attributes/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ── Users (own doc + admin full access) ───────────────────────────────────
+    match /users/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+      allow read, write: if isAdmin();
+    }
+
+    // ── Orders ────────────────────────────────────────────────────────────────
+    match /orders/{orderId} {
+      allow read: if isSignedIn() &&
+        (request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Product shares (analytics) ───────────────────────────────────────────
+    match /productShares/{docId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+    }
+
+    // ── Banners / Coupons / Notifications ────────────────────────────────────
+    match /banners/{docId}       { allow read: if true; allow write: if isAdmin(); }
+    match /coupons/{docId}       { allow read: if isSignedIn(); allow write: if isAdmin(); }
+    match /notifications/{docId} { allow read: if isSignedIn(); allow write: if isAdmin(); }
+  }
+}

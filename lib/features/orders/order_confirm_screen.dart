@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/models/cart_model.dart';
+import 'package:purecuts/core/services/firestore_service.dart';
+import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 import 'package:purecuts/features/orders/order_provider.dart';
 
@@ -17,6 +19,7 @@ class OrderConfirmScreen extends StatefulWidget {
 
 class _OrderConfirmScreenState extends State<OrderConfirmScreen>
     with SingleTickerProviderStateMixin {
+  final FirestoreService _firestoreService = FirestoreService();
   late AnimationController _controller;
   late Animation<double> _scaleAnim;
   String _status = 'Placed';
@@ -41,24 +44,38 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
     // ✅ Save cart items to OrderProvider BEFORE clearing the cart
     final cart = context.read<CartModel>();
     final orders = context.read<OrderProvider>();
+    final auth = context.read<AuthProvider>();
+    final uid = auth.user?.uid ?? '';
 
-    orders.addOrderedItems(
-      cart.items
-          .map(
-            (item) => {
-              'id': item.id,
-              'name': item.name,
-              'brand': item.brand,
-              'image': item.image,
-              'price': item.price,
-              'originalPrice': item.price,
-              'size': '',
-              'tag': '',
-              'quantity': item.quantity,
-            },
+    final orderedItems = cart.items
+        .map(
+          (item) => {
+            'id': item.id,
+            'name': item.name,
+            'brand': item.brand,
+            'image': item.image,
+            'price': item.price,
+            'originalPrice': item.price,
+            'size': '',
+            'tag': '',
+            'quantity': item.quantity,
+          },
+        )
+        .toList();
+
+    orders.addOrderedItems(orderedItems);
+
+    if (uid.trim().isNotEmpty && orderedItems.isNotEmpty) {
+      _firestoreService
+          .registerUserPurchase(
+            uid: uid,
+            items: orderedItems,
+            total: widget.total,
           )
-          .toList(),
-    );
+          .catchError((_) {
+            // Best effort persistence for review eligibility and order history.
+          });
+    }
 
     // ✅ Clear cart AFTER saving
     cart.clear();

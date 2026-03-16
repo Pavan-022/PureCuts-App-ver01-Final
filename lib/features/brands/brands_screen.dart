@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
-import 'package:purecuts/core/models/cart_model.dart';
-import 'package:purecuts/core/widgets/product_card.dart';
-import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 import 'package:purecuts/features/home/home_provider.dart';
+import 'package:purecuts/features/products/product_list_screen.dart';
 
 class BrandsScreen extends StatefulWidget {
   const BrandsScreen({super.key});
@@ -14,25 +12,90 @@ class BrandsScreen extends StatefulWidget {
 }
 
 class _BrandsScreenState extends State<BrandsScreen> {
-  String? _selectedBrand;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<HomeProvider>().loadData();
+    });
+  }
+
+  String _normalizeImagePath(String raw) {
+    final path = raw.trim();
+    if (path.isEmpty) return '';
+
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+
+    if (path.startsWith('gs://')) {
+      final withoutScheme = path.substring(5);
+      final slash = withoutScheme.indexOf('/');
+      if (slash <= 0 || slash == withoutScheme.length - 1) return path;
+      final bucket = withoutScheme.substring(0, slash);
+      final objectPath = withoutScheme.substring(slash + 1);
+      return 'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(objectPath)}?alt=media';
+    }
+
+    if (path.startsWith('assets/')) return path;
+
+    return 'https://firebasestorage.googleapis.com/v0/b/purecuts-11a7c.firebasestorage.app/o/${Uri.encodeComponent(path)}?alt=media';
+  }
+
+  Widget _buildBrandLogo(String imagePath, String brandName) {
+    final resolved = _normalizeImagePath(imagePath);
+
+    if (resolved.isEmpty) {
+      return Center(
+        child: Text(
+          (brandName.trim().isNotEmpty ? brandName.trim()[0] : '?')
+              .toUpperCase(),
+          style: const TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 28,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
+
+    if (resolved.startsWith('assets/')) {
+      return Image.asset(
+        resolved,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => Center(
+          child: Text(
+            (brandName.trim().isNotEmpty ? brandName.trim()[0] : '?')
+                .toUpperCase(),
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 28,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Image.network(
+      resolved,
+      fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => Center(
+        child: Text(
+          (brandName.trim().isNotEmpty ? brandName.trim()[0] : '?')
+              .toUpperCase(),
+          style: const TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 28,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final home = context.watch<HomeProvider>();
-    final allProducts = home.productMaps;
-
-    // Extract unique brands
-    final brands = allProducts
-        .map((p) => p['brand'] as String)
-        .toSet()
-        .toList()
-      ..sort();
-
-    final filtered = _selectedBrand == null
-        ? allProducts
-        : allProducts
-            .where((p) => p['brand'] == _selectedBrand)
-            .toList();
+    final brands = home.brands;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8F8FA),
@@ -40,49 +103,21 @@ class _BrandsScreenState extends State<BrandsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header
-            Container(
-              color: Colors.white,
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-              child: const Text(
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 10),
+              child: Text(
                 'Brands',
                 style: TextStyle(
                   color: AppColors.textPrimary,
-                  fontSize: 20,
+                  fontSize: 22,
                   fontWeight: FontWeight.w800,
-                  letterSpacing: -0.4,
                 ),
               ),
             ),
-            // Brand chips
-            Container(
-              color: Colors.white,
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    _BrandChip(
-                      label: 'All',
-                      selected: _selectedBrand == null,
-                      onTap: () => setState(() => _selectedBrand = null),
-                    ),
-                    ...brands.map((b) => _BrandChip(
-                          label: b,
-                          selected: _selectedBrand == b,
-                          onTap: () =>
-                              setState(() => _selectedBrand = b),
-                        )),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            // Product count
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Text(
-                '${filtered.length} product${filtered.length != 1 ? 's' : ''}${_selectedBrand != null ? ' by $_selectedBrand' : ''}',
+                '${brands.length} available',
                 style: const TextStyle(
                   color: AppColors.textHint,
                   fontSize: 12,
@@ -90,77 +125,61 @@ class _BrandsScreenState extends State<BrandsScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
-            // Products grid
+            const SizedBox(height: 10),
             Expanded(
               child: home.loading
                   ? const Center(child: CircularProgressIndicator())
-                  : filtered.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No products found',
-                            style: TextStyle(color: AppColors.textHint),
-                          ),
-                        )
-                      : GridView.builder(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
+                  : brands.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'No brands available',
+                        style: TextStyle(
+                          color: AppColors.textHint,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    )
+                  : GridView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: 2,
                             mainAxisSpacing: 12,
                             crossAxisSpacing: 12,
-                            childAspectRatio: 0.63,
+                            childAspectRatio: 1.22,
                           ),
-                          itemCount: filtered.length,
-                          itemBuilder: (_, i) =>
-                              ProductCard(product: filtered[i]),
-                        ),
+                      itemCount: brands.length,
+                      itemBuilder: (_, i) {
+                        final brand = brands[i];
+                        final name = (brand['name'] ?? '').toString();
+                        final image = (brand['image'] ?? brand['logo'] ?? '')
+                            .toString();
+
+                        return Material(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(14),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      ProductListScreen(initialBrand: name),
+                                ),
+                              );
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: _buildBrandLogo(image, name),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
             ),
           ],
-        ),
-      ),
-      bottomNavigationBar: Consumer<CartModel>(
-        builder: (context, cart, _) {
-          if (cart.itemCount == 0) return const SizedBox.shrink();
-          return const StickyCartBar();
-        },
-      ),
-    );
-  }
-}
-
-class _BrandChip extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _BrandChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(right: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.primary : const Color(0xFFF3F4F6),
-          borderRadius: BorderRadius.circular(20),
-          border: selected
-              ? null
-              : Border.all(color: AppColors.divider, width: 1),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.white : AppColors.textSecondary,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
         ),
       ),
     );

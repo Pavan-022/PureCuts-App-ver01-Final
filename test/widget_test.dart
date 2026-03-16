@@ -1,30 +1,36 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:purecuts/main.dart';
+import 'package:purecuts/features/products/detail/product_models.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const PureCutsApp());
+  test('ProductVariant parses hex color and stock state', () {
+    final variant = ProductVariant.fromMap('v1', {
+      'name': 'Ebony',
+      'colorCode': '#112233',
+      'price': 249,
+      'image': 'assets/products/ebony.png',
+      'stock': 5,
+    });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(variant.id, 'v1');
+    expect(variant.shadeName, 'Ebony');
+    expect(variant.price, 249);
+    expect(variant.inStock, isTrue);
+    expect(variant.color.value, 0xFF112233);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  test('Product merges image list with fallback image and computes defaults', () {
+    final product = Product.fromMap('p1', {
+      'name': 'Pro Color',
+      'brand': 'Matrix',
+      'images': ['a.png', 'b.png'],
+      'image': 'hero.png',
+      'rating': 4.6,
+      'reviewCount': 12,
+    });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(product.id, 'p1');
+    expect(product.images, containsAll(['a.png', 'b.png', 'hero.png']));
+    expect(product.rating, 4.6);
+    expect(product.reviewCount, 12);
   });
 }

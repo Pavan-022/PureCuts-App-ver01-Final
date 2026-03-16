@@ -11,6 +11,7 @@ import 'package:purecuts/features/cart/cart_screen.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/location/location_picker_sheet.dart';
 import 'package:purecuts/features/previously_bought/previously_bought_screen.dart';
+import 'package:purecuts/features/products/product_detail_screen.dart';
 import 'package:purecuts/features/products/product_list_screen.dart';
 import 'package:purecuts/features/profile/profile_screen.dart';
 
@@ -29,6 +30,150 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _refreshHomeData() async {
     await context.read<HomeProvider>().loadData();
+  }
+
+  void _openProductDetail(Map<String, dynamic> product) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ProductDetailScreen(product: product)),
+    );
+  }
+
+  Widget _buildSmallCartControl(Map<String, dynamic> product) {
+    return Consumer<CartModel>(
+      builder: (_, cart, __) {
+        final qty = cart.quantityOf((product['id'] ?? '').toString());
+
+        if (qty == 0) {
+          return GestureDetector(
+            onTap: () => _addToCart(product),
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.10),
+                    blurRadius: 6,
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.add, color: AppColors.primary, size: 16),
+            ),
+          );
+        }
+
+        return Container(
+          height: 28,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            color: AppColors.primary,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withOpacity(0.10), blurRadius: 6),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GestureDetector(
+                onTap: () => cart.remove((product['id'] ?? '').toString()),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4),
+                  child: Icon(Icons.remove, color: Colors.white, size: 14),
+                ),
+              ),
+              Text(
+                '$qty',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              GestureDetector(
+                onTap: () => _addToCart(product),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4),
+                  child: Icon(Icons.add, color: Colors.white, size: 14),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildWideCartControl(Map<String, dynamic> product) {
+    return Consumer<CartModel>(
+      builder: (_, cart, __) {
+        final qty = cart.quantityOf((product['id'] ?? '').toString());
+
+        if (qty == 0) {
+          return SizedBox(
+            width: double.infinity,
+            height: 30,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.zero,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+                elevation: 0,
+              ),
+              onPressed: () => _addToCart(product),
+              child: const Text('Add to Cart'),
+            ),
+          );
+        }
+
+        return Container(
+          width: double.infinity,
+          height: 30,
+          decoration: BoxDecoration(
+            color: AppColors.primary,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => cart.remove((product['id'] ?? '').toString()),
+                  child: const Center(
+                    child: Icon(Icons.remove, color: Colors.white, size: 16),
+                  ),
+                ),
+              ),
+              Text(
+                '$qty',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => _addToCart(product),
+                  child: const Center(
+                    child: Icon(Icons.add, color: Colors.white, size: 16),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   String _normalizeImagePath(String raw) {
@@ -475,11 +620,49 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildContent(HomeProvider home) {
     final products = home.productMaps;
+    final unassignedProducts = products
+        .where((p) => !_hasExplicitHomeSection(p))
+        .toList();
     final user = context.watch<AuthProvider>().user;
     final createdAt = user?.createdAt;
     final isNewUser =
         createdAt == null || DateTime.now().difference(createdAt).inDays <= 14;
-    final browseItems = isNewUser ? _recommendedForNewUser(products) : products;
+    final startFirstOrderItems = _productsForSection(products, const [
+      'start_first_order',
+    ]);
+    final recommendedItems = _productsForSection(products, const [
+      'recommended_salon',
+      'recommended',
+    ]);
+    final mostBoughtItems = _productsForSection(products, const [
+      'most_bought',
+      'most_bought_products',
+      'bestseller',
+    ]);
+    final popularItems = _productsForSection(products, const [
+      'popular_products',
+      'popular',
+    ]);
+    final popularFallbackItems = unassignedProducts
+        .where((p) => p['isPopular'] == true)
+        .toList();
+
+    final browseItems = startFirstOrderItems.isNotEmpty
+        ? startFirstOrderItems
+        : (isNewUser
+              ? _recommendedForNewUser(unassignedProducts)
+              : unassignedProducts);
+    final recommendedDisplayItems = recommendedItems.isNotEmpty
+        ? recommendedItems
+        : unassignedProducts;
+    final mostBoughtDisplayItems = mostBoughtItems.isNotEmpty
+        ? mostBoughtItems
+        : unassignedProducts;
+    final popularDisplayItems = popularItems.isNotEmpty
+        ? popularItems
+        : (popularFallbackItems.isNotEmpty
+              ? popularFallbackItems
+              : unassignedProducts);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -521,10 +704,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   controller: _recommendedScrollController,
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                   scrollDirection: Axis.horizontal,
-                  itemCount: products.length > 4 ? 4 : products.length,
+                  itemCount: recommendedDisplayItems.length > 4
+                      ? 4
+                      : recommendedDisplayItems.length,
                   separatorBuilder: (_, __) => const SizedBox(width: 12),
                   itemBuilder: (_, i) {
-                    final p = products[i];
+                    final p = recommendedDisplayItems[i];
                     return _buildRecommendedCard(p);
                   },
                 ),
@@ -536,7 +721,7 @@ class _HomeScreenState extends State<HomeScreen> {
         // Most Bought Products section
         _buildSectionHeader('Most Bought Products', 'See all'),
         const SizedBox(height: 12),
-        _buildMostBought(products),
+        _buildMostBought(mostBoughtDisplayItems),
         const SizedBox(height: 20),
         // Popular Products grid
         _buildSectionHeader('Popular Products', 'See all'),
@@ -552,14 +737,78 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisSpacing: 12,
               childAspectRatio: 0.63,
             ),
-            itemCount: products.length,
-            itemBuilder: (_, i) =>
-                ProductCard(product: products[i], onAddToCart: _addToCart),
+            itemCount: popularDisplayItems.length,
+            itemBuilder: (_, i) => ProductCard(
+              product: popularDisplayItems[i],
+              onAddToCart: _addToCart,
+            ),
           ),
         ),
         const SizedBox(height: 100),
       ],
     );
+  }
+
+  List<Map<String, dynamic>> _productsForSection(
+    List<Map<String, dynamic>> products,
+    List<String> sectionAliases,
+  ) {
+    String normalize(String value) => value
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '');
+
+    final normalizedAliases = sectionAliases.map(normalize).toSet();
+
+    bool matchesPlacementFlag(Map<String, dynamic> p) {
+      if (normalizedAliases.contains('start_first_order') &&
+          p['showInStartFirstOrder'] == true) {
+        return true;
+      }
+      if ((normalizedAliases.contains('recommended_salon') ||
+              normalizedAliases.contains('recommended')) &&
+          (p['showInRecommendedSalon'] == true || p['isRecommended'] == true)) {
+        return true;
+      }
+      if ((normalizedAliases.contains('most_bought') ||
+              normalizedAliases.contains('most_bought_products') ||
+              normalizedAliases.contains('bestseller')) &&
+          p['showInMostBought'] == true) {
+        return true;
+      }
+      if ((normalizedAliases.contains('popular_products') ||
+              normalizedAliases.contains('popular')) &&
+          (p['showInPopularProducts'] == true || p['isPopular'] == true)) {
+        return true;
+      }
+      return false;
+    }
+
+    bool matches(Map<String, dynamic> p) {
+      final homeSection = normalize(
+        (p['homeSection'] ?? p['home_section'] ?? p['section'] ?? '')
+            .toString(),
+      );
+      final tag = normalize((p['tag'] ?? '').toString());
+      return normalizedAliases.contains(homeSection) ||
+          normalizedAliases.contains(tag) ||
+          matchesPlacementFlag(p);
+    }
+
+    return products.where(matches).toList();
+  }
+
+  bool _hasExplicitHomeSection(Map<String, dynamic> product) {
+    final value =
+        (product['homeSection'] ??
+                product['home_section'] ??
+                product['section'] ??
+                '')
+            .toString()
+            .trim();
+    return value.isNotEmpty;
   }
 
   List<Map<String, dynamic>> _recommendedForNewUser(
@@ -689,8 +938,12 @@ class _HomeScreenState extends State<HomeScreen> {
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (_, i) {
           final cat = cats[i];
-          final iconPath = (cat['icon'] ?? cat['image']) as String?;
-          final categoryName = cat['name'] as String? ?? 'Category';
+          final rawIconPath = cat['icon'] ?? cat['image'];
+          final iconPath = rawIconPath == null ? null : rawIconPath.toString();
+          final categoryName =
+              (cat['name']?.toString().trim().isNotEmpty ?? false)
+              ? cat['name'].toString()
+              : 'Category';
 
           return SizedBox(
             width: 82,
@@ -788,121 +1041,107 @@ class _HomeScreenState extends State<HomeScreen> {
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (_, i) {
           final p = top[i];
-          return Container(
-            width: 130,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x0A000000),
-                  blurRadius: 10,
-                  offset: Offset(0, 3),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(14),
-                      ),
-                      child: _buildProductImage(
-                        (p['image'] ?? '').toString(),
-                        height: 100,
-                        width: 130,
-                        fit: BoxFit.contain,
-                      ),
-                    ),
-                    Positioned(
-                      top: 6,
-                      left: 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFF6B35),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.local_fire_department,
-                              color: Colors.white,
-                              size: 9,
-                            ),
-                            const SizedBox(width: 2),
-                            Text(
-                              '${p['reviews']}+ sold',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 8,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+          return GestureDetector(
+            onTap: () => _openProductDetail(p),
+            child: Container(
+              width: 130,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x0A000000),
+                    blurRadius: 10,
+                    offset: Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Stack(
                     children: [
-                      Text(
-                        p['name'] as String,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
+                      ClipRRect(
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(14),
+                        ),
+                        child: _buildProductImage(
+                          (p['image'] ?? '').toString(),
+                          height: 100,
+                          width: 130,
+                          fit: BoxFit.contain,
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            '\u20B9${p['price']}',
-                            style: const TextStyle(
-                              color: AppColors.primary,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
+                      Positioned(
+                        top: 6,
+                        left: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 3,
                           ),
-                          Consumer<CartModel>(
-                            builder: (_, cart, __) => GestureDetector(
-                              onTap: () => _addToCart(p),
-                              child: Container(
-                                width: 24,
-                                height: 24,
-                                decoration: BoxDecoration(
-                                  color: AppColors.primary,
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: const Icon(
-                                  Icons.add,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF6B35),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.local_fire_department,
+                                color: Colors.white,
+                                size: 9,
+                              ),
+                              const SizedBox(width: 2),
+                              Text(
+                                '${p['reviews']}+ sold',
+                                style: const TextStyle(
                                   color: Colors.white,
-                                  size: 14,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
-                            ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
                     ],
                   ),
-                ),
-              ],
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          (p['name'] ?? '').toString(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              '\u20B9${p['price']}',
+                              style: const TextStyle(
+                                color: AppColors.primary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            _buildSmallCartControl(p),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -920,87 +1159,67 @@ class _HomeScreenState extends State<HomeScreen> {
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (_, i) {
           final p = products[i];
-          return SizedBox(
-            width: 120,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Stack(
-                  children: [
-                    Container(
-                      height: 110,
-                      width: 120,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x0A000000),
-                            blurRadius: 10,
-                            offset: Offset(0, 3),
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: _buildProductImage(
-                          (p['image'] ?? '').toString(),
-                          height: 110,
-                          width: 120,
-                          fit: BoxFit.contain,
+          return GestureDetector(
+            onTap: () => _openProductDetail(p),
+            child: SizedBox(
+              width: 120,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Stack(
+                    children: [
+                      Container(
+                        height: 110,
+                        width: 120,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x0A000000),
+                              blurRadius: 10,
+                              offset: Offset(0, 3),
+                            ),
+                          ],
                         ),
-                      ),
-                    ),
-                    Positioned(
-                      bottom: 6,
-                      right: 6,
-                      child: Consumer<CartModel>(
-                        builder: (_, cart, __) => GestureDetector(
-                          onTap: () => _addToCart(p),
-                          child: Container(
-                            width: 28,
-                            height: 28,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.10),
-                                  blurRadius: 6,
-                                ),
-                              ],
-                            ),
-                            child: const Icon(
-                              Icons.add,
-                              color: AppColors.primary,
-                              size: 16,
-                            ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: _buildProductImage(
+                            (p['image'] ?? '').toString(),
+                            height: 110,
+                            width: 120,
+                            fit: BoxFit.contain,
                           ),
                         ),
                       ),
+                      Positioned(
+                        bottom: 6,
+                        right: 6,
+                        child: _buildSmallCartControl(p),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    (p['brand'] ?? '').toString(),
+                    style: const TextStyle(
+                      color: AppColors.textHint,
+                      fontSize: 10,
                     ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  p['brand'] as String,
-                  style: const TextStyle(
-                    color: AppColors.textHint,
-                    fontSize: 10,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  p['name'] as String,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                  Text(
+                    (p['name'] ?? '').toString(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },
@@ -1009,153 +1228,136 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildRecommendedCard(Map<String, dynamic> p) {
-    return Container(
-      width: 230,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x12A855F7),
-            blurRadius: 20,
-            offset: Offset(0, 6),
-          ),
-          BoxShadow(
-            color: Color(0x08000000),
-            blurRadius: 8,
-            offset: Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-            child: Stack(
-              children: [
-                Container(
-                  height: 95,
-                  width: double.infinity,
-                  color: Colors.white,
-                  child: _buildProductImage(
-                    (p['image'] ?? '').toString(),
+    return GestureDetector(
+      onTap: () => _openProductDetail(p),
+      child: Container(
+        width: 230,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x12A855F7),
+              blurRadius: 20,
+              offset: Offset(0, 6),
+            ),
+            BoxShadow(
+              color: Color(0x08000000),
+              blurRadius: 8,
+              offset: Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+              ),
+              child: Stack(
+                children: [
+                  Container(
                     height: 95,
                     width: double.infinity,
-                    fit: BoxFit.contain,
+                    color: Colors.white,
+                    child: _buildProductImage(
+                      (p['image'] ?? '').toString(),
+                      height: 95,
+                      width: double.infinity,
+                      fit: BoxFit.contain,
+                    ),
                   ),
-                ),
-                if ((p['tag'] as String).isNotEmpty)
-                  Positioned(
-                    top: 8,
-                    left: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        p['tag'] as String,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
+                  if ((p['tag'] ?? '').toString().isNotEmpty)
+                    Positioned(
+                      top: 8,
+                      left: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          (p['tag'] ?? '').toString(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              (p['name'] ?? '').toString(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              (p['brand'] ?? '').toString(),
+                              style: const TextStyle(
+                                color: AppColors.textHint,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           Text(
-                            p['name'] as String,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            '\u20B9${p['price']}',
                             style: const TextStyle(
-                              color: AppColors.textPrimary,
+                              color: AppColors.primary,
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
                           Text(
-                            p['brand'] as String,
-                            style: const TextStyle(
+                            '\u20B9${p['originalPrice']}',
+                            style: TextStyle(
                               color: AppColors.textHint,
-                              fontSize: 11,
+                              fontSize: 10,
+                              decoration: TextDecoration.lineThrough,
+                              decorationColor: AppColors.textHint,
                             ),
                           ),
                         ],
                       ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          '\u20B9${p['price']}',
-                          style: const TextStyle(
-                            color: AppColors.primary,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        Text(
-                          '\u20B9${p['originalPrice']}',
-                          style: TextStyle(
-                            color: AppColors.textHint,
-                            fontSize: 10,
-                            decoration: TextDecoration.lineThrough,
-                            decorationColor: AppColors.textHint,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 5),
-                Consumer<CartModel>(
-                  builder: (_, cart, __) => SizedBox(
-                    width: double.infinity,
-                    height: 30,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.zero,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        textStyle: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                        elevation: 0,
-                      ),
-                      onPressed: () => _addToCart(p),
-                      child: const Text('Add to Cart'),
-                    ),
+                    ],
                   ),
-                ),
-              ],
+                  const SizedBox(height: 5),
+                  _buildWideCartControl(p),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -16,6 +16,7 @@ class HomeProvider extends ChangeNotifier {
   List<ProductModel> _products = [];
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _subCategories = [];
+  List<Map<String, dynamic>> _brands = [];
   bool _loading = false;
   String? _error;
 
@@ -68,6 +69,32 @@ class HomeProvider extends ChangeNotifier {
       merged.putIfAbsent(key, () => normalized);
     }
 
+    final items = merged.values.toList();
+    items.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+    return items;
+  }
+
+  List<Map<String, dynamic>> get brands {
+    if (_brands.isNotEmpty) {
+      return _brands
+          .map(
+            (brand) => {
+              ...brand,
+              'name': (brand['name'] ?? '').toString(),
+              'image': (brand['image'] ?? brand['logo'] ?? '').toString(),
+            },
+          )
+          .where((brand) => (brand['name'] as String).trim().isNotEmpty)
+          .toList();
+    }
+
+    final merged = <String, Map<String, dynamic>>{};
+    for (final product in productMaps) {
+      final name = (product['brand'] ?? '').toString().trim();
+      if (name.isEmpty) continue;
+      final key = _normalizedKey(name);
+      merged.putIfAbsent(key, () => {'id': key, 'name': name, 'image': ''});
+    }
     final items = merged.values.toList();
     items.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
     return items;
@@ -137,13 +164,16 @@ class HomeProvider extends ChangeNotifier {
         _service.getProducts(),
         _service.getCategories(),
         _service.getSubCategories(),
+        _service.getBrands(),
       ]);
       _products = results[0] as List<ProductModel>;
       final cats = results[1] as List<Map<String, dynamic>>;
       final subCats = results[2] as List<Map<String, dynamic>>;
+      final brands = results[3] as List<Map<String, dynamic>>;
       // If Firestore has categories, use them; otherwise fall back to constants
       if (cats.isNotEmpty) _categories = cats;
       if (subCats.isNotEmpty) _subCategories = subCats;
+      if (brands.isNotEmpty) _brands = brands;
     } catch (e) {
       _error = e.toString();
     }

@@ -9,11 +9,20 @@ class ProductModel {
   final double rating;
   final int reviews;
   final String image;
+  final List<String> additionalImages;
+  final List<String> images;
   final String tag;
   final String size;
   final String deliveryTime;
+  final String highlights;
+  final String howToUse;
+  final String homeSection;
   final bool isPopular;
   final bool isRecommended;
+  final bool showInStartFirstOrder;
+  final bool showInRecommendedSalon;
+  final bool showInMostBought;
+  final bool showInPopularProducts;
 
   const ProductModel({
     required this.id,
@@ -26,14 +35,46 @@ class ProductModel {
     required this.rating,
     required this.reviews,
     required this.image,
+    this.additionalImages = const [],
+    this.images = const [],
     this.tag = '',
     this.size = '',
     this.deliveryTime = '',
+    this.highlights = '',
+    this.howToUse = '',
+    this.homeSection = '',
     this.isPopular = false,
     this.isRecommended = false,
+    this.showInStartFirstOrder = false,
+    this.showInRecommendedSalon = false,
+    this.showInMostBought = false,
+    this.showInPopularProducts = false,
   });
 
   factory ProductModel.fromMap(Map<String, dynamic> map, String id) {
+    List<String> toStringList(dynamic raw) {
+      if (raw is! Iterable) return <String>[];
+      try {
+        return raw
+            .where((e) => e != null)
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList(growable: false);
+      } catch (_) {
+        return <String>[];
+      }
+    }
+
+    final additionalImages = toStringList(map['additionalImages']);
+    final images = toStringList(map['images']);
+
+    final thumbnail =
+        (map['image'] ?? map['imageUrl'] ?? '').toString().trim().isNotEmpty
+        ? (map['image'] ?? map['imageUrl']).toString().trim()
+        : (images.isNotEmpty
+              ? images.first
+              : (additionalImages.isNotEmpty ? additionalImages.first : ''));
+
     return ProductModel(
       id: id,
       name: map['name'] ?? '',
@@ -45,12 +86,22 @@ class ProductModel {
       originalPrice: (map['originalPrice'] as num?)?.toInt() ?? 0,
       rating: (map['rating'] as num?)?.toDouble() ?? 0.0,
       reviews: (map['reviews'] as num?)?.toInt() ?? 0,
-      image: map['image'] ?? map['imageUrl'] ?? '',
+      image: thumbnail,
+      additionalImages: additionalImages,
+      images: images,
       tag: map['tag'] ?? '',
       size: map['size'] ?? '',
       deliveryTime: map['deliveryTime'] ?? '',
+      highlights: map['highlights'] ?? map['shortDescription'] ?? '',
+      howToUse: map['howToUse'] ?? map['how_to_use'] ?? map['usage'] ?? '',
+      homeSection:
+          map['homeSection'] ?? map['home_section'] ?? map['section'] ?? '',
       isPopular: map['isPopular'] ?? false,
       isRecommended: map['isRecommended'] ?? false,
+      showInStartFirstOrder: map['showInStartFirstOrder'] ?? false,
+      showInRecommendedSalon: map['showInRecommendedSalon'] ?? false,
+      showInMostBought: map['showInMostBought'] ?? false,
+      showInPopularProducts: map['showInPopularProducts'] ?? false,
     );
   }
 
@@ -65,15 +116,26 @@ class ProductModel {
       'rating': rating,
       'reviews': reviews,
       'image': image,
+      'additionalImages': additionalImages,
+      'images': images,
       'tag': tag,
       'size': size,
       'deliveryTime': deliveryTime,
+      'highlights': highlights,
+      'howToUse': howToUse,
+      'how_to_use': howToUse,
+      'usage': howToUse,
+      'homeSection': homeSection,
       'isPopular': isPopular,
       'isRecommended': isRecommended,
+      'showInStartFirstOrder': showInStartFirstOrder,
+      'showInRecommendedSalon': showInRecommendedSalon,
+      'showInMostBought': showInMostBought,
+      'showInPopularProducts': showInPopularProducts,
     };
   }
 
-  /// Convert to the legacy Map<String,dynamic> format used by widgets/cart
+  /// Convert to the legacy product map format used by widgets/cart.
   Map<String, dynamic> toProductMap() {
     return {
       'id': id,
@@ -87,9 +149,22 @@ class ProductModel {
       'reviews': reviews,
       'image': image,
       'imageUrl': image,
+      'additionalImages': additionalImages,
+      'images': images,
       'tag': tag,
       'size': size,
       'deliveryTime': deliveryTime,
+      'highlights': highlights,
+      'howToUse': howToUse,
+      'how_to_use': howToUse,
+      'usage': howToUse,
+      'homeSection': homeSection,
+      'isPopular': isPopular,
+      'isRecommended': isRecommended,
+      'showInStartFirstOrder': showInStartFirstOrder,
+      'showInRecommendedSalon': showInRecommendedSalon,
+      'showInMostBought': showInMostBought,
+      'showInPopularProducts': showInPopularProducts,
     };
   }
 }
