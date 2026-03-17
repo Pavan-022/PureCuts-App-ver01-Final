@@ -7,8 +7,14 @@ import '../../features/products/product_detail_screen.dart';
 class ProductCard extends StatelessWidget {
   final Map<String, dynamic> product;
   final ValueChanged<Map<String, dynamic>>? onAddToCart;
+  final bool showHeartIcon;
 
-  const ProductCard({super.key, required this.product, this.onAddToCart});
+  const ProductCard({
+    super.key,
+    required this.product,
+    this.onAddToCart,
+    this.showHeartIcon = true,
+  });
 
   void _handleAddToCart(BuildContext context) {
     if (onAddToCart != null) {
@@ -117,22 +123,23 @@ class ProductCard extends StatelessWidget {
                 ),
 
                 // Heart
-                Positioned(
-                  top: 6,
-                  right: 6,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.favorite_border,
-                      size: 16,
-                      color: AppColors.textHint,
+                if (showHeartIcon)
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.favorite_border,
+                        size: 16,
+                        color: AppColors.textHint,
+                      ),
                     ),
                   ),
-                ),
 
                 // Discount badge
                 if (hasDiscount)

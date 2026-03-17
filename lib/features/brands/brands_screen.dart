@@ -98,89 +98,116 @@ class _BrandsScreenState extends State<BrandsScreen> {
     final brands = home.brands;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F8FA),
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 10),
-              child: Text(
-                'Brands',
-                style: TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
+      backgroundColor: Colors.white,
+      body: Stack(
+        children: [
+          // Lavender gradient covering the top area
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              height: 200,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0xFFB69DF8),
+                    Color(0xFFC4B5FD),
+                    Color(0xFFDDD6FE),
+                    Color(0xFFEDE9FE),
+                    Colors.white,
+                  ],
+                  stops: [0.0, 0.18, 0.42, 0.70, 1.0],
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Text(
-                '${brands.length} available',
-                style: const TextStyle(
-                  color: AppColors.textHint,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
+          ),
+          SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                  child: Text(
+                    'Brands',
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Expanded(
-              child: home.loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : brands.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'No brands available',
-                        style: TextStyle(
-                          color: AppColors.textHint,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    )
-                  : GridView.builder(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            mainAxisSpacing: 12,
-                            crossAxisSpacing: 12,
-                            childAspectRatio: 1.22,
-                          ),
-                      itemCount: brands.length,
-                      itemBuilder: (_, i) {
-                        final brand = brands[i];
-                        final name = (brand['name'] ?? '').toString();
-                        final image = (brand['image'] ?? brand['logo'] ?? '')
-                            .toString();
-
-                        return Material(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(14),
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) =>
-                                      ProductListScreen(initialBrand: name),
-                                ),
-                              );
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.all(10),
-                              child: _buildBrandLogo(image, name),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    '${brands.length} available',
+                    style: const TextStyle(
+                      color: AppColors.textHint,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: home.loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : brands.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'No brands available',
+                            style: TextStyle(
+                              color: AppColors.textHint,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
-                        );
-                      },
-                    ),
+                        )
+                      : GridView.builder(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                mainAxisSpacing: 12,
+                                crossAxisSpacing: 12,
+                                childAspectRatio: 1.22,
+                              ),
+                          itemCount: brands.length,
+                          itemBuilder: (_, i) {
+                            final brand = brands[i];
+                            final name = (brand['name'] ?? '').toString();
+                            final image = (brand['image'] ?? brand['logo'] ?? '')
+                                .toString();
+
+                            return Material(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(14),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(14),
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          ProductListScreen(initialBrand: name),
+                                    ),
+                                  );
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.all(10),
+                                  child: _buildBrandLogo(image, name),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

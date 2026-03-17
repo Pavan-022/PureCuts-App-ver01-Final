@@ -9,7 +9,9 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && request.auth.token.admin == true;
+      return isSignedIn() &&
+        (request.auth.token.admin == true ||
+         request.auth.token.superAdmin == true);
     }
 
     function hasPurchasedProduct(productId) {
@@ -28,10 +30,17 @@ service cloud.firestore {
       }
 
       match /reviews/{reviewId} {
-        allow read: if true;
-        allow create, update: if isSignedIn() &&
+        allow read: if isAdmin() ||
+          resource.data.status == 'approved' ||
+          (isSignedIn() && request.auth.uid == reviewId);
+        allow create: if isSignedIn() &&
           request.auth.uid == reviewId &&
           hasPurchasedProduct(productId);
+        allow update: if isAdmin() || (
+          isSignedIn() &&
+          request.auth.uid == reviewId &&
+          hasPurchasedProduct(productId)
+        );
         allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == reviewId);
       }
     }
@@ -56,6 +65,26 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+
+      // Top-level mirrored product reviews for dashboard reliability
+      match /productReviews/{reviewDocId} {
+        allow read: if isAdmin() ||
+          resource.data.status == "approved" ||
+          (isSignedIn() && request.auth.uid == resource.data.userId);
+
+        allow create: if isSignedIn() &&
+          request.auth.uid == request.resource.data.userId &&
+          hasPurchasedProduct(request.resource.data.productId);
+
+        allow update: if isAdmin() || (
+          isSignedIn() &&
+          request.auth.uid == request.resource.data.userId &&
+          hasPurchasedProduct(request.resource.data.productId)
+        );
+
+        allow delete: if isAdmin() ||
+          (isSignedIn() && request.auth.uid == resource.data.userId);
+      }
 
     // ── Users (own doc + admin full access) ───────────────────────────────────
     match /users/{uid} {

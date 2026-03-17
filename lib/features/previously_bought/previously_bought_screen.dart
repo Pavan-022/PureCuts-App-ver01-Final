@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 
+import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/cart/cart_screen.dart';
 import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 import 'package:purecuts/features/orders/order_provider.dart';
@@ -16,6 +17,25 @@ class PreviouslyBoughtScreen extends StatefulWidget {
 
 class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
   String _search = '';
+  String? _lastHydratedUid;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final uid = Provider.of<AuthProvider>(context).user?.uid ?? '';
+    if (uid == _lastHydratedUid) return;
+    _lastHydratedUid = uid;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final orders = context.read<OrderProvider>();
+      if (uid.trim().isEmpty) {
+        orders.clear();
+      } else {
+        orders.loadPurchasedProducts(uid: uid, forceRefresh: true);
+      }
+    });
+  }
 
   void _goToShop() {
     final navigator = Navigator.of(context);
@@ -50,16 +70,43 @@ class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
               .toList();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F8FA),
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader(allBought.length),
+      backgroundColor: Colors.white,
+      body: Stack(
+        children: [
+          // Lavender gradient covering the top area
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              height: 200,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0xFFB69DF8),
+                    Color(0xFFC4B5FD),
+                    Color(0xFFDDD6FE),
+                    Color(0xFFEDE9FE),
+                    Colors.white,
+                  ],
+                  stops: [0.0, 0.18, 0.42, 0.70, 1.0],
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildHeader(allBought.length),
             if (allBought.isNotEmpty) _buildSearchBar(),
             const SizedBox(height: 4),
             Expanded(
-              child: allBought.isEmpty
+              child: orderProvider.isLoading && allBought.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
+                  : allBought.isEmpty
                   ? _buildNeverOrdered(context)
                   : products.isEmpty
                   ? _buildEmpty()
@@ -67,6 +114,8 @@ class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
             ),
           ],
         ),
+      ),
+        ],
       ),
       bottomNavigationBar: Consumer<CartModel>(
         builder: (context, cart, _) {
@@ -147,8 +196,8 @@ class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
 
   Widget _buildHeader(int total) {
     return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      color: Colors.transparent,
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
       child: Row(
         children: [
           Container(

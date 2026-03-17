@@ -13,6 +13,7 @@ import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/orders/order_provider.dart';
 import 'package:purecuts/features/products/detail/product_models.dart';
 import 'package:purecuts/features/products/detail/product_repository.dart';
+import 'package:purecuts/features/products/product_list_screen.dart';
 
 class ProductDetailScreen extends StatefulWidget {
   final Map<String, dynamic> product;
@@ -70,9 +71,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   Future<void> _loadProductDetail() async {
     final productId = (widget.product['id'] ?? '').toString().trim();
     if (productId.isEmpty) return;
+    final uid = _currentUserId;
     setState(() => _loadingDetail = true);
     try {
-      var product = await _repository.getProductById(productId);
+      var product = await _repository.getProductById(
+        productId,
+        currentUserId: uid,
+      );
 
       if (product.variants.isEmpty) {
         try {
@@ -519,6 +524,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     var ratingValue = initialReview?.rating ?? 5.0;
     final pickedFiles = <XFile>[];
     final existingMediaUrls = <String>[...?(initialReview?.mediaUrls)];
+    var uploadProgress = 0.0;
+    var uploadStatusText = '';
+    var sheetClosed = false;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -581,7 +589,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         runSpacing: 10,
                         children: [
                           OutlinedButton.icon(
-                            onPressed: () async {
+                            onPressed: _submittingReview
+                                ? null
+                                : () async {
                               final images = await _imagePicker
                                   .pickMultiImage();
                               if (images.isEmpty) return;
@@ -591,7 +601,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             label: const Text('Add Images'),
                           ),
                           OutlinedButton.icon(
-                            onPressed: () async {
+                            onPressed: _submittingReview
+                                ? null
+                                : () async {
                               final image = await _imagePicker.pickImage(
                                 source: ImageSource.camera,
                                 imageQuality: 85,
@@ -603,7 +615,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             label: const Text('Use Camera'),
                           ),
                           OutlinedButton.icon(
-                            onPressed: () async {
+                            onPressed: _submittingReview
+                                ? null
+                                : () async {
                               final video = await _imagePicker.pickVideo(
                                 source: ImageSource.gallery,
                               );
@@ -666,6 +680,28 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           }),
                         ),
                       ],
+                      if (_submittingReview) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          uploadStatusText.isEmpty
+                              ? 'Uploading media...'
+                              : uploadStatusText,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        LinearProgressIndicator(
+                          minHeight: 6,
+                          borderRadius: BorderRadius.circular(999),
+                          value: pickedFiles.isEmpty
+                              ? null
+                              : uploadProgress.clamp(0.0, 1.0),
+                          backgroundColor: const Color(0xFFEFE9FF),
+                        ),
+                      ],
                       const SizedBox(height: 14),
                       SizedBox(
                         width: double.infinity,
@@ -691,8 +727,20 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                   final userName =
                                       context.read<AuthProvider>().user?.name ??
                                       'Verified Buyer';
+                                    final userEmail =
+                                      context.read<AuthProvider>().user?.email ?? '';
+                                    final userPhone =
+                                      context.read<AuthProvider>().user?.phone ?? '';
 
                                   setState(() => _submittingReview = true);
+                                  setModalState(() {
+                                    uploadProgress = pickedFiles.isEmpty
+                                        ? 0.0
+                                        : 0.02;
+                                    uploadStatusText = pickedFiles.isEmpty
+                                        ? 'Submitting review...'
+                                        : 'Uploading media...';
+                                  });
                                   try {
                                     final uploadedMediaUrls =
                                         await _firestoreService
@@ -700,12 +748,32 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                               uid: uid,
                                               productId: _productId,
                                               files: pickedFiles,
+                                              onProgress: (progress) {
+                                                if (!mounted) return;
+                                                setModalState(() {
+                                                  uploadProgress = progress;
+                                                  uploadStatusText =
+                                                      'Uploading media... ${(progress * 100).round()}%';
+                                                });
+                                              },
                                             );
+
+                                    if (mounted) {
+                                      setModalState(() {
+                                        uploadProgress = 1.0;
+                                        uploadStatusText =
+                                            'Submitting review...';
+                                      });
+                                    }
 
                                     await _firestoreService.submitProductReview(
                                       uid: uid,
                                       productId: _productId,
+                                      productName: _product.name,
+                                      productImage: _displayImage,
                                       userName: userName,
+                                      userEmail: userEmail,
+                                      userPhone: userPhone,
                                       rating: ratingValue,
                                       comment: comment,
                                       mediaUrls: [
@@ -715,6 +783,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                     );
 
                                     if (!mounted) return;
+                                    sheetClosed = true;
                                     navigator.pop();
                                     scaffoldMessenger.showSnackBar(
                                       SnackBar(
@@ -742,6 +811,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                   } finally {
                                     if (mounted) {
                                       setState(() => _submittingReview = false);
+                                      if (!sheetClosed) {
+                                        setModalState(() {
+                                          uploadProgress = 0.0;
+                                          uploadStatusText = '';
+                                        });
+                                      }
                                     }
                                   }
                                 },
@@ -1030,7 +1105,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               : [(widget.product['image'] ?? '').toString()]);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F7),
+      backgroundColor: Colors.white,
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
@@ -1486,47 +1561,60 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             // Delivery section removed as requested.
 
             // ── 5. BRAND CARD ─────────────────────────────────────────────
-            _SectionCard(
-              child: Row(
-                children: [
-                  _buildBrandLogo(brandLogo),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          brand.isNotEmpty ? brand : 'Brand',
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
+            InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: brand.trim().isEmpty
+                  ? null
+                  : () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ProductListScreen(initialBrand: brand),
                         ),
-                        const Text(
-                          'Tap to explore all products',
-                          style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 13,
+                      );
+                    },
+              child: _SectionCard(
+                child: Row(
+                  children: [
+                    _buildBrandLogo(brandLogo),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            brand.isNotEmpty ? brand : 'Brand',
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                        ),
-                      ],
+                          const Text(
+                            'Tap to explore all products',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF2F2F7),
-                      borderRadius: BorderRadius.circular(10),
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF2F2F7),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.chevron_right_rounded,
+                        color: AppColors.textHint,
+                        size: 20,
+                      ),
                     ),
-                    child: const Icon(
-                      Icons.chevron_right_rounded,
-                      color: AppColors.textHint,
-                      size: 20,
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
 

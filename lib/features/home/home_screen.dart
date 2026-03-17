@@ -8,6 +8,7 @@ import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/categories/categories_screen.dart';
 import 'package:purecuts/features/cart/cart_screen.dart';
+import 'package:purecuts/features/favorites/favorites_screen.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/location/location_picker_sheet.dart';
 import 'package:purecuts/features/previously_bought/previously_bought_screen.dart';
@@ -502,6 +503,25 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
 
                 const SizedBox(width: 8),
+                // Favourites icon
+                GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const FavoritesScreen()),
+                  ),
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.favorite_border_rounded,
+                      color: AppColors.textPrimary,
+                      size: 22,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(width: 8),
                 // Avatar with initials — taps to Profile
                 GestureDetector(
                   onTap: () => Navigator.push(
@@ -740,6 +760,7 @@ class _HomeScreenState extends State<HomeScreen> {
             itemCount: popularDisplayItems.length,
             itemBuilder: (_, i) => ProductCard(
               product: popularDisplayItems[i],
+              showHeartIcon: false,
               onAddToCart: _addToCart,
             ),
           ),

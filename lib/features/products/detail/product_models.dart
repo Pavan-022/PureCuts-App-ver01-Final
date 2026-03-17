@@ -72,31 +72,58 @@ class ProductVariant {
 
 class ReviewModel {
   final String id;
+  final String userId;
   final String userName;
+  final String userEmail;
+  final String userPhone;
   final double rating;
   final String comment;
   final List<String> mediaUrls;
+  final String status;
+  final bool approved;
+  final String visibility;
   final DateTime? createdAt;
 
   const ReviewModel({
     required this.id,
+    required this.userId,
     required this.userName,
+    this.userEmail = '',
+    this.userPhone = '',
     required this.rating,
     required this.comment,
     this.mediaUrls = const [],
+    this.status = 'approved',
+    this.approved = true,
+    this.visibility = 'global',
     this.createdAt,
   });
 
   factory ReviewModel.fromMap(String id, Map<String, dynamic> map) {
     return ReviewModel(
       id: id,
+      userId: (map['userId'] ?? map['uid'] ?? id).toString(),
       userName: (map['userName'] ?? map['name'] ?? 'User').toString(),
+      userEmail: (map['userEmail'] ?? map['email'] ?? '').toString(),
+      userPhone: (map['userPhone'] ?? map['phone'] ?? '').toString(),
       rating: (map['rating'] as num?)?.toDouble() ?? 0,
       comment: (map['comment'] ?? map['review'] ?? '').toString(),
       mediaUrls: ((map['mediaUrls'] as List?) ?? const [])
           .map((e) => e.toString().trim())
           .where((e) => e.isNotEmpty)
           .toList(growable: false),
+      status: (map['status'] ?? ((map['approved'] == true) ? 'approved' : 'pending'))
+        .toString()
+        .toLowerCase(),
+      approved: map['approved'] == true ||
+        (map['status'] ?? '').toString().toLowerCase() == 'approved',
+      visibility: (map['visibility'] ??
+          (((map['approved'] == true) ||
+              (map['status'] ?? '').toString().toLowerCase() ==
+                'approved')
+            ? 'global'
+            : 'author_only'))
+        .toString(),
       createdAt: _toDateTime(map['createdAt']),
     );
   }

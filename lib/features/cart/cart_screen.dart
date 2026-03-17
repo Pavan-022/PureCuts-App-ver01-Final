@@ -10,11 +10,27 @@ class CartScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F8FA),
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF8F8FA),
+        backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xFFB69DF8),
+                Color(0xFFC4B5FD),
+                Color(0xFFDDD6FE),
+                Color(0xFFEDE9FE),
+                Colors.white,
+              ],
+              stops: [0.0, 0.18, 0.42, 0.70, 1.0],
+            ),
+          ),
+        ),
         leading: GestureDetector(
           onTap: () => Navigator.pop(context),
           child: const Padding(

@@ -76,10 +76,27 @@ class _ProductListScreenState extends State<ProductListScreen> {
         : 'Products';
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: Colors.transparent,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xFFB69DF8),
+                Color(0xFFC4B5FD),
+                Color(0xFFDDD6FE),
+                Color(0xFFEDE9FE),
+                Colors.white,
+              ],
+              stops: [0.0, 0.18, 0.42, 0.70, 1.0],
+            ),
+          ),
+        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
           onPressed: () => Navigator.pop(context),

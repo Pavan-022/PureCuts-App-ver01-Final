@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
@@ -9,12 +10,14 @@ import 'package:purecuts/features/products/detail/product_models.dart';
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
   static const String _usersCollection = 'users';
   static const String _productsCollection = 'products';
   static const String _ordersCollection = 'orders';
   static const String _productSharesCollection = 'productShares';
+  static const String _productReviewsCollection = 'productReviews';
 
   String _baseProductId(String value) {
     final id = value.trim();
@@ -179,6 +182,56 @@ class FirestoreService {
     }, SetOptions(merge: true));
   }
 
+  Future<List<Map<String, dynamic>>> getUserFavoritedProducts({
+    required String uid,
+  }) async {
+    final cleanUid = uid.trim();
+    if (cleanUid.isEmpty) return const [];
+
+    final userDoc = await _db.collection(_usersCollection).doc(cleanUid).get();
+    final userData = userDoc.data() ?? const <String, dynamic>{};
+
+    final ids =
+        (userData['favoriteProductIds'] as List?)
+            ?.map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList() ??
+        const <String>[];
+    if (ids.isEmpty) return const [];
+
+    final favoriteSet = ids.toSet();
+    final products = <Map<String, dynamic>>[];
+
+    for (var i = 0; i < ids.length; i += 10) {
+      final end = (i + 10 < ids.length) ? i + 10 : ids.length;
+      final chunk = ids.sublist(i, end);
+      final snap = await _db
+          .collection(_productsCollection)
+          .where(FieldPath.documentId, whereIn: chunk)
+          .get();
+
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        products.add({'id': doc.id, ...data});
+      }
+    }
+
+    products.retainWhere(
+      (p) => favoriteSet.contains((p['id'] ?? '').toString().trim()),
+    );
+
+    products.sort((a, b) {
+      final ai = ids.indexOf((a['id'] ?? '').toString());
+      final bi = ids.indexOf((b['id'] ?? '').toString());
+      if (ai < 0 && bi < 0) return 0;
+      if (ai < 0) return 1;
+      if (bi < 0) return -1;
+      return ai.compareTo(bi);
+    });
+
+    return products;
+  }
+
   Future<void> recordProductShare({
     required String productId,
     required String uid,
@@ -252,6 +305,81 @@ class FirestoreService {
     }, SetOptions(merge: true));
   }
 
+  Future<List<Map<String, dynamic>>> getUserPurchasedProducts({
+    required String uid,
+  }) async {
+    final cleanUid = uid.trim();
+    if (cleanUid.isEmpty) return const [];
+
+    final userDoc = await _db.collection(_usersCollection).doc(cleanUid).get();
+    final data = userDoc.data() ?? const <String, dynamic>{};
+    final purchasedIds =
+        (data['purchasedProductIds'] as List?)
+            ?.map((e) => _baseProductId(e.toString()))
+            .where((id) => id.isNotEmpty)
+            .toSet()
+            .toList(growable: false) ??
+        const <String>[];
+
+    if (purchasedIds.isEmpty) {
+      try {
+        final orderSnap = await _db
+            .collection(_ordersCollection)
+            .where('uid', isEqualTo: cleanUid)
+            .orderBy('createdAt', descending: true)
+            .get();
+
+        final fallback = <String, Map<String, dynamic>>{};
+        for (final doc in orderSnap.docs) {
+          final items = (doc.data()['items'] as List?) ?? const [];
+          for (final item in items) {
+            if (item is! Map) continue;
+            final normalized = item.map(
+              (key, value) => MapEntry(key.toString(), value),
+            );
+            final productId = _baseProductId(
+              (normalized['id'] ?? '').toString(),
+            );
+            if (productId.isEmpty || fallback.containsKey(productId)) {
+              continue;
+            }
+            fallback[productId] = {...normalized, 'id': productId};
+          }
+        }
+        return fallback.values.toList(growable: false);
+      } catch (_) {
+        return const [];
+      }
+    }
+
+    final productsById = <String, Map<String, dynamic>>{};
+    const chunkSize = 10;
+
+    for (var i = 0; i < purchasedIds.length; i += chunkSize) {
+      final chunk = purchasedIds.sublist(
+        i,
+        i + chunkSize > purchasedIds.length ? purchasedIds.length : i + chunkSize,
+      );
+      final snap = await _db
+          .collection(_productsCollection)
+          .where(FieldPath.documentId, whereIn: chunk)
+          .get();
+      for (final doc in snap.docs) {
+        productsById[doc.id] = ProductModel.fromMap(doc.data(), doc.id)
+            .toProductMap();
+      }
+    }
+
+    final orderedProducts = purchasedIds
+        .map((id) => productsById[id])
+        .whereType<Map<String, dynamic>>()
+        .toList(growable: false);
+
+    if (orderedProducts.isNotEmpty) return orderedProducts;
+
+    return const [];
+  }
+
   Future<bool> hasUserPurchasedProduct({
     required String uid,
     required String productId,
@@ -289,6 +417,7 @@ class FirestoreService {
     required String uid,
     required String productId,
     required List<XFile> files,
+    ValueChanged<double>? onProgress,
   }) async {
     if (files.isEmpty) return const [];
     final cleanUid = uid.trim();
@@ -297,7 +426,8 @@ class FirestoreService {
 
     final uploaded = <String>[];
     final failed = <String>[];
-    for (final file in files) {
+    for (var index = 0; index < files.length; index++) {
+      final file = files[index];
       try {
         final lower = file.name.toLowerCase();
         String contentType;
@@ -328,7 +458,22 @@ class FirestoreService {
             SettableMetadata(contentType: contentType),
           );
         }
+
+        final sub = uploadTask.snapshotEvents.listen((snapshot) {
+          final total = snapshot.totalBytes;
+          final fileProgress = total > 0
+              ? (snapshot.bytesTransferred / total).clamp(0.0, 1.0)
+              : 0.0;
+          final overall = ((index + fileProgress) / files.length).clamp(
+            0.0,
+            1.0,
+          );
+          onProgress?.call(overall);
+        });
+
         final task = await uploadTask;
+        await sub.cancel();
+        onProgress?.call(((index + 1) / files.length).clamp(0.0, 1.0));
         final url = await task.ref.getDownloadURL();
         uploaded.add(url);
       } catch (e) {
@@ -347,6 +492,8 @@ class FirestoreService {
       );
     }
 
+    onProgress?.call(1.0);
+
     return uploaded;
   }
 
@@ -357,6 +504,10 @@ class FirestoreService {
     required double rating,
     required String comment,
     List<String> mediaUrls = const [],
+    String? userEmail,
+    String? userPhone,
+    String? productName,
+    String? productImage,
   }) async {
     final cleanUid = uid.trim();
     final cleanProductId = _baseProductId(productId);
@@ -377,16 +528,45 @@ class FirestoreService {
         .doc(cleanUid);
 
     final existingReview = await reviewRef.get();
+    final reviewMirrorId = '${cleanProductId}_$cleanUid';
+    final authUser = _auth.currentUser;
+    final userDoc = await _db.collection(_usersCollection).doc(cleanUid).get();
+    final userData = userDoc.data() ?? const <String, dynamic>{};
+    final resolvedEmail =
+        (userEmail ?? '').trim().isNotEmpty
+        ? userEmail!.trim()
+        : (authUser?.email ?? userData['email'] ?? '').toString().trim();
+    final resolvedPhone =
+        (userPhone ?? '').trim().isNotEmpty
+        ? userPhone!.trim()
+        : (authUser?.phoneNumber ?? userData['phone'] ?? '')
+              .toString()
+              .trim();
 
-    await reviewRef.set({
+    final payload = {
       'uid': cleanUid,
+      'userId': cleanUid,
+      'productId': cleanProductId,
+      'productName': (productName ?? '').trim(),
+      'productImage': (productImage ?? '').trim(),
       'userName': userName.trim().isEmpty ? 'Verified Buyer' : userName.trim(),
+      'userEmail': resolvedEmail,
+      'userPhone': resolvedPhone,
       'rating': rating,
       'comment': comment.trim(),
       'mediaUrls': mediaUrls,
+      'status': 'pending',
+      'approved': false,
+      'visibility': 'author_only',
       'updatedAt': FieldValue.serverTimestamp(),
       if (!existingReview.exists) 'createdAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    };
+
+    await reviewRef.set(payload, SetOptions(merge: true));
+    await _db
+        .collection(_productReviewsCollection)
+        .doc(reviewMirrorId)
+        .set(payload, SetOptions(merge: true));
   }
 
   Future<void> deleteProductReview({
@@ -397,11 +577,19 @@ class FirestoreService {
     final cleanProductId = _baseProductId(productId);
     if (cleanUid.isEmpty || cleanProductId.isEmpty) return;
 
+    final reviewMirrorId = '${cleanProductId}_$cleanUid';
+
     await _db
         .collection(_productsCollection)
         .doc(cleanProductId)
         .collection('reviews')
         .doc(cleanUid)
         .delete();
+
+    try {
+      await _db.collection(_productReviewsCollection).doc(reviewMirrorId).delete();
+    } catch (_) {
+      // Keep delete resilient if mirror doc is missing.
+    }
   }
 }

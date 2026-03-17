@@ -12,7 +12,10 @@ class ProductRepository {
   /// in a single parallel [Future.wait] call.
   ///
   /// Throws [StateError] if the product document does not exist.
-  Future<Product> getProductById(String productId) async {
+  Future<Product> getProductById(
+    String productId, {
+    String? currentUserId,
+  }) async {
     final productRef = _db.collection('products').doc(productId);
 
     final productDoc = await productRef.get();
@@ -21,7 +24,9 @@ class ProductRepository {
     }
 
     QuerySnapshot<Map<String, dynamic>>? variantSnap;
-    QuerySnapshot<Map<String, dynamic>>? reviewSnap;
+    QuerySnapshot<Map<String, dynamic>>? approvedByStatusSnap;
+    QuerySnapshot<Map<String, dynamic>>? approvedByFlagSnap;
+    DocumentSnapshot<Map<String, dynamic>>? ownReviewDoc;
 
     try {
       variantSnap = await productRef.collection('variants').get();
@@ -30,13 +35,32 @@ class ProductRepository {
     }
 
     try {
-      reviewSnap = await productRef
+      approvedByStatusSnap = await productRef
           .collection('reviews')
-          .orderBy('createdAt', descending: true)
+          .where('status', isEqualTo: 'approved')
           .limit(20)
           .get();
     } catch (_) {
-      reviewSnap = null;
+      approvedByStatusSnap = null;
+    }
+
+    try {
+      approvedByFlagSnap = await productRef
+          .collection('reviews')
+          .where('approved', isEqualTo: true)
+          .limit(20)
+          .get();
+    } catch (_) {
+      approvedByFlagSnap = null;
+    }
+
+    final normalizedUid = (currentUserId ?? '').trim();
+    if (normalizedUid.isNotEmpty) {
+      try {
+        ownReviewDoc = await productRef.collection('reviews').doc(normalizedUid).get();
+      } catch (_) {
+        ownReviewDoc = null;
+      }
     }
 
     final variants =
@@ -45,11 +69,35 @@ class ProductRepository {
             .map((doc) => ProductVariant.fromMap(doc.id, doc.data()))
             .toList();
 
-    final reviews =
-        (reviewSnap?.docs ??
-                const <QueryDocumentSnapshot<Map<String, dynamic>>>[])
-            .map((doc) => ReviewModel.fromMap(doc.id, doc.data()))
-            .toList();
+    final mergedReviewDocs = <String, QueryDocumentSnapshot<Map<String, dynamic>>>{};
+    for (final doc in (approvedByStatusSnap?.docs ??
+        const <QueryDocumentSnapshot<Map<String, dynamic>>>[])) {
+      mergedReviewDocs[doc.id] = doc;
+    }
+    for (final doc in (approvedByFlagSnap?.docs ??
+        const <QueryDocumentSnapshot<Map<String, dynamic>>>[])) {
+      mergedReviewDocs[doc.id] = doc;
+    }
+
+    final reviews = mergedReviewDocs.values
+        .map((doc) => ReviewModel.fromMap(doc.id, doc.data()))
+        .toList(growable: true)
+      ..sort((a, b) {
+        final aTime = a.createdAt?.millisecondsSinceEpoch ?? 0;
+        final bTime = b.createdAt?.millisecondsSinceEpoch ?? 0;
+        return bTime.compareTo(aTime);
+      });
+
+    final ownDoc = ownReviewDoc;
+    if (ownDoc?.exists == true && ownDoc?.data() != null) {
+      final ownReview = ReviewModel.fromMap(ownDoc!.id, ownDoc.data()!);
+      final existingIndex = reviews.indexWhere((r) => r.id == ownReview.id);
+      if (existingIndex >= 0) {
+        reviews[existingIndex] = ownReview;
+      } else {
+        reviews.insert(0, ownReview);
+      }
+    }
 
     return Product.fromMap(
       productDoc.id,

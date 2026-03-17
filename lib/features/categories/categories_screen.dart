@@ -64,11 +64,28 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7FB),
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF7F7FB),
+        backgroundColor: Colors.transparent,
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: true,
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xFFB69DF8),
+                Color(0xFFC4B5FD),
+                Color(0xFFDDD6FE),
+                Color(0xFFEDE9FE),
+                Colors.white,
+              ],
+              stops: [0.0, 0.18, 0.42, 0.70, 1.0],
+            ),
+          ),
+        ),
         title: const Text(
           'Categories',
           style: TextStyle(
@@ -244,7 +261,10 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                             childAspectRatio: 0.60,
                           ),
                       itemCount: filtered.length,
-                      itemBuilder: (_, i) => ProductCard(product: filtered[i]),
+                      itemBuilder: (_, i) => ProductCard(
+                        product: filtered[i],
+                        showHeartIcon: false,
+                      ),
                     ),
             ),
           ],
