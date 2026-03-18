@@ -1,6 +1,7 @@
 // lib/features/orders/order_confirm_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/models/cart_model.dart';
@@ -23,6 +24,7 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
   late AnimationController _controller;
   late Animation<double> _scaleAnim;
   String _status = 'Placed';
+  String? _orderRef;
   final List<String> _steps = [
     'Placed',
     'Confirmed',
@@ -45,7 +47,7 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
     final cart = context.read<CartModel>();
     final orders = context.read<OrderProvider>();
     final auth = context.read<AuthProvider>();
-    final uid = auth.user?.uid ?? '';
+    final uid = auth.user?.uid ?? FirebaseAuth.instance.currentUser?.uid ?? '';
 
     final orderedItems = cart.items
         .map(
@@ -72,7 +74,15 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
             items: orderedItems,
             total: widget.total,
           )
-          .catchError((_) {
+          .then((ref) {
+            if (!mounted) return;
+            if (ref == null || ref.trim().isEmpty) return;
+            setState(() => _orderRef = ref.trim());
+          })
+          .catchError((error, stackTrace) {
+            debugPrint(
+              '[OrderConfirmScreen] registerUserPurchase failed: $error',
+            );
             // Best effort persistence for review eligibility and order history.
           });
     }
@@ -141,7 +151,7 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
               ),
               const SizedBox(height: 8),
               Text(
-                '₹${widget.total} • ORD-${DateTime.now().millisecondsSinceEpoch % 10000}',
+                '₹${widget.total} • ${_orderRef ?? 'Generating Order ID...'}',
                 style: const TextStyle(
                   color: AppColors.textSecondary,
                   fontSize: 14,

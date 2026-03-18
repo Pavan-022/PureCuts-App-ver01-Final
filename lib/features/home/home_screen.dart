@@ -1,5 +1,9 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:async';
+
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
 import 'package:purecuts/core/widgets/shimmer_widgets.dart';
@@ -11,10 +15,10 @@ import 'package:purecuts/features/cart/cart_screen.dart';
 import 'package:purecuts/features/favorites/favorites_screen.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/location/location_picker_sheet.dart';
-import 'package:purecuts/features/previously_bought/previously_bought_screen.dart';
 import 'package:purecuts/features/products/product_detail_screen.dart';
 import 'package:purecuts/features/products/product_list_screen.dart';
 import 'package:purecuts/features/profile/profile_screen.dart';
+import 'package:video_player/video_player.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -22,15 +26,82 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
   final ScrollController _recommendedScrollController = ScrollController();
+  final PageController _bannerPageController = PageController();
+  Timer? _bannerAutoSlideTimer;
+  int _currentBannerPage = 0;
+  int _bannerCountForTimer = 0;
+  final FirestoreService _firestoreService = FirestoreService();
+  bool _hasOrderHistory = false;
+  bool _orderHistoryResolved = false;
+  bool _orderHistoryLoading = false;
+  AnimationController? _bannerImageZoomController;
+  Animation<double> _bannerImageZoomAnimation =
+      const AlwaysStoppedAnimation<double>(1.0);
+
+  void _ensureBannerImageZoomReady() {
+    if (_bannerImageZoomController != null) return;
+
+    final controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 6),
+    );
+
+    _bannerImageZoomController = controller;
+    _bannerImageZoomAnimation = Tween<double>(
+      begin: 1.0,
+      end: 1.08,
+    ).animate(CurvedAnimation(parent: controller, curve: Curves.easeInOut));
+
+    controller.repeat(reverse: true);
+  }
 
   void _addToCart(Map<String, dynamic> product) {
     context.read<CartModel>().add(product);
   }
 
   Future<void> _refreshHomeData() async {
-    await context.read<HomeProvider>().loadData();
+    await Future.wait([
+      context.read<HomeProvider>().loadData(),
+      _resolveOrderHistory(force: true),
+    ]);
+  }
+
+  Future<void> _resolveOrderHistory({bool force = false}) async {
+    if (_orderHistoryLoading) return;
+    if (_orderHistoryResolved && !force) return;
+
+    final uid = fb_auth.FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    if (uid.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _hasOrderHistory = false;
+        _orderHistoryResolved = true;
+      });
+      return;
+    }
+
+    _orderHistoryLoading = true;
+    try {
+      final purchased = await _firestoreService.getUserPurchasedProducts(
+        uid: uid,
+      );
+      if (!mounted) return;
+      setState(() {
+        _hasOrderHistory = purchased.isNotEmpty;
+        _orderHistoryResolved = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _hasOrderHistory = false;
+        _orderHistoryResolved = true;
+      });
+    } finally {
+      _orderHistoryLoading = false;
+    }
   }
 
   void _openProductDetail(Map<String, dynamic> product) {
@@ -246,8 +317,13 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _ensureBannerImageZoomReady();
+
     Future.microtask(() {
-      context.read<HomeProvider>().loadData().then((_) {
+      Future.wait([
+        context.read<HomeProvider>().loadData(),
+        _resolveOrderHistory(force: true),
+      ]).then((_) {
         if (mounted) _startAutoScroll();
       });
     });
@@ -286,9 +362,33 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _syncBannerAutoSlide(int bannerCount) {
+    if (_bannerCountForTimer == bannerCount) return;
+
+    _bannerCountForTimer = bannerCount;
+    _currentBannerPage = 0;
+    _bannerAutoSlideTimer?.cancel();
+
+    if (bannerCount <= 1) return;
+
+    _bannerAutoSlideTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!_bannerPageController.hasClients) return;
+
+      final nextPage = (_currentBannerPage + 1) % bannerCount;
+      _bannerPageController.animateToPage(
+        nextPage,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeInOut,
+      );
+    });
+  }
+
   @override
   void dispose() {
     _recommendedScrollController.dispose();
+    _bannerAutoSlideTimer?.cancel();
+    _bannerPageController.dispose();
+    _bannerImageZoomController?.dispose();
     super.dispose();
   }
 
@@ -306,6 +406,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    _ensureBannerImageZoomReady();
     final home = context.watch<HomeProvider>();
     final screenHeight = MediaQuery.of(context).size.height;
     return Scaffold(
@@ -640,14 +741,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildContent(HomeProvider home) {
     final products = home.productMaps;
+    final banners = home.banners;
+    final hasBannerData = banners.isNotEmpty;
+    _syncBannerAutoSlide(banners.length);
     final unassignedProducts = products
         .where((p) => !_hasExplicitHomeSection(p))
         .toList();
     final user = context.watch<AuthProvider>().user;
     final createdAt = user?.createdAt;
-    final isNewUser =
-        createdAt == null || DateTime.now().difference(createdAt).inDays <= 14;
-    final startFirstOrderItems = _productsForSection(products, const [
+    final fallbackByAccountAge =
+        createdAt != null && DateTime.now().difference(createdAt).inDays <= 14;
+    final isNewUser = _orderHistoryResolved
+        ? !_hasOrderHistory
+        : fallbackByAccountAge;
+    final hotDealsItems = _productsForSection(products, const [
+      'hot_deals',
       'start_first_order',
     ]);
     final recommendedItems = _productsForSection(products, const [
@@ -667,8 +775,8 @@ class _HomeScreenState extends State<HomeScreen> {
         .where((p) => p['isPopular'] == true)
         .toList();
 
-    final browseItems = startFirstOrderItems.isNotEmpty
-        ? startFirstOrderItems
+    final browseItems = hotDealsItems.isNotEmpty
+        ? hotDealsItems
         : (isNewUser
               ? _recommendedForNewUser(unassignedProducts)
               : unassignedProducts);
@@ -691,9 +799,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _buildSectionHeader('Categories', 'View All'),
         const SizedBox(height: 12),
         _buildCategoriesGrid(home),
+        if (hasBannerData) ...[
+          const SizedBox(height: 14),
+          _buildBannerCarousel(banners),
+        ],
         const SizedBox(height: 20),
-        // Previously Bought section
-        _buildPreviouslyBoughtHeader(context, isNewUser),
+        // Hot deals section
+        _buildHotDealsHeader(context),
         const SizedBox(height: 12),
         _buildRecentlyOrdered(browseItems),
         const SizedBox(height: 20),
@@ -784,8 +896,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final normalizedAliases = sectionAliases.map(normalize).toSet();
 
     bool matchesPlacementFlag(Map<String, dynamic> p) {
-      if (normalizedAliases.contains('start_first_order') &&
-          p['showInStartFirstOrder'] == true) {
+      if ((normalizedAliases.contains('start_first_order') ||
+              normalizedAliases.contains('hot_deals')) &&
+          (p['showInStartFirstOrder'] == true || p['showInHotDeals'] == true)) {
         return true;
       }
       if ((normalizedAliases.contains('recommended_salon') ||
@@ -846,12 +959,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return sorted.take(8).toList();
   }
 
-  Widget _buildPreviouslyBoughtHeader(BuildContext context, bool isNewUser) {
-    final title = isNewUser ? 'Start your first order' : 'Previously Bought';
-    final subtitle = isNewUser
-        ? 'Recommended for you'
-        : 'Order again with one tap';
-
+  Widget _buildHotDealsHeader(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
@@ -862,7 +970,7 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                title,
+                'Hot Deals',
                 style: TextStyle(
                   color: AppColors.textPrimary,
                   fontSize: 17,
@@ -870,7 +978,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               Text(
-                subtitle,
+                'Recommended for you',
                 style: TextStyle(
                   color: AppColors.textHint,
                   fontSize: 11,
@@ -882,16 +990,12 @@ class _HomeScreenState extends State<HomeScreen> {
           GestureDetector(
             onTap: () => Navigator.push(
               context,
-              MaterialPageRoute(
-                builder: (_) => isNewUser
-                    ? const ProductListScreen()
-                    : const PreviouslyBoughtScreen(),
-              ),
+              MaterialPageRoute(builder: (_) => const ProductListScreen()),
             ),
             child: Row(
               children: [
                 Text(
-                  isNewUser ? 'Shop now' : 'See all',
+                  'Shop now',
                   style: TextStyle(
                     color: AppColors.primary,
                     fontSize: 11,
@@ -1040,6 +1144,152 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildBannerCarousel(List<Map<String, dynamic>> banners) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            height: 150,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: PageView.builder(
+                controller: _bannerPageController,
+                itemCount: banners.length,
+                onPageChanged: (index) {
+                  if (!mounted) return;
+                  setState(() {
+                    _currentBannerPage = index;
+                  });
+                },
+                itemBuilder: (_, index) {
+                  final banner = banners[index];
+                  final mediaUrl = (banner['mediaUrl'] ?? banner['image'] ?? '')
+                      .toString();
+                  final mediaType = (banner['mediaType'] ?? '')
+                      .toString()
+                      .trim()
+                      .toLowerCase();
+                  final isVideo =
+                      mediaType == 'video' ||
+                      RegExp(
+                        r'\.(mp4|mov|m4v|webm|ogv|m3u8)(\?|#|$)',
+                        caseSensitive: false,
+                      ).hasMatch(mediaUrl);
+                  final title = (banner['title'] ?? '').toString();
+                  final subtitle = (banner['subtitle'] ?? '').toString();
+
+                  return Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x12000000),
+                          blurRadius: 12,
+                          offset: Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        isVideo
+                            ? _BannerVideo(url: mediaUrl)
+                            : AnimatedBuilder(
+                                animation: _bannerImageZoomAnimation,
+                                child: _buildProductImage(
+                                  mediaUrl,
+                                  width: double.infinity,
+                                  height: 150,
+                                  fit: BoxFit.cover,
+                                ),
+                                builder: (_, child) => Transform.scale(
+                                  scale: _bannerImageZoomAnimation.value,
+                                  alignment: Alignment.center,
+                                  child: child,
+                                ),
+                              ),
+                        if (title.isNotEmpty || subtitle.isNotEmpty)
+                          Positioned(
+                            left: 12,
+                            right: 12,
+                            bottom: 12,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (title.isNotEmpty)
+                                  Text(
+                                    title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      shadows: [
+                                        Shadow(
+                                          color: Color(0xAA000000),
+                                          blurRadius: 6,
+                                          offset: Offset(0, 1),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                if (subtitle.isNotEmpty)
+                                  Text(
+                                    subtitle,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                      shadows: [
+                                        Shadow(
+                                          color: Color(0xAA000000),
+                                          blurRadius: 5,
+                                          offset: Offset(0, 1),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(banners.length.clamp(1, 8), (index) {
+              final selected = index == _currentBannerPage;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: selected ? 20 : 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? AppColors.primary
+                      : AppColors.primary.withOpacity(0.30),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              );
+            }),
+          ),
+        ],
       ),
     );
   }
@@ -1380,6 +1630,104 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _BannerVideo extends StatefulWidget {
+  const _BannerVideo({required this.url});
+
+  final String url;
+
+  @override
+  State<_BannerVideo> createState() => _BannerVideoState();
+}
+
+class _BannerVideoState extends State<_BannerVideo> {
+  VideoPlayerController? _controller;
+  Future<void>? _initFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupController();
+  }
+
+  @override
+  void didUpdateWidget(covariant _BannerVideo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) {
+      _disposeController();
+      _setupController();
+    }
+  }
+
+  void _setupController() {
+    final url = widget.url.trim();
+    if (url.isEmpty) return;
+
+    final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+    _controller = controller;
+    _initFuture = controller.initialize().then((_) async {
+      await controller.setLooping(true);
+      await controller.setVolume(0);
+      await controller.play();
+      if (mounted) setState(() {});
+    });
+  }
+
+  Future<void> _disposeController() async {
+    final c = _controller;
+    _controller = null;
+    _initFuture = null;
+    if (c != null) {
+      await c.dispose();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposeController();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_controller == null || _initFuture == null) {
+      return Container(
+        color: AppColors.surface,
+        child: const Icon(Icons.videocam_off, color: AppColors.textHint),
+      );
+    }
+
+    return FutureBuilder<void>(
+      future: _initFuture,
+      builder: (_, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done ||
+            !_controller!.value.isInitialized) {
+          return Container(
+            color: AppColors.surface,
+            child: const Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+
+        return SizedBox.expand(
+          child: FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+              width: _controller!.value.size.width,
+              height: _controller!.value.size.height,
+              child: VideoPlayer(_controller!),
+            ),
+          ),
+        );
+      },
     );
   }
 }

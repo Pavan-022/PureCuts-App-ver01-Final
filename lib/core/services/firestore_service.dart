@@ -18,6 +18,7 @@ class FirestoreService {
   static const String _ordersCollection = 'orders';
   static const String _productSharesCollection = 'productShares';
   static const String _productReviewsCollection = 'productReviews';
+  static const String _bannersCollection = 'banners';
 
   String _baseProductId(String value) {
     final id = value.trim();
@@ -109,6 +110,116 @@ class FirestoreService {
     return snap.docs
         .map((doc) => ProductModel.fromMap(doc.data(), doc.id))
         .toList();
+  }
+
+  int _toOrderIndex(dynamic value) {
+    if (value is num) return value.toInt();
+    final parsed = int.tryParse((value ?? '').toString());
+    return parsed ?? 9999;
+  }
+
+  DateTime _toDateSafe(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is num) {
+      return DateTime.fromMillisecondsSinceEpoch(value.toInt());
+    }
+    final parsed = DateTime.tryParse((value ?? '').toString());
+    return parsed ?? DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  Future<String> _resolveMediaUrl(dynamic value) async {
+    final raw = (value ?? '').toString().trim();
+    if (raw.isEmpty) return '';
+
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    if (raw.startsWith('assets/')) return raw;
+
+    try {
+      if (raw.startsWith('gs://')) {
+        return await _storage.refFromURL(raw).getDownloadURL();
+      }
+
+      final normalized = raw.startsWith('/') ? raw.substring(1) : raw;
+      return await _storage.ref(normalized).getDownloadURL();
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  bool _isVideoLike(dynamic value) {
+    final raw = (value ?? '').toString().trim().toLowerCase();
+    if (raw.isEmpty) return false;
+    if (raw.startsWith('data:video/')) return true;
+    return RegExp(r'\.(mp4|mov|m4v|webm|ogv|m3u8)(\?|#|$)').hasMatch(raw);
+  }
+
+  String _inferBannerMediaType(Map<String, dynamic> raw) {
+    final explicit = (raw['mediaType'] ?? '').toString().trim().toLowerCase();
+    if (explicit == 'video' || explicit == 'image') return explicit;
+
+    final source =
+        raw['mediaUrl'] ?? raw['video'] ?? raw['image'] ?? raw['imageUrl'];
+    return _isVideoLike(source) ? 'video' : 'image';
+  }
+
+  Future<List<Map<String, dynamic>>> getBanners() async {
+    final rows = <Map<String, dynamic>>[];
+
+    try {
+      final ordered = await _db
+          .collection(_bannersCollection)
+          .orderBy('createdAt', descending: true)
+          .get();
+      rows.addAll(ordered.docs.map((doc) => {'id': doc.id, ...doc.data()}));
+    } catch (_) {
+      final fallback = await _db.collection(_bannersCollection).get();
+      rows.addAll(fallback.docs.map((doc) => {'id': doc.id, ...doc.data()}));
+    }
+
+    final normalized = <Map<String, dynamic>>[];
+
+    for (final raw in rows) {
+      final mediaType = _inferBannerMediaType(raw);
+      final mediaUrl = await _resolveMediaUrl(
+        raw['mediaUrl'] ??
+            raw['video'] ??
+            raw['image'] ??
+            raw['imageUrl'] ??
+            raw['bannerImage'],
+      );
+
+      final banner = {
+        ...raw,
+        'id': (raw['id'] ?? '').toString(),
+        'title': (raw['title'] ?? '').toString().trim(),
+        'subtitle': (raw['subtitle'] ?? '').toString().trim(),
+        'mediaType': mediaType,
+        'mediaUrl': mediaUrl,
+        'image': mediaUrl,
+        'link': (raw['link'] ?? '/products').toString().trim(),
+        'active': raw['active'] != false,
+        'order': _toOrderIndex(raw['order']),
+        'createdAt': _toDateSafe(raw['createdAt']),
+        'updatedAt': _toDateSafe(raw['updatedAt']),
+      };
+
+      if ((banner['mediaUrl'] as String).isNotEmpty &&
+          banner['active'] == true) {
+        normalized.add(banner);
+      }
+    }
+
+    normalized.sort((a, b) {
+      final orderCmp = (a['order'] as int).compareTo((b['order'] as int));
+      if (orderCmp != 0) return orderCmp;
+
+      final bUpdated = (b['updatedAt'] as DateTime);
+      final aUpdated = (a['updatedAt'] as DateTime);
+      return bUpdated.compareTo(aUpdated);
+    });
+
+    return normalized;
   }
 
   // ── Fetch categories ──────────────────────────────────────────────────────
@@ -273,13 +384,13 @@ class FirestoreService {
     }
   }
 
-  Future<void> registerUserPurchase({
+  Future<String?> registerUserPurchase({
     required String uid,
     required List<Map<String, dynamic>> items,
     required int total,
   }) async {
     final cleanUid = uid.trim();
-    if (cleanUid.isEmpty || items.isEmpty) return;
+    if (cleanUid.isEmpty || items.isEmpty) return null;
 
     final productIds = items
         .map((e) => _baseProductId((e['id'] ?? '').toString()))
@@ -287,14 +398,76 @@ class FirestoreService {
         .toSet()
         .toList(growable: false);
 
-    if (productIds.isEmpty) return;
+    if (productIds.isEmpty) return null;
 
-    await _db.collection(_ordersCollection).add({
+    final orderDoc = _db.collection(_ordersCollection).doc();
+    final now = DateTime.now();
+    final ymd =
+        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+    final orderRef = 'PC-$ymd-${orderDoc.id.substring(0, 6).toUpperCase()}';
+
+    final userDoc = await _db.collection(_usersCollection).doc(cleanUid).get();
+    final userData = userDoc.data() ?? const <String, dynamic>{};
+
+    final customerName = (userData['name'] ?? userData['ownerName'] ?? '')
+        .toString()
+        .trim();
+    final customerEmail = (userData['email'] ?? '').toString().trim();
+    final customerPhone = (userData['phone'] ?? userData['mobile'] ?? '')
+        .toString()
+        .trim();
+
+    var totalItems = 0;
+    final normalizedItems = items
+        .asMap()
+        .entries
+        .map((entry) {
+          final index = entry.key;
+          final item = entry.value;
+          final productId = _baseProductId((item['id'] ?? '').toString());
+          final quantity = (item['quantity'] ?? item['qty'] ?? 1) is num
+              ? (item['quantity'] ?? item['qty'] ?? 1) as num
+              : num.tryParse(
+                      (item['quantity'] ?? item['qty'] ?? 1).toString(),
+                    ) ??
+                    1;
+          totalItems += quantity.toInt();
+
+          return {
+            ...item,
+            'id': productId.isEmpty ? (item['id'] ?? '') : productId,
+            'productId': productId,
+            'quantity': quantity,
+            'orderId': orderRef,
+            'orderItemId':
+                '$orderRef-I${(index + 1).toString().padLeft(2, '0')}',
+          };
+        })
+        .toList(growable: false);
+
+    await orderDoc.set({
+      'orderId': orderRef,
+      'orderRef': orderRef,
+      'orderNumber': orderRef,
       'uid': cleanUid,
-      'items': items,
+      'userId': cleanUid,
+      'customerId': cleanUid,
+      'customerName': customerName,
+      'customerEmail': customerEmail,
+      'customerPhone': customerPhone,
+      'phone': customerPhone,
+      'items': normalizedItems,
       'productIds': productIds,
+      'itemCount': normalizedItems.length,
+      'itemsCount': normalizedItems.length,
+      'totalItems': totalItems,
       'total': total,
+      'amount': total,
+      'totalAmount': total,
+      'grandTotal': total,
       'status': 'placed',
+      'orderStatus': 'placed',
+      'paymentStatus': 'pending',
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
@@ -303,6 +476,8 @@ class FirestoreService {
       'purchasedProductIds': FieldValue.arrayUnion(productIds),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+
+    return orderRef;
   }
 
   Future<List<Map<String, dynamic>>> getUserPurchasedProducts({
@@ -358,15 +533,19 @@ class FirestoreService {
     for (var i = 0; i < purchasedIds.length; i += chunkSize) {
       final chunk = purchasedIds.sublist(
         i,
-        i + chunkSize > purchasedIds.length ? purchasedIds.length : i + chunkSize,
+        i + chunkSize > purchasedIds.length
+            ? purchasedIds.length
+            : i + chunkSize,
       );
       final snap = await _db
           .collection(_productsCollection)
           .where(FieldPath.documentId, whereIn: chunk)
           .get();
       for (final doc in snap.docs) {
-        productsById[doc.id] = ProductModel.fromMap(doc.data(), doc.id)
-            .toProductMap();
+        productsById[doc.id] = ProductModel.fromMap(
+          doc.data(),
+          doc.id,
+        ).toProductMap();
       }
     }
 
@@ -532,16 +711,12 @@ class FirestoreService {
     final authUser = _auth.currentUser;
     final userDoc = await _db.collection(_usersCollection).doc(cleanUid).get();
     final userData = userDoc.data() ?? const <String, dynamic>{};
-    final resolvedEmail =
-        (userEmail ?? '').trim().isNotEmpty
+    final resolvedEmail = (userEmail ?? '').trim().isNotEmpty
         ? userEmail!.trim()
         : (authUser?.email ?? userData['email'] ?? '').toString().trim();
-    final resolvedPhone =
-        (userPhone ?? '').trim().isNotEmpty
+    final resolvedPhone = (userPhone ?? '').trim().isNotEmpty
         ? userPhone!.trim()
-        : (authUser?.phoneNumber ?? userData['phone'] ?? '')
-              .toString()
-              .trim();
+        : (authUser?.phoneNumber ?? userData['phone'] ?? '').toString().trim();
 
     final payload = {
       'uid': cleanUid,
@@ -587,7 +762,10 @@ class FirestoreService {
         .delete();
 
     try {
-      await _db.collection(_productReviewsCollection).doc(reviewMirrorId).delete();
+      await _db
+          .collection(_productReviewsCollection)
+          .doc(reviewMirrorId)
+          .delete();
     } catch (_) {
       // Keep delete resilient if mirror doc is missing.
     }

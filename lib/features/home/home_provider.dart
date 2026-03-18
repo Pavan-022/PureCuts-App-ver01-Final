@@ -14,6 +14,7 @@ class HomeProvider extends ChangeNotifier {
   final FirestoreService _service = FirestoreService();
 
   List<ProductModel> _products = [];
+  List<Map<String, dynamic>> _banners = [];
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _subCategories = [];
   List<Map<String, dynamic>> _brands = [];
@@ -21,6 +22,7 @@ class HomeProvider extends ChangeNotifier {
   String? _error;
 
   List<ProductModel> get products => _products;
+  List<Map<String, dynamic>> get banners => _banners;
 
   List<Map<String, dynamic>> get categories {
     final source = _categories.isNotEmpty
@@ -162,14 +164,16 @@ class HomeProvider extends ChangeNotifier {
     try {
       final results = await Future.wait([
         _service.getProducts(),
+        _service.getBanners(),
         _service.getCategories(),
         _service.getSubCategories(),
         _service.getBrands(),
       ]);
       _products = results[0] as List<ProductModel>;
-      final cats = results[1] as List<Map<String, dynamic>>;
-      final subCats = results[2] as List<Map<String, dynamic>>;
-      final brands = results[3] as List<Map<String, dynamic>>;
+      _banners = results[1] as List<Map<String, dynamic>>;
+      final cats = results[2] as List<Map<String, dynamic>>;
+      final subCats = results[3] as List<Map<String, dynamic>>;
+      final brands = results[4] as List<Map<String, dynamic>>;
       // If Firestore has categories, use them; otherwise fall back to constants
       if (cats.isNotEmpty) _categories = cats;
       if (subCats.isNotEmpty) _subCategories = subCats;

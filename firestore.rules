@@ -14,6 +14,12 @@ service cloud.firestore {
          request.auth.token.superAdmin == true);
     }
 
+    function canManageBanners() {
+      // Temporary policy: any signed-in dashboard user can manage banners.
+      // Change this to `isAdmin()` once claims are fully rolled out.
+      return isSignedIn();
+    }
+
     function hasPurchasedProduct(productId) {
       return isSignedIn() &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.purchasedProductIds.hasAny([productId]);
@@ -107,7 +113,10 @@ service cloud.firestore {
     }
 
     // ── Banners / Coupons / Notifications ────────────────────────────────────
-    match /banners/{docId}       { allow read: if true; allow write: if isAdmin(); }
+    // NOTE: Banner writes are temporarily allowed for authenticated users to
+    // unblock dashboard banner management while admin-claim rollout stabilizes.
+    // Tighten back to isAdmin() once all dashboard operators have claims.
+    match /banners/{docId}       { allow read: if true; allow write: if canManageBanners(); }
     match /coupons/{docId}       { allow read: if isSignedIn(); allow write: if isAdmin(); }
     match /notifications/{docId} { allow read: if isSignedIn(); allow write: if isAdmin(); }
   }

@@ -124,10 +124,8 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 childAspectRatio: 0.63,
               ),
               itemCount: items.length,
-              itemBuilder: (_, i) => ProductCard(
-                product: items[i],
-                showHeartIcon: false,
-              ),
+              itemBuilder: (_, i) =>
+                  ProductCard(product: items[i], showHeartIcon: false),
             );
           },
         ),
