@@ -65,6 +65,29 @@ class AppConstants {
     {'name': 'Wax Heater', 'parentCategory': 'Machineries'},
   ];
 
+  static const List<Map<String, dynamic>> subSubCategories = [
+    {
+      'name': 'Developers & Peroxides',
+      'parentCategory': 'Hair Care',
+      'parentSubCategory': 'Hair Color',
+    },
+    {
+      'name': 'Hair color gel',
+      'parentCategory': 'Hair Care',
+      'parentSubCategory': 'Hair Color',
+    },
+    {
+      'name': 'Hair colour cream',
+      'parentCategory': 'Hair Care',
+      'parentSubCategory': 'Hair Color',
+    },
+    {
+      'name': 'Hair dye',
+      'parentCategory': 'Hair Care',
+      'parentSubCategory': 'Hair Color',
+    },
+  ];
+
   // Dummy orders
   static const List<Map<String, dynamic>> orders = [
     {

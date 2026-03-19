@@ -17,6 +17,7 @@ class HomeProvider extends ChangeNotifier {
   List<Map<String, dynamic>> _banners = [];
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _subCategories = [];
+  List<Map<String, dynamic>> _subSubCategories = [];
   List<Map<String, dynamic>> _brands = [];
   bool _loading = false;
   String? _error;
@@ -102,6 +103,40 @@ class HomeProvider extends ChangeNotifier {
     return items;
   }
 
+  List<Map<String, dynamic>> get subSubCategories {
+    final source = _subSubCategories.isNotEmpty
+        ? _subSubCategories
+        : AppConstants.subSubCategories;
+    final merged = <String, Map<String, dynamic>>{};
+
+    for (final subSubCategory in source) {
+      final normalized = _normalizeSubSubCategory(subSubCategory);
+      final parentCategoryKey = _normalizedKey(
+        normalized['parentCategory'] as String?,
+      );
+      if (_hiddenCategoryNames.contains(parentCategoryKey)) continue;
+
+      final key =
+          '$parentCategoryKey::${_normalizedKey(normalized['parentSubCategory'] as String?)}::${_normalizedKey(normalized['name'] as String?)}';
+      merged[key] = normalized;
+    }
+
+    for (final subSubCategory in AppConstants.subSubCategories) {
+      final normalized = _normalizeSubSubCategory(subSubCategory);
+      final parentCategoryKey = _normalizedKey(
+        normalized['parentCategory'] as String?,
+      );
+      if (_hiddenCategoryNames.contains(parentCategoryKey)) continue;
+      final key =
+          '$parentCategoryKey::${_normalizedKey(normalized['parentSubCategory'] as String?)}::${_normalizedKey(normalized['name'] as String?)}';
+      merged.putIfAbsent(key, () => normalized);
+    }
+
+    final items = merged.values.toList();
+    items.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+    return items;
+  }
+
   bool get loading => _loading;
   String? get error => _error;
 
@@ -150,6 +185,7 @@ class HomeProvider extends ChangeNotifier {
         product['brand'],
         product['category'],
         productSubCategory(product),
+        productSubSubCategory(product),
         ..._productTags(product),
       ].join(' '),
     );
@@ -187,6 +223,27 @@ class HomeProvider extends ChangeNotifier {
     };
   }
 
+  Map<String, dynamic> _normalizeSubSubCategory(
+    Map<String, dynamic> subSubCategory,
+  ) {
+    return {
+      ...subSubCategory,
+      'name': subSubCategory['name'] ?? 'Sub-subcategory',
+      'parentCategory':
+          subSubCategory['parentCategory'] ??
+          subSubCategory['category'] ??
+          subSubCategory['parent'] ??
+          '',
+      'parentSubCategory':
+          subSubCategory['parentSubCategory'] ??
+          subSubCategory['subCategory'] ??
+          subSubCategory['parentSubcategory'] ??
+          subSubCategory['parentSub'] ??
+          '',
+      'icon': subSubCategory['icon'] ?? subSubCategory['image'],
+    };
+  }
+
   List<Map<String, dynamic>> subCategoriesFor(String category) {
     final categoryKey = _normalizedKey(category);
     return subCategories
@@ -198,6 +255,25 @@ class HomeProvider extends ChangeNotifier {
         .toList();
   }
 
+  List<Map<String, dynamic>> subSubCategoriesFor(
+    String category,
+    String subCategory,
+  ) {
+    final categoryKey = _normalizedKey(category);
+    final subCategoryKey = _normalizedKey(subCategory);
+    return subSubCategories
+        .where(
+          (subSubCategory) =>
+              _normalizedKey(subSubCategory['parentCategory'] as String?) ==
+                  categoryKey &&
+              _normalizedKey(
+                    subSubCategory['parentSubCategory'] as String?,
+                  ) ==
+                  subCategoryKey,
+        )
+        .toList();
+  }
+
   String productSubCategory(Map<String, dynamic> product) {
     return (product['subCategory'] ??
             product['subcategory'] ??
@@ -205,6 +281,14 @@ class HomeProvider extends ChangeNotifier {
             '')
         .toString();
   }
+
+        String productSubSubCategory(Map<String, dynamic> product) {
+          return (product['subSubCategory'] ??
+          product['subsubCategory'] ??
+          product['sub_sub_category'] ??
+          '')
+          .toString();
+        }
 
   /// Returns all products as the legacy Map format (for widgets that expect Map)
   List<Map<String, dynamic>> get productMaps {
@@ -223,16 +307,19 @@ class HomeProvider extends ChangeNotifier {
         _service.getBanners(),
         _service.getCategories(),
         _service.getSubCategories(),
+        _service.getSubSubCategories(),
         _service.getBrands(),
       ]);
       _products = results[0] as List<ProductModel>;
       _banners = results[1] as List<Map<String, dynamic>>;
       final cats = results[2] as List<Map<String, dynamic>>;
       final subCats = results[3] as List<Map<String, dynamic>>;
-      final brands = results[4] as List<Map<String, dynamic>>;
+      final subSubCats = results[4] as List<Map<String, dynamic>>;
+      final brands = results[5] as List<Map<String, dynamic>>;
       // If Firestore has categories, use them; otherwise fall back to constants
       if (cats.isNotEmpty) _categories = cats;
       if (subCats.isNotEmpty) _subCategories = subCats;
+      if (subSubCats.isNotEmpty) _subSubCategories = subSubCats;
       if (brands.isNotEmpty) _brands = brands;
     } catch (e) {
       _error = e.toString();
@@ -245,6 +332,7 @@ class HomeProvider extends ChangeNotifier {
   List<Map<String, dynamic>> filteredProducts({
     String category = 'All',
     String? subCategory,
+    String? subSubCategory,
     String query = '',
     String sort = 'popular',
   }) {
@@ -269,6 +357,20 @@ class HomeProvider extends ChangeNotifier {
             (product) =>
                 _normalizedKey(productSubCategory(product)) ==
                 _normalizedKey(subCategory),
+          )
+          .toList();
+    }
+
+    final hasStructuredSubSubCategories = list.any(
+      (product) => productSubSubCategory(product).trim().isNotEmpty,
+    );
+    if ((subSubCategory ?? '').trim().isNotEmpty &&
+        hasStructuredSubSubCategories) {
+      list = list
+          .where(
+            (product) =>
+                _normalizedKey(productSubSubCategory(product)) ==
+                _normalizedKey(subSubCategory),
           )
           .toList();
     }

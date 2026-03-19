@@ -72,12 +72,279 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
     });
   }
 
-  void _toggleSubCategory(String subCategoryName) {
-    setState(() {
-      _selectedSubCategory = _selectedSubCategory == subCategoryName
-          ? null
-          : subCategoryName;
-    });
+  String _normalize(String value) => value.trim().toLowerCase();
+
+  List<Map<String, dynamic>> _productsForSubCategory(
+    HomeProvider home,
+    String category,
+    String subCategory,
+  ) {
+    final exact = home.filteredProducts(
+      category: category,
+      subCategory: subCategory,
+    );
+    if (exact.isNotEmpty) return exact;
+
+    final inCategory = home.filteredProducts(category: category);
+    final needle = _normalize(subCategory);
+
+    return inCategory.where((product) {
+      final productSub =
+          (product['subCategory'] ?? product['subcategory'] ?? '').toString();
+      if (_normalize(productSub) == needle) return true;
+
+      final pathNames = product['categoryPathNames'];
+      if (pathNames is List) {
+        final joined = pathNames.map((e) => e.toString()).join(' ');
+        if (_normalize(joined).contains(needle)) return true;
+      }
+
+      final tags = product['tags'];
+      if (tags is List) {
+        final joined = tags.map((e) => e.toString()).join(' ');
+        if (_normalize(joined).contains(needle)) return true;
+      }
+
+      final name = (product['name'] ?? '').toString();
+      return _normalize(name).contains(needle);
+    }).toList(growable: false);
+  }
+
+  String _productSubSubCategory(Map<String, dynamic> product) {
+    return (product['subSubCategory'] ??
+            product['subsubCategory'] ??
+            product['sub_sub_category'] ??
+            '')
+        .toString();
+  }
+
+  List<_GrandchildNode> _grandchildrenFor(
+    HomeProvider home,
+    String category,
+    String subCategory,
+  ) {
+    final items = home.subSubCategoriesFor(category, subCategory);
+    return items.map((item) {
+      final rawName = (item['name'] ?? '').toString();
+      final key = _normalize(rawName);
+      IconData icon = Icons.category_outlined;
+      if (key.contains('developer') || key.contains('peroxide')) {
+        icon = Icons.science_outlined;
+      } else if (key.contains('gel')) {
+        icon = Icons.opacity_outlined;
+      } else if (key.contains('cream') || key.contains('mask')) {
+        icon = Icons.spa_outlined;
+      } else if (key.contains('dye') || key.contains('color')) {
+        icon = Icons.brush_outlined;
+      }
+
+      return _GrandchildNode(name: rawName, icon: icon);
+    }).toList();
+  }
+
+  Future<void> _handleSubCategoryTap(
+    HomeProvider home,
+    String selectedCategory,
+    String subCategoryName,
+  ) async {
+    final next = _selectedSubCategory == subCategoryName ? null : subCategoryName;
+    setState(() => _selectedSubCategory = next);
+
+    if (next == null) return;
+    final grandchildren = _grandchildrenFor(home, selectedCategory, next);
+    if (grandchildren.isEmpty) return;
+
+    final baseProducts = _productsForSubCategory(home, selectedCategory, next);
+
+    await _openGrandchildBottomSheet(
+      selectedCategory: selectedCategory,
+      selectedSubCategory: next,
+      grandchildren: grandchildren,
+      baseProducts: baseProducts,
+    );
+  }
+
+  Future<void> _openGrandchildBottomSheet({
+    required String selectedCategory,
+    required String selectedSubCategory,
+    required List<_GrandchildNode> grandchildren,
+    required List<Map<String, dynamic>> baseProducts,
+  }) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        _GrandchildNode? active;
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            final shown = active == null
+                ? baseProducts
+                : baseProducts
+                      .where((p) {
+                        final direct =
+                            _normalize(_productSubSubCategory(p)) ==
+                            _normalize(active!.name);
+                        if (direct) return true;
+
+                        // Graceful fallback for legacy products without subSubCategory.
+                        final haystack = [
+                          p['name'],
+                          p['description'],
+                          p['shortDescription'],
+                          p['tag'],
+                          p['tags'],
+                        ].map((v) => v?.toString().toLowerCase() ?? '').join(' ');
+                        return haystack.contains(_normalize(active!.name));
+                      })
+                      .toList();
+
+            return FractionallySizedBox(
+              heightFactor: 0.90,
+              child: Container(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        margin: const EdgeInsets.only(top: 10),
+                        width: 44,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD8D4E6),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: Text(
+                        '$selectedCategory > $selectedSubCategory',
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
+                      child: Text(
+                        active == null
+                            ? 'Select a category to refine products'
+                            : '${active!.name} • ${shown.length} products',
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      height: 52,
+                      child: ListView.separated(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        scrollDirection: Axis.horizontal,
+                        itemCount: grandchildren.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        itemBuilder: (_, i) {
+                          final child = grandchildren[i];
+                          final selected = active?.name == child.name;
+                          return GestureDetector(
+                            onTap: () {
+                              setModalState(() {
+                                active = selected ? null : child;
+                              });
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: selected
+                                    ? AppColors.primary
+                                    : const Color(0xFFF6F3FF),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    child.icon,
+                                    size: 15,
+                                    color: selected
+                                        ? Colors.white
+                                        : AppColors.textSecondary,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    child.name,
+                                    style: TextStyle(
+                                      color: selected
+                                          ? Colors.white
+                                          : AppColors.textSecondary,
+                                      fontSize: 12,
+                                      fontWeight: selected
+                                          ? FontWeight.w700
+                                          : FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: shown.isEmpty
+                          ? const Center(
+                              child: Text(
+                                'No products for this selection yet',
+                                style: TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            )
+                          : GridView.builder(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: 2,
+                                    mainAxisSpacing: 14,
+                                    crossAxisSpacing: 14,
+                                    childAspectRatio: 0.60,
+                                  ),
+                              itemCount: shown.length,
+                              itemBuilder: (_, i) {
+                                final product = shown[i];
+                                final productId = _baseProductId(
+                                  (product['id'] ?? '').toString(),
+                                );
+                                return ProductCard(
+                                  product: product,
+                                  showHeartIcon: false,
+                                  showBoughtEarlierBadge:
+                                      _purchasedProductIds.contains(productId),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -96,10 +363,9 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
         ? _selectedSubCategory
         : null;
 
-    final filtered = home.filteredProducts(
-      category: selectedCategory,
-      subCategory: selectedSubCategory,
-    );
+    final filtered = selectedSubCategory == null
+        ? home.filteredProducts(category: selectedCategory)
+        : _productsForSubCategory(home, selectedCategory, selectedSubCategory);
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -225,7 +491,11 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                       final selected = selectedSubCategory == subCategoryName;
 
                       return GestureDetector(
-                        onTap: () => _toggleSubCategory(subCategoryName),
+                        onTap: () => _handleSubCategoryTap(
+                          home,
+                          selectedCategory,
+                          subCategoryName,
+                        ),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 180),
                           padding: const EdgeInsets.symmetric(
@@ -256,6 +526,57 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                         ),
                       );
                     },
+                  ),
+                ),
+              ),
+            if (selectedSubCategory != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: _grandchildrenFor(
+                      home,
+                      selectedCategory,
+                      selectedSubCategory,
+                    ).isEmpty
+                        ? null
+                        : () => _openGrandchildBottomSheet(
+                              selectedCategory: selectedCategory,
+                              selectedSubCategory: selectedSubCategory,
+                              grandchildren: _grandchildrenFor(
+                                home,
+                                selectedCategory,
+                                selectedSubCategory,
+                              ),
+                              baseProducts: filtered,
+                            ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 2,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Text(
+                            'See more categories',
+                            style: TextStyle(
+                              color: AppColors.primary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          SizedBox(width: 4),
+                          Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            size: 13,
+                            color: AppColors.primary,
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -452,4 +773,14 @@ class _CategoryIcon extends StatelessWidget {
       errorBuilder: (_, __, ___) => fallback,
     );
   }
+}
+
+class _GrandchildNode {
+  final String name;
+  final IconData icon;
+
+  const _GrandchildNode({
+    required this.name,
+    required this.icon,
+  });
 }

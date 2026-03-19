@@ -4,6 +4,7 @@ class ProductModel {
   final String brand;
   final String category;
   final String subCategory;
+  final String subSubCategory;
   final int price;
   final int originalPrice;
   final double rating;
@@ -31,6 +32,7 @@ class ProductModel {
     required this.brand,
     required this.category,
     this.subCategory = '',
+    this.subSubCategory = '',
     required this.price,
     required this.originalPrice,
     required this.rating,
@@ -88,6 +90,11 @@ class ProductModel {
       category: map['category'] ?? '',
       subCategory:
           map['subCategory'] ?? map['subcategory'] ?? map['sub_category'] ?? '',
+        subSubCategory:
+          map['subSubCategory'] ??
+          map['subsubCategory'] ??
+          map['sub_sub_category'] ??
+          '',
       price: (map['price'] as num?)?.toInt() ?? 0,
       originalPrice: (map['originalPrice'] as num?)?.toInt() ?? 0,
       rating: (map['rating'] as num?)?.toDouble() ?? 0.0,
@@ -118,6 +125,9 @@ class ProductModel {
       'brand': brand,
       'category': category,
       'subCategory': subCategory,
+      'subSubCategory': subSubCategory,
+      'subsubCategory': subSubCategory,
+      'sub_sub_category': subSubCategory,
       'price': price,
       'originalPrice': originalPrice,
       'rating': rating,
@@ -151,6 +161,9 @@ class ProductModel {
       'brand': brand,
       'category': category,
       'subCategory': subCategory,
+      'subSubCategory': subSubCategory,
+      'subsubCategory': subSubCategory,
+      'sub_sub_category': subSubCategory,
       'price': price,
       'originalPrice': originalPrice,
       'rating': rating,

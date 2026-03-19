@@ -235,15 +235,66 @@ class FirestoreService {
   // ── Fetch categories ──────────────────────────────────────────────────────
 
   Future<List<Map<String, dynamic>>> getCategories() async {
-    final snap = await _db.collection('categories').orderBy('order').get();
-    if (snap.docs.isEmpty) return [];
-    return snap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+    try {
+      final snap = await _db.collection('categories').orderBy('order').get();
+      if (snap.docs.isEmpty) return [];
+      return snap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+    } catch (_) {
+      final snap = await _db.collection('categories').get();
+      if (snap.docs.isEmpty) return [];
+      final rows = snap.docs
+          .map((doc) => {'id': doc.id, ...doc.data()})
+          .toList(growable: false);
+      rows.sort(
+        (a, b) => _toOrderIndex(a['order']).compareTo(_toOrderIndex(b['order'])),
+      );
+      return rows;
+    }
   }
 
   Future<List<Map<String, dynamic>>> getSubCategories() async {
     final snap = await _db.collection('subCategories').get();
     if (snap.docs.isEmpty) return [];
-    return snap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+    final rows = snap.docs
+        .map((doc) => {'id': doc.id, ...doc.data()})
+        .toList(growable: false);
+    rows.sort((a, b) {
+      final catCmp = (a['parentCategory'] ?? '')
+          .toString()
+          .toLowerCase()
+          .compareTo((b['parentCategory'] ?? '').toString().toLowerCase());
+      if (catCmp != 0) return catCmp;
+      return (a['name'] ?? '')
+          .toString()
+          .toLowerCase()
+          .compareTo((b['name'] ?? '').toString().toLowerCase());
+    });
+    return rows;
+  }
+
+  Future<List<Map<String, dynamic>>> getSubSubCategories() async {
+    final snap = await _db.collection('subSubCategories').get();
+    if (snap.docs.isEmpty) return [];
+    final rows = snap.docs
+        .map((doc) => {'id': doc.id, ...doc.data()})
+        .toList(growable: false);
+    rows.sort((a, b) {
+      final catCmp = (a['parentCategory'] ?? '')
+          .toString()
+          .toLowerCase()
+          .compareTo((b['parentCategory'] ?? '').toString().toLowerCase());
+      if (catCmp != 0) return catCmp;
+      final subCmp = (a['parentSubCategory'] ?? '')
+          .toString()
+          .toLowerCase()
+          .compareTo((b['parentSubCategory'] ?? '').toString().toLowerCase());
+      if (subCmp != 0) return subCmp;
+      return (a['name'] ?? '')
+          .toString()
+          .toLowerCase()
+          .compareTo((b['name'] ?? '').toString().toLowerCase());
+    });
+    return rows;
   }
 
   Future<List<Map<String, dynamic>>> getBrands() async {
