@@ -59,6 +59,24 @@ class _ProductListScreenState extends State<ProductListScreen> {
     );
   }
 
+  String _tagSearchSource(Map<String, dynamic> product) {
+    final primary = (product['tag'] ?? '').toString().trim();
+    final rawTags = product['tags'];
+
+    final multiTags = rawTags is List
+        ? rawTags
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toList()
+        : <String>[];
+
+    final merged = <String>{};
+    if (primary.isNotEmpty) merged.add(primary);
+    merged.addAll(multiTags);
+
+    return merged.join(', ');
+  }
+
   Future<void> _refreshProducts() async {
     await context.read<HomeProvider>().loadData();
   }
@@ -111,7 +129,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
         })
         .where((p) {
           if ((_selectedTag ?? '').trim().isEmpty) return true;
-          return _matchesSelectedTag((p['tag'] ?? '').toString());
+          return _matchesSelectedTag(_tagSearchSource(p));
         })
         .toList();
 

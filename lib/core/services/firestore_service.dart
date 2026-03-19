@@ -20,6 +20,14 @@ class FirestoreService {
   static const String _productReviewsCollection = 'productReviews';
   static const String _bannersCollection = 'banners';
 
+  bool _isPublishedProduct(Map<String, dynamic> data) {
+    final visibility = (data['visibility'] ?? 'publish')
+        .toString()
+        .trim()
+        .toLowerCase();
+    return visibility == 'publish';
+  }
+
   String _baseProductId(String value) {
     final id = value.trim();
     if (id.isEmpty) return '';
@@ -63,7 +71,8 @@ class FirestoreService {
   Future<List<ProductModel>> getProducts() async {
     final snap = await _db.collection('products').get();
     return snap.docs
-        .map((doc) => ProductModel.fromMap(doc.data(), doc.id))
+      .where((doc) => _isPublishedProduct(doc.data()))
+      .map((doc) => ProductModel.fromMap(doc.data(), doc.id))
         .toList();
   }
 
@@ -108,7 +117,8 @@ class FirestoreService {
         .where('category', isEqualTo: category)
         .get();
     return snap.docs
-        .map((doc) => ProductModel.fromMap(doc.data(), doc.id))
+      .where((doc) => _isPublishedProduct(doc.data()))
+      .map((doc) => ProductModel.fromMap(doc.data(), doc.id))
         .toList();
   }
 

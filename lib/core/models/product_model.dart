@@ -12,6 +12,7 @@ class ProductModel {
   final List<String> additionalImages;
   final List<String> images;
   final String tag;
+  final List<String> tags;
   final String size;
   final String deliveryTime;
   final String highlights;
@@ -38,6 +39,7 @@ class ProductModel {
     this.additionalImages = const [],
     this.images = const [],
     this.tag = '',
+    this.tags = const [],
     this.size = '',
     this.deliveryTime = '',
     this.highlights = '',
@@ -67,6 +69,10 @@ class ProductModel {
 
     final additionalImages = toStringList(map['additionalImages']);
     final images = toStringList(map['images']);
+    final parsedTags = toStringList(map['tags']);
+    final singleTag = (map['tag'] ?? '').toString().trim();
+    final tags = <String>{...parsedTags};
+    if (singleTag.isNotEmpty) tags.add(singleTag);
 
     final thumbnail =
         (map['image'] ?? map['imageUrl'] ?? '').toString().trim().isNotEmpty
@@ -89,7 +95,8 @@ class ProductModel {
       image: thumbnail,
       additionalImages: additionalImages,
       images: images,
-      tag: map['tag'] ?? '',
+      tag: singleTag,
+      tags: tags.toList(growable: false),
       size: map['size'] ?? '',
       deliveryTime: map['deliveryTime'] ?? '',
       highlights: map['highlights'] ?? map['shortDescription'] ?? '',
@@ -119,6 +126,7 @@ class ProductModel {
       'additionalImages': additionalImages,
       'images': images,
       'tag': tag,
+      'tags': tags,
       'size': size,
       'deliveryTime': deliveryTime,
       'highlights': highlights,
@@ -152,6 +160,7 @@ class ProductModel {
       'additionalImages': additionalImages,
       'images': images,
       'tag': tag,
+      'tags': tags,
       'size': size,
       'deliveryTime': deliveryTime,
       'highlights': highlights,

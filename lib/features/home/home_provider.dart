@@ -110,6 +110,62 @@ class HomeProvider extends ChangeNotifier {
     return normalized.replaceAll(RegExp(r'[^a-z0-9]+'), '');
   }
 
+  String _normalizeSearchText(String? value) {
+    return (value ?? '')
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s,_-]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  List<String> _productTags(Map<String, dynamic> product) {
+    final tags = <String>{};
+
+    final singleTag = (product['tag'] ?? '').toString().trim();
+    if (singleTag.isNotEmpty) tags.add(singleTag);
+
+    final rawTags = product['tags'];
+    if (rawTags is List) {
+      for (final item in rawTags) {
+        final value = item.toString().trim();
+        if (value.isNotEmpty) tags.add(value);
+      }
+    } else if (rawTags is String) {
+      for (final item in rawTags.split(RegExp(r'[,|/&_-]+'))) {
+        final value = item.trim();
+        if (value.isNotEmpty) tags.add(value);
+      }
+    }
+
+    return tags.toList();
+  }
+
+  bool _matchesSearchQuery(Map<String, dynamic> product, String query) {
+    final normalizedQuery = _normalizeSearchText(query);
+    if (normalizedQuery.isEmpty) return true;
+
+    final searchableText = _normalizeSearchText(
+      [
+        product['name'],
+        product['brand'],
+        product['category'],
+        productSubCategory(product),
+        ..._productTags(product),
+      ].join(' '),
+    );
+
+    if (searchableText.isEmpty) return false;
+    if (searchableText.contains(normalizedQuery)) return true;
+
+    final queryTokens = normalizedQuery
+        .split(' ')
+        .where((token) => token.trim().isNotEmpty)
+        .toList();
+    if (queryTokens.isEmpty) return true;
+
+    return queryTokens.every(searchableText.contains);
+  }
+
   Map<String, dynamic> _normalizeCategory(Map<String, dynamic> category) {
     return {
       ...category,
@@ -218,14 +274,7 @@ class HomeProvider extends ChangeNotifier {
     }
 
     if (query.isNotEmpty) {
-      final q = query.toLowerCase();
-      list = list
-          .where(
-            (p) =>
-                (p['name'] as String).toLowerCase().contains(q) ||
-                (p['brand'] as String).toLowerCase().contains(q),
-          )
-          .toList();
+      list = list.where((p) => _matchesSearchQuery(p, query)).toList();
     }
 
     if (sort == 'low') {
