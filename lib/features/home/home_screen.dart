@@ -33,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen>
   Timer? _bannerAutoSlideTimer;
   int _currentBannerPage = 0;
   int _bannerCountForTimer = 0;
+  Set<String> _purchasedProductIds = <String>{};
   final FirestoreService _firestoreService = FirestoreService();
   bool _hasOrderHistory = false;
   bool _orderHistoryResolved = false;
@@ -62,6 +63,14 @@ class _HomeScreenState extends State<HomeScreen>
     context.read<CartModel>().add(product);
   }
 
+  String _baseProductId(String value) {
+    final id = value.trim();
+    if (id.isEmpty) return '';
+    final sep = id.indexOf('::');
+    if (sep <= 0) return id;
+    return id.substring(0, sep);
+  }
+
   Future<void> _refreshHomeData() async {
     await Future.wait([
       context.read<HomeProvider>().loadData(),
@@ -79,6 +88,7 @@ class _HomeScreenState extends State<HomeScreen>
       setState(() {
         _hasOrderHistory = false;
         _orderHistoryResolved = true;
+        _purchasedProductIds = <String>{};
       });
       return;
     }
@@ -89,15 +99,21 @@ class _HomeScreenState extends State<HomeScreen>
         uid: uid,
       );
       if (!mounted) return;
+      final purchasedIds = purchased
+          .map((p) => _baseProductId((p['id'] ?? '').toString()))
+          .where((id) => id.isNotEmpty)
+          .toSet();
       setState(() {
         _hasOrderHistory = purchased.isNotEmpty;
         _orderHistoryResolved = true;
+        _purchasedProductIds = purchasedIds;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _hasOrderHistory = false;
         _orderHistoryResolved = true;
+        _purchasedProductIds = <String>{};
       });
     } finally {
       _orderHistoryLoading = false;
@@ -362,7 +378,10 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
-  void _syncBannerAutoSlide(int bannerCount) {
+  void _syncBannerAutoSlide(
+    int bannerCount,
+    List<Map<String, dynamic>> banners,
+  ) {
     if (_bannerCountForTimer == bannerCount) return;
 
     _bannerCountForTimer = bannerCount;
@@ -371,10 +390,39 @@ class _HomeScreenState extends State<HomeScreen>
 
     if (bannerCount <= 1) return;
 
-    _bannerAutoSlideTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+    _setAutoSlideTimer(banners, 0);
+  }
+
+  bool _isBannerVideo(Map<String, dynamic> banner) {
+    final mediaType = (banner['mediaType'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final mediaUrl = (banner['mediaUrl'] ?? banner['image'] ?? '').toString();
+
+    return mediaType == 'video' ||
+        RegExp(
+          r'\.(mp4|mov|m4v|webm|ogv|m3u8)(\?|#|$)',
+          caseSensitive: false,
+        ).hasMatch(mediaUrl);
+  }
+
+  void _setAutoSlideTimer(
+    List<Map<String, dynamic>> banners,
+    int currentIndex,
+  ) {
+    _bannerAutoSlideTimer?.cancel();
+
+    final currentBanner = banners[currentIndex];
+    final isVideo = _isBannerVideo(currentBanner);
+    final duration = isVideo
+        ? const Duration(seconds: 10)
+        : const Duration(seconds: 4);
+
+    _bannerAutoSlideTimer = Timer(duration, () {
       if (!_bannerPageController.hasClients) return;
 
-      final nextPage = (_currentBannerPage + 1) % bannerCount;
+      final nextPage = (currentIndex + 1) % banners.length;
       _bannerPageController.animateToPage(
         nextPage,
         duration: const Duration(milliseconds: 420),
@@ -743,7 +791,7 @@ class _HomeScreenState extends State<HomeScreen>
     final products = home.productMaps;
     final banners = home.banners;
     final hasBannerData = banners.isNotEmpty;
-    _syncBannerAutoSlide(banners.length);
+    _syncBannerAutoSlide(banners.length, banners);
     final unassignedProducts = products
         .where((p) => !_hasExplicitHomeSection(p))
         .toList();
@@ -870,11 +918,20 @@ class _HomeScreenState extends State<HomeScreen>
               childAspectRatio: 0.63,
             ),
             itemCount: popularDisplayItems.length,
-            itemBuilder: (_, i) => ProductCard(
-              product: popularDisplayItems[i],
-              showHeartIcon: false,
-              onAddToCart: _addToCart,
-            ),
+            itemBuilder: (_, i) {
+              final product = popularDisplayItems[i];
+              final productId = _baseProductId(
+                (product['id'] ?? '').toString(),
+              );
+              return ProductCard(
+                product: product,
+                showHeartIcon: false,
+                showBoughtEarlierBadge: _purchasedProductIds.contains(
+                  productId,
+                ),
+                onAddToCart: _addToCart,
+              );
+            },
           ),
         ),
         const SizedBox(height: 100),
@@ -1166,6 +1223,8 @@ class _HomeScreenState extends State<HomeScreen>
                   setState(() {
                     _currentBannerPage = index;
                   });
+                  // Adjust timer based on current banner type
+                  _setAutoSlideTimer(banners, index);
                 },
                 itemBuilder: (_, index) {
                   final banner = banners[index];
@@ -1430,6 +1489,8 @@ class _HomeScreenState extends State<HomeScreen>
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (_, i) {
           final p = products[i];
+          final productId = _baseProductId((p['id'] ?? '').toString());
+          final showBoughtEarlier = _purchasedProductIds.contains(productId);
           return GestureDetector(
             onTap: () => _openProductDetail(p),
             child: SizedBox(
@@ -1468,6 +1529,29 @@ class _HomeScreenState extends State<HomeScreen>
                         right: 6,
                         child: _buildSmallCartControl(p),
                       ),
+                      if (showBoughtEarlier)
+                        Positioned(
+                          top: 6,
+                          left: 6,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.success,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text(
+                              'Bought earlier',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 7.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 6),
@@ -1662,18 +1746,56 @@ class _BannerVideoState extends State<_BannerVideo> {
     }
   }
 
-  void _setupController() {
-    final url = widget.url.trim();
-    if (url.isEmpty) return;
+  String _normalizeVideoUrl(String raw) {
+    final url = raw.trim();
+    if (url.isEmpty) return '';
 
-    final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+    // If already a full HTTP/HTTPS URL, return as-is
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      // Ensure Firebase Storage URLs have ?alt=media for proper streaming
+      if (url.contains('firebasestorage.googleapis.com') &&
+          !url.contains('alt=media')) {
+        return '$url?alt=media';
+      }
+      return url;
+    }
+
+    // If gs:// format, convert to HTTPS with ?alt=media
+    if (url.startsWith('gs://')) {
+      final withoutScheme = url.substring(5);
+      final slash = withoutScheme.indexOf('/');
+      if (slash > 0 && slash < withoutScheme.length - 1) {
+        final bucket = withoutScheme.substring(0, slash);
+        final objectPath = withoutScheme.substring(slash + 1);
+        return 'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(objectPath)}?alt=media';
+      }
+    }
+
+    return url;
+  }
+
+  void _setupController() {
+    final rawUrl = widget.url.trim();
+    if (rawUrl.isEmpty) return;
+
+    final normalizedUrl = _normalizeVideoUrl(rawUrl);
+    if (normalizedUrl.isEmpty) return;
+
+    final controller = VideoPlayerController.networkUrl(
+      Uri.parse(normalizedUrl),
+    );
     _controller = controller;
-    _initFuture = controller.initialize().then((_) async {
-      await controller.setLooping(true);
-      await controller.setVolume(0);
-      await controller.play();
-      if (mounted) setState(() {});
-    });
+    _initFuture = controller
+        .initialize()
+        .then((_) async {
+          await controller.setLooping(true);
+          await controller.setVolume(0);
+          await controller.play();
+          if (mounted) setState(() {});
+        })
+        .catchError((error) {
+          print('Video initialization error: $error');
+        });
   }
 
   Future<void> _disposeController() async {
@@ -1703,6 +1825,33 @@ class _BannerVideoState extends State<_BannerVideo> {
     return FutureBuilder<void>(
       future: _initFuture,
       builder: (_, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            color: AppColors.surface,
+            child: const Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+
+        if (snapshot.hasError) {
+          print('Video error: ${snapshot.error}');
+          return Container(
+            color: AppColors.surface,
+            child: const Center(
+              child: Icon(
+                Icons.error_outline,
+                color: AppColors.textHint,
+                size: 32,
+              ),
+            ),
+          );
+        }
+
         if (snapshot.connectionState != ConnectionState.done ||
             !_controller!.value.isInitialized) {
           return Container(

@@ -5,11 +5,18 @@ import 'package:purecuts/core/widgets/product_card.dart';
 import 'package:purecuts/core/widgets/shimmer_widgets.dart';
 import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 import 'package:purecuts/features/home/home_provider.dart';
+import 'package:purecuts/features/support_chat/widgets/support_chat_fab.dart';
 
 class ProductListScreen extends StatefulWidget {
   final String? initialCategory;
   final String? initialBrand;
-  const ProductListScreen({super.key, this.initialCategory, this.initialBrand});
+  final String? initialTag;
+  const ProductListScreen({
+    super.key,
+    this.initialCategory,
+    this.initialBrand,
+    this.initialTag,
+  });
 
   @override
   State<ProductListScreen> createState() => _ProductListScreenState();
@@ -18,9 +25,39 @@ class ProductListScreen extends StatefulWidget {
 class _ProductListScreenState extends State<ProductListScreen> {
   String _selectedCategory = 'All';
   String? _selectedBrand;
+  String? _selectedTag;
   String _sort = 'popular';
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
+
+  String _normalizeToken(String value) {
+    return value
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s,_-]+'), '')
+        .replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  bool _matchesSelectedTag(String rawTag) {
+    final selected = _normalizeToken(_selectedTag ?? '');
+    if (selected.isEmpty) return true;
+
+    final normalizedTag = _normalizeToken(rawTag);
+    if (normalizedTag.isEmpty) return false;
+
+    if (normalizedTag.contains(selected) || selected.contains(normalizedTag)) {
+      return true;
+    }
+
+    final tokens = normalizedTag
+        .split(RegExp(r'[,|/&_-]+'))
+        .map((t) => _normalizeToken(t))
+        .where((t) => t.isNotEmpty);
+
+    return tokens.any(
+      (token) => token.contains(selected) || selected.contains(token),
+    );
+  }
 
   Future<void> _refreshProducts() async {
     await context.read<HomeProvider>().loadData();
@@ -34,6 +71,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
     }
     if (widget.initialBrand != null && widget.initialBrand!.trim().isNotEmpty) {
       _selectedBrand = widget.initialBrand!.trim();
+    }
+    if (widget.initialTag != null && widget.initialTag!.trim().isNotEmpty) {
+      _selectedTag = widget.initialTag!.trim();
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<HomeProvider>().loadData();
@@ -69,9 +109,15 @@ class _ProductListScreenState extends State<ProductListScreen> {
           return (p['brand'] ?? '').toString().trim().toLowerCase() ==
               _selectedBrand!.trim().toLowerCase();
         })
+        .where((p) {
+          if ((_selectedTag ?? '').trim().isEmpty) return true;
+          return _matchesSelectedTag((p['tag'] ?? '').toString());
+        })
         .toList();
 
-    final title = (_selectedBrand ?? '').trim().isNotEmpty
+    final title = (_selectedTag ?? '').trim().isNotEmpty
+        ? _selectedTag!
+        : (_selectedBrand ?? '').trim().isNotEmpty
         ? _selectedBrand!
         : 'Products';
 
@@ -257,6 +303,47 @@ class _ProductListScreenState extends State<ProductListScreen> {
                 ],
               ),
             ),
+          if ((_selectedTag ?? '').trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Tag: $_selectedTag',
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        GestureDetector(
+                          onTap: () => setState(() => _selectedTag = null),
+                          child: const Icon(
+                            Icons.close,
+                            size: 14,
+                            color: AppColors.textHint,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           // Product count
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -339,6 +426,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
           const StickyCartBar(),
         ],
       ),
+      floatingActionButton: const SupportChatFab(),
     );
   }
 }

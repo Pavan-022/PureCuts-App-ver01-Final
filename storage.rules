@@ -6,7 +6,8 @@ service firebase.storage {
     }
 
     function isAdmin() {
-      return isSignedIn() && request.auth.token.admin == true;
+      return isSignedIn()
+        && (request.auth.token.admin == true || request.auth.token.superAdmin == true);
     }
 
     // Public product media
@@ -17,6 +18,12 @@ service firebase.storage {
 
     // Public brand media
     match /brands/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Public banner media
+    match /banners/{allPaths=**} {
       allow read: if true;
       allow write: if isAdmin();
     }

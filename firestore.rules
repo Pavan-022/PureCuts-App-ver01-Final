@@ -1,123 +1,196 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
-    function isSignedIn() {
+    function signedIn() {
       return request.auth != null;
     }
 
     function isAdmin() {
-      return isSignedIn() &&
+      return signedIn() &&
         (request.auth.token.admin == true ||
          request.auth.token.superAdmin == true);
     }
 
+    // TEMP helper to unblock dashboard banner management if claims are still rolling out.
+    // Once all admin claims are stable, change this to: return isAdmin();
     function canManageBanners() {
-      // Temporary policy: any signed-in dashboard user can manage banners.
-      // Change this to `isAdmin()` once claims are fully rolled out.
-      return isSignedIn();
+      return signedIn();
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
     }
 
     function hasPurchasedProduct(productId) {
-      return isSignedIn() &&
+      return signedIn() &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.purchasedProductIds.hasAny([productId]);
     }
 
-    // ── Mobile app customers (read-only public data) ──────────────────────────
-    match /products/{productId} {
-      allow read: if true;
-      allow write: if isAdmin();
+    function isApprovedReview() {
+      return resource.data.status == "approved" ||
+        resource.data.approved == true;
+    }
 
+    // Support chat helpers (deterministic chat ID: support_<uid>)
+    function supportChatIdForCurrentUser() {
+      return signedIn() ? ("support_" + request.auth.uid) : "";
+    }
+
+    function isSupportChatOwner(chatId) {
+      return signedIn() && chatId == supportChatIdForCurrentUser();
+    }
+
+    // --- Catalog: app can read, only admin can write ---
+    match /products/{docId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+
+      // Product variants subcollection
       match /variants/{variantId} {
         allow read: if true;
-        allow write: if isAdmin();
+        allow create, update, delete: if isAdmin();
       }
 
+      // Product reviews subcollection
       match /reviews/{reviewId} {
         allow read: if isAdmin() ||
-          resource.data.status == 'approved' ||
-          (isSignedIn() && request.auth.uid == reviewId);
-        allow create: if isSignedIn() &&
+          isApprovedReview() ||
+          (signedIn() && request.auth.uid == reviewId);
+
+        allow create: if signedIn() &&
           request.auth.uid == reviewId &&
-          hasPurchasedProduct(productId);
+          hasPurchasedProduct(docId);
+
         allow update: if isAdmin() || (
-          isSignedIn() &&
+          signedIn() &&
           request.auth.uid == reviewId &&
-          hasPurchasedProduct(productId)
+          hasPurchasedProduct(docId)
         );
-        allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == reviewId);
+
+        allow delete: if isAdmin() || isOwner(reviewId);
       }
     }
 
     match /brands/{docId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, update, delete: if isAdmin();
     }
 
     match /categories/{docId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, update, delete: if isAdmin();
     }
 
     match /subCategories/{docId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, update, delete: if isAdmin();
     }
 
-    // ── Attributes (admin-managed, app reads for variant display) ─────────────
     match /attributes/{docId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, update, delete: if isAdmin();
     }
 
-      // Top-level mirrored product reviews for dashboard reliability
-      match /productReviews/{reviewDocId} {
-        allow read: if isAdmin() ||
-          resource.data.status == "approved" ||
-          (isSignedIn() && request.auth.uid == resource.data.userId);
+    // Top-level mirrored reviews for dashboard reliability
+    match /productReviews/{reviewDocId} {
+      allow read: if isAdmin() ||
+        isApprovedReview() ||
+        (signedIn() && request.auth.uid == resource.data.userId);
 
-        allow create: if isSignedIn() &&
-          request.auth.uid == request.resource.data.userId &&
-          hasPurchasedProduct(request.resource.data.productId);
+      allow create: if signedIn() &&
+        request.auth.uid == request.resource.data.userId &&
+        hasPurchasedProduct(request.resource.data.productId);
 
-        allow update: if isAdmin() || (
-          isSignedIn() &&
-          request.auth.uid == request.resource.data.userId &&
-          hasPurchasedProduct(request.resource.data.productId)
-        );
+      allow update: if isAdmin() || (
+        signedIn() &&
+        request.auth.uid == request.resource.data.userId &&
+        hasPurchasedProduct(request.resource.data.productId)
+      );
 
-        allow delete: if isAdmin() ||
-          (isSignedIn() && request.auth.uid == resource.data.userId);
-      }
+      allow delete: if isAdmin() ||
+        (signedIn() && request.auth.uid == resource.data.userId);
+    }
 
-    // ── Users (own doc + admin full access) ───────────────────────────────────
+    // --- User profile ---
     match /users/{uid} {
-      allow read, write: if isSignedIn() && request.auth.uid == uid;
-      allow read, write: if isAdmin();
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update: if isOwner(uid) || isAdmin();
+      allow delete: if isAdmin();
     }
 
-    // ── Orders ────────────────────────────────────────────────────────────────
+    // Orders
     match /orders/{orderId} {
-      allow read: if isSignedIn() &&
-        (request.auth.uid == resource.data.userId || isAdmin());
-      allow create: if isSignedIn();
+      allow create: if signedIn();
+      allow read: if signedIn() &&
+        (isAdmin() ||
+         request.auth.uid == resource.data.uid ||
+         request.auth.uid == resource.data.userId);
       allow update, delete: if isAdmin();
     }
 
-    // ── Product shares (analytics) ───────────────────────────────────────────
+    // Optional product share analytics
     match /productShares/{docId} {
+      allow create: if signedIn();
       allow read: if isAdmin();
-      allow create: if isSignedIn();
+      allow update, delete: if false;
     }
 
-    // ── Banners / Coupons / Notifications ────────────────────────────────────
-    // NOTE: Banner writes are temporarily allowed for authenticated users to
-    // unblock dashboard banner management while admin-claim rollout stabilizes.
-    // Tighten back to isAdmin() once all dashboard operators have claims.
-    match /banners/{docId}       { allow read: if true; allow write: if canManageBanners(); }
-    match /coupons/{docId}       { allow read: if isSignedIn(); allow write: if isAdmin(); }
-    match /notifications/{docId} { allow read: if isSignedIn(); allow write: if isAdmin(); }
+    // Banners (dashboard + app)
+    match /banners/{docId} {
+      allow read: if true;
+      allow create, update, delete: if canManageBanners();
+    }
+
+    // Dashboard collections
+    match /coupons/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /notifications/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // --- Support Chat ---
+    // Chat doc id must be: support_<uid>
+    match /chats/{chatId} {
+      allow read: if isAdmin() || isSupportChatOwner(chatId);
+
+      allow create: if isSupportChatOwner(chatId) &&
+        request.resource.data.userId == request.auth.uid;
+
+      allow update: if isAdmin() || isSupportChatOwner(chatId);
+
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read: if isAdmin() || isSupportChatOwner(chatId);
+
+        allow create: if signedIn() && (
+          // Customer sends own message in own support chat
+          (isSupportChatOwner(chatId) &&
+            request.resource.data.senderId == request.auth.uid &&
+            request.resource.data.senderRole == "user" &&
+            request.resource.data.chatId == chatId) ||
+
+          // Admin can send from admin account
+          (isAdmin() &&
+            request.resource.data.senderId == request.auth.uid &&
+            request.resource.data.chatId == chatId)
+        );
+
+        // Allow both sides to update (e.g. seen flag)
+        allow update: if isAdmin() || isSupportChatOwner(chatId);
+
+        allow delete: if isAdmin();
+      }
+    }
+
+    // Deny everything else by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }

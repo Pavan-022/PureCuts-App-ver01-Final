@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/models/cart_model.dart';
+import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
 import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
@@ -18,12 +20,48 @@ class CategoriesScreen extends StatefulWidget {
 class _CategoriesScreenState extends State<CategoriesScreen> {
   String _selectedCategory = 'All';
   String? _selectedSubCategory;
+  final FirestoreService _firestoreService = FirestoreService();
+  Set<String> _purchasedProductIds = <String>{};
 
   @override
   void initState() {
     super.initState();
     if (widget.initialCategory != null && widget.initialCategory!.isNotEmpty) {
       _selectedCategory = widget.initialCategory!;
+    }
+    _resolvePurchasedProducts();
+  }
+
+  String _baseProductId(String value) {
+    final id = value.trim();
+    if (id.isEmpty) return '';
+    final sep = id.indexOf('::');
+    if (sep <= 0) return id;
+    return id.substring(0, sep);
+  }
+
+  Future<void> _resolvePurchasedProducts() async {
+    final uid = fb_auth.FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    if (uid.isEmpty) {
+      if (!mounted) return;
+      setState(() => _purchasedProductIds = <String>{});
+      return;
+    }
+
+    try {
+      final purchased = await _firestoreService.getUserPurchasedProducts(
+        uid: uid,
+      );
+      if (!mounted) return;
+      setState(() {
+        _purchasedProductIds = purchased
+            .map((p) => _baseProductId((p['id'] ?? '').toString()))
+            .where((id) => id.isNotEmpty)
+            .toSet();
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _purchasedProductIds = <String>{});
     }
   }
 
@@ -261,10 +299,19 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                             childAspectRatio: 0.60,
                           ),
                       itemCount: filtered.length,
-                      itemBuilder: (_, i) => ProductCard(
-                        product: filtered[i],
-                        showHeartIcon: false,
-                      ),
+                      itemBuilder: (_, i) {
+                        final product = filtered[i];
+                        final productId = _baseProductId(
+                          (product['id'] ?? '').toString(),
+                        );
+                        return ProductCard(
+                          product: product,
+                          showHeartIcon: false,
+                          showBoughtEarlierBadge: _purchasedProductIds.contains(
+                            productId,
+                          ),
+                        );
+                      },
                     ),
             ),
           ],

@@ -4,6 +4,7 @@ import 'package:purecuts/features/home/home_screen.dart';
 import 'package:purecuts/features/previously_bought/previously_bought_screen.dart';
 import 'package:purecuts/features/categories/categories_screen.dart';
 import 'package:purecuts/features/brands/brands_screen.dart';
+import 'package:purecuts/features/support_chat/widgets/support_chat_fab.dart';
 
 class MainNavScreen extends StatefulWidget {
   const MainNavScreen({super.key});
@@ -25,6 +26,7 @@ class _MainNavScreenState extends State<MainNavScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(index: _index, children: _screens),
+      floatingActionButton: const SupportChatFab(),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           color: Colors.white,

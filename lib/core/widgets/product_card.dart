@@ -3,17 +3,20 @@ import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/models/cart_model.dart';
 import '../../features/products/product_detail_screen.dart';
+import '../../features/products/product_list_screen.dart';
 
 class ProductCard extends StatelessWidget {
   final Map<String, dynamic> product;
   final ValueChanged<Map<String, dynamic>>? onAddToCart;
   final bool showHeartIcon;
+  final bool showBoughtEarlierBadge;
 
   const ProductCard({
     super.key,
     required this.product,
     this.onAddToCart,
     this.showHeartIcon = true,
+    this.showBoughtEarlierBadge = false,
   });
 
   void _handleAddToCart(BuildContext context) {
@@ -28,6 +31,21 @@ class ProductCard extends StatelessWidget {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => ProductDetailScreen(product: product)),
+    );
+  }
+
+  void _openSimilarProducts(BuildContext context) {
+    final tag = (product['tag'] ?? '').toString().trim();
+    final brand = (product['brand'] ?? '').toString().trim();
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProductListScreen(
+          initialTag: tag.isNotEmpty ? tag : null,
+          initialBrand: tag.isEmpty && brand.isNotEmpty ? brand : null,
+        ),
+      ),
     );
   }
 
@@ -144,7 +162,7 @@ class ProductCard extends StatelessWidget {
                 // Discount badge
                 if (hasDiscount)
                   Positioned(
-                    top: 6,
+                    top: showBoughtEarlierBadge ? 27 : 6,
                     left: 6,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -161,6 +179,31 @@ class ProductCard extends StatelessWidget {
                           color: Colors.white,
                           fontSize: 9,
                           fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // Bought earlier badge
+                if (showBoughtEarlierBadge)
+                  Positioned(
+                    top: 6,
+                    left: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.success,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'Bought earlier',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
@@ -377,24 +420,28 @@ class ProductCard extends StatelessWidget {
                   const SizedBox(height: 4),
 
                   // See more
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'See more like this',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: AppColors.success,
-                          fontWeight: FontWeight.w600,
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _openSimilarProducts(context),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'See more like this',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AppColors.success,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 2),
-                      Icon(
-                        Icons.arrow_forward_ios,
-                        size: 8,
-                        color: AppColors.success,
-                      ),
-                    ],
+                        const SizedBox(width: 2),
+                        Icon(
+                          Icons.arrow_forward_ios,
+                          size: 8,
+                          color: AppColors.success,
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),

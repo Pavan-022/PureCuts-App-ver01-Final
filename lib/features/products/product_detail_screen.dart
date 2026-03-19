@@ -14,6 +14,7 @@ import 'package:purecuts/features/orders/order_provider.dart';
 import 'package:purecuts/features/products/detail/product_models.dart';
 import 'package:purecuts/features/products/detail/product_repository.dart';
 import 'package:purecuts/features/products/product_list_screen.dart';
+import 'package:purecuts/features/support_chat/widgets/support_chat_fab.dart';
 
 class ProductDetailScreen extends StatefulWidget {
   final Map<String, dynamic> product;
@@ -592,11 +593,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             onPressed: _submittingReview
                                 ? null
                                 : () async {
-                              final images = await _imagePicker
-                                  .pickMultiImage();
-                              if (images.isEmpty) return;
-                              setModalState(() => pickedFiles.addAll(images));
-                            },
+                                    final images = await _imagePicker
+                                        .pickMultiImage();
+                                    if (images.isEmpty) return;
+                                    setModalState(
+                                      () => pickedFiles.addAll(images),
+                                    );
+                                  },
                             icon: const Icon(Icons.image_outlined),
                             label: const Text('Add Images'),
                           ),
@@ -604,13 +607,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             onPressed: _submittingReview
                                 ? null
                                 : () async {
-                              final image = await _imagePicker.pickImage(
-                                source: ImageSource.camera,
-                                imageQuality: 85,
-                              );
-                              if (image == null) return;
-                              setModalState(() => pickedFiles.add(image));
-                            },
+                                    final image = await _imagePicker.pickImage(
+                                      source: ImageSource.camera,
+                                      imageQuality: 85,
+                                    );
+                                    if (image == null) return;
+                                    setModalState(() => pickedFiles.add(image));
+                                  },
                             icon: const Icon(Icons.photo_camera_outlined),
                             label: const Text('Use Camera'),
                           ),
@@ -618,12 +621,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             onPressed: _submittingReview
                                 ? null
                                 : () async {
-                              final video = await _imagePicker.pickVideo(
-                                source: ImageSource.gallery,
-                              );
-                              if (video == null) return;
-                              setModalState(() => pickedFiles.add(video));
-                            },
+                                    final video = await _imagePicker.pickVideo(
+                                      source: ImageSource.gallery,
+                                    );
+                                    if (video == null) return;
+                                    setModalState(() => pickedFiles.add(video));
+                                  },
                             icon: const Icon(Icons.videocam_outlined),
                             label: const Text('Add Video'),
                           ),
@@ -727,10 +730,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                   final userName =
                                       context.read<AuthProvider>().user?.name ??
                                       'Verified Buyer';
-                                    final userEmail =
-                                      context.read<AuthProvider>().user?.email ?? '';
-                                    final userPhone =
-                                      context.read<AuthProvider>().user?.phone ?? '';
+                                  final userEmail =
+                                      context
+                                          .read<AuthProvider>()
+                                          .user
+                                          ?.email ??
+                                      '';
+                                  final userPhone =
+                                      context
+                                          .read<AuthProvider>()
+                                          .user
+                                          ?.phone ??
+                                      '';
 
                                   setState(() => _submittingReview = true);
                                   setModalState(() {
@@ -743,20 +754,19 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                   });
                                   try {
                                     final uploadedMediaUrls =
-                                        await _firestoreService
-                                            .uploadReviewMedia(
-                                              uid: uid,
-                                              productId: _productId,
-                                              files: pickedFiles,
-                                              onProgress: (progress) {
-                                                if (!mounted) return;
-                                                setModalState(() {
-                                                  uploadProgress = progress;
-                                                  uploadStatusText =
-                                                      'Uploading media... ${(progress * 100).round()}%';
-                                                });
-                                              },
-                                            );
+                                        await _firestoreService.uploadReviewMedia(
+                                          uid: uid,
+                                          productId: _productId,
+                                          files: pickedFiles,
+                                          onProgress: (progress) {
+                                            if (!mounted) return;
+                                            setModalState(() {
+                                              uploadProgress = progress;
+                                              uploadStatusText =
+                                                  'Uploading media... ${(progress * 100).round()}%';
+                                            });
+                                          },
+                                        );
 
                                     if (mounted) {
                                       setModalState(() {
@@ -1155,6 +1165,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         displaySize: _displaySize,
         displayPrice: price,
       ),
+      floatingActionButton: const SupportChatFab(),
       body: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1569,7 +1580,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => ProductListScreen(initialBrand: brand),
+                          builder: (_) =>
+                              ProductListScreen(initialBrand: brand),
                         ),
                       );
                     },
