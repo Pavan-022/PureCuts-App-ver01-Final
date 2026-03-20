@@ -148,6 +148,16 @@ service cloud.firestore {
     }
 
     // Dashboard collections
+    match /bot_config/{docId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /bulkLeads/{docId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
     match /coupons/{docId} {
       allow read: if signedIn();
       allow create, update, delete: if isAdmin();
@@ -177,7 +187,10 @@ service cloud.firestore {
           // Customer sends own message in own support chat
           (isSupportChatOwner(chatId) &&
             request.resource.data.senderId == request.auth.uid &&
-            request.resource.data.senderRole == "user" &&
+            (
+              request.resource.data.senderRole == "user" ||
+              request.resource.data.sender == "user"
+            ) &&
             request.resource.data.chatId == chatId) ||
 
           // Admin can send from admin account

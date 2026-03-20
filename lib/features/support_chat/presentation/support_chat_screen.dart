@@ -1,9 +1,13 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/support_chat/services/support_chat_service.dart';
+import 'package:video_player/video_player.dart';
 
 class SupportChatScreen extends StatefulWidget {
   const SupportChatScreen({super.key, this.service});
@@ -19,18 +23,114 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _composerFocusNode = FocusNode();
+  final ImagePicker _imagePicker = ImagePicker();
 
   bool _sending = false;
+  bool _hasDraftText = false;
   String? _chatId;
   String? _bootstrapError;
+  XFile? _selectedMedia;
   int _lastRenderedMessageCount = 0;
   bool _markingSeen = false;
   final List<_PendingMessage> _pendingMessages = <_PendingMessage>[];
+
+  Future<void> _sendOptionSelection(String option) async {
+    final value = option.trim();
+    if (value.isEmpty || _sending) return;
+
+    final auth = context.read<AuthProvider>();
+    final user = auth.user;
+    if (user == null) return;
+
+    final pendingId = DateTime.now().microsecondsSinceEpoch.toString();
+    final pending = _PendingMessage(
+      clientMessageId: pendingId,
+      text: value,
+      mediaType: '',
+      timeLabel: _formatTime(Timestamp.now()),
+    );
+
+    setState(() {
+      _selectedMedia = null;
+      _pendingMessages.add(pending);
+      _sending = true;
+      _controller.clear();
+      _hasDraftText = false;
+    });
+    _scrollToBottom(animated: true);
+
+    try {
+      var resolvedChatId = (_chatId ?? '').trim();
+      if (resolvedChatId.isEmpty) {
+        resolvedChatId = await _service.ensureSupportChat(
+          uid: user.uid,
+          userName: user.name,
+          userEmail: user.email,
+          userPhone: user.phone,
+        );
+        if (mounted) {
+          setState(() => _chatId = resolvedChatId);
+        }
+      }
+
+      await _service.sendSupportMessage(
+        uid: user.uid,
+        text: value,
+        userName: user.name,
+        userEmail: user.email,
+        userPhone: user.phone,
+        chatId: resolvedChatId,
+        clientMessageId: pendingId,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _pendingMessages.removeWhere(
+          (item) => item.clientMessageId == pendingId,
+        );
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to send selected option. $e')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sending = false;
+        });
+      }
+    }
+  }
+
+  void _onDraftChanged() {
+    final next = _controller.text.trim().isNotEmpty;
+    if (_hasDraftText == next) return;
+    if (!mounted) return;
+    setState(() => _hasDraftText = next);
+  }
+
+  Future<void> _handleStartOver() async {
+    final auth = context.read<AuthProvider>();
+    final user = auth.user;
+    final chatId = (_chatId ?? '').trim();
+    if (user == null || chatId.isEmpty || _sending) return;
+
+    try {
+      await _service.resetSupportFlow(chatId: chatId);
+      _controller.text = 'Start Over';
+      await _handleSend();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not restart chat flow. $e')));
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     _service = widget.service ?? SupportChatService();
+    _controller.addListener(_onDraftChanged);
     _bootstrapChat();
   }
 
@@ -71,6 +171,7 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
 
   @override
   void dispose() {
+    _controller.removeListener(_onDraftChanged);
     _controller.dispose();
     _scrollController.dispose();
     _composerFocusNode.dispose();
@@ -83,32 +184,72 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
     if (user == null) return;
 
     final text = _controller.text.trim();
-    if (text.isEmpty || _sending) return;
+    final selectedMedia = _selectedMedia;
+    if ((text.isEmpty && selectedMedia == null) || _sending) return;
 
     final pendingId = DateTime.now().microsecondsSinceEpoch.toString();
     final pending = _PendingMessage(
       clientMessageId: pendingId,
       text: text,
+      mediaType: selectedMedia == null
+          ? ''
+          : (_isImageFile(selectedMedia) ? 'image' : 'video'),
       timeLabel: _formatTime(Timestamp.now()),
     );
 
     setState(() {
       _pendingMessages.add(pending);
       _sending = true;
+      _selectedMedia = null;
     });
     _scrollToBottom(animated: true);
 
     _controller.clear();
+    _hasDraftText = false;
 
     try {
+      String? mediaUrl;
+      String? mediaType;
+      String? mimeType;
+      String? fileName;
+
+      var resolvedChatId = (_chatId ?? '').trim();
+      if (resolvedChatId.isEmpty) {
+        resolvedChatId = await _service.ensureSupportChat(
+          uid: user.uid,
+          userName: user.name,
+          userEmail: user.email,
+          userPhone: user.phone,
+        );
+        if (mounted) {
+          setState(() => _chatId = resolvedChatId);
+        }
+      }
+
+      if (selectedMedia != null) {
+        final mediaMeta = await _service.uploadSupportMedia(
+          uid: user.uid,
+          chatId: resolvedChatId,
+          file: selectedMedia,
+        );
+        mediaUrl = mediaMeta['mediaUrl'];
+        mediaType = mediaMeta['mediaType'];
+        mimeType = mediaMeta['mimeType'];
+        fileName = mediaMeta['fileName'];
+      }
+
       await _service.sendSupportMessage(
         uid: user.uid,
         text: text,
         userName: user.name,
         userEmail: user.email,
         userPhone: user.phone,
-        chatId: _chatId,
+        chatId: resolvedChatId,
         clientMessageId: pendingId,
+        mediaUrl: mediaUrl,
+        mediaType: mediaType,
+        mimeType: mimeType,
+        fileName: fileName,
       );
     } catch (e) {
       if (!mounted) return;
@@ -126,6 +267,99 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
           _sending = false;
         });
       }
+    }
+  }
+
+  bool _isImageFile(XFile file) {
+    final mime = (file.mimeType ?? '').toLowerCase();
+    final name = file.name.toLowerCase();
+    return mime.startsWith('image/') ||
+        name.endsWith('.png') ||
+        name.endsWith('.jpg') ||
+        name.endsWith('.jpeg') ||
+        name.endsWith('.webp') ||
+        name.endsWith('.gif');
+  }
+
+  Future<void> _pickMedia() async {
+    if (_sending) return;
+
+    final source = await showModalBottomSheet<_MediaPickChoice>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose Photo'),
+              onTap: () => Navigator.of(ctx).pop(_MediaPickChoice.galleryImage),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Take Photo'),
+              onTap: () => Navigator.of(ctx).pop(_MediaPickChoice.cameraImage),
+            ),
+            ListTile(
+              leading: const Icon(Icons.video_library_outlined),
+              title: const Text('Choose Video'),
+              onTap: () => Navigator.of(ctx).pop(_MediaPickChoice.galleryVideo),
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam_outlined),
+              title: const Text('Record Video'),
+              onTap: () => Navigator.of(ctx).pop(_MediaPickChoice.cameraVideo),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (source == null || !mounted) return;
+
+    try {
+      XFile? picked;
+      switch (source) {
+        case _MediaPickChoice.galleryImage:
+          picked = await _imagePicker.pickImage(
+            source: ImageSource.gallery,
+            imageQuality: 88,
+          );
+          break;
+        case _MediaPickChoice.cameraImage:
+          picked = await _imagePicker.pickImage(
+            source: ImageSource.camera,
+            imageQuality: 88,
+          );
+          break;
+        case _MediaPickChoice.galleryVideo:
+          picked = await _imagePicker.pickVideo(source: ImageSource.gallery);
+          break;
+        case _MediaPickChoice.cameraVideo:
+          picked = await _imagePicker.pickVideo(source: ImageSource.camera);
+          break;
+      }
+
+      if (picked == null || !mounted) return;
+
+      final fileSize = await picked.length();
+      const maxBytes = 25 * 1024 * 1024;
+      if (fileSize > maxBytes) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select media up to 25MB.')),
+        );
+        return;
+      }
+
+      setState(() => _selectedMedia = picked);
+      _focusComposer();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Unable to pick media. $e')));
     }
   }
 
@@ -182,6 +416,14 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
         title: const Text('Support Chat'),
         backgroundColor: Colors.white,
         foregroundColor: AppColors.textPrimary,
+        actions: [
+          TextButton.icon(
+            onPressed: (_chatId == null || _sending) ? null : _handleStartOver,
+            icon: const Icon(Icons.restart_alt_rounded),
+            label: const Text('Start Over'),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: user == null
           ? const Center(child: Text('Please login to chat with support.'))
@@ -388,6 +630,7 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                                           orderedDocs.length];
                                   return _ChatBubble(
                                     text: pending.text,
+                                    mediaType: pending.mediaType,
                                     time: '${pending.timeLabel} • Sending...',
                                     isMine: true,
                                   );
@@ -402,10 +645,30 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                                             data['message'] as String? ??
                                             '')
                                         .trim();
+                                final mediaUrl =
+                                    (data['mediaUrl'] as String? ?? '').trim();
+                                final mediaType =
+                                    (data['mediaType'] as String? ?? '')
+                                        .trim()
+                                        .toLowerCase();
+                                final options =
+                                    ((data['options'] as List?)
+                                            ?.map(
+                                              (item) => item.toString().trim(),
+                                            )
+                                            .where((item) => item.isNotEmpty)
+                                            .toList(growable: false)) ??
+                                    const <String>[];
                                 final ts = _resolvedMessageTimestamp(data);
 
                                 return _ChatBubble(
                                   text: text,
+                                  mediaUrl: mediaUrl,
+                                  mediaType: mediaType,
+                                  options: options,
+                                  onOptionTap: isMine
+                                      ? null
+                                      : (value) => _sendOptionSelection(value),
                                   time: _formatTime(ts),
                                   isMine: isMine,
                                 );
@@ -414,11 +677,21 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                           },
                         ),
                 ),
+                if (_selectedMedia != null)
+                  _SelectedMediaDraft(
+                    file: _selectedMedia!,
+                    isImage: _isImageFile(_selectedMedia!),
+                    onRemove: _sending
+                        ? null
+                        : () => setState(() => _selectedMedia = null),
+                  ),
                 _Composer(
                   controller: _controller,
                   focusNode: _composerFocusNode,
                   onSend: _handleSend,
+                  onAttach: _pickMedia,
                   isSending: _sending,
+                  canSend: _hasDraftText || _selectedMedia != null,
                 ),
               ],
             ),
@@ -435,13 +708,17 @@ class _Composer extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.onSend,
+    required this.onAttach,
     required this.isSending,
+    required this.canSend,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
   final VoidCallback onSend;
+  final VoidCallback onAttach;
   final bool isSending;
+  final bool canSend;
 
   @override
   Widget build(BuildContext context) {
@@ -455,6 +732,24 @@ class _Composer extends StatelessWidget {
         ),
         child: Row(
           children: [
+            InkWell(
+              onTap: isSending ? null : onAttach,
+              borderRadius: BorderRadius.circular(22),
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: const Icon(
+                  Icons.attach_file_rounded,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
             Expanded(
               child: TextField(
                 controller: controller,
@@ -479,13 +774,15 @@ class _Composer extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             InkWell(
-              onTap: isSending ? null : onSend,
+              onTap: (isSending || !canSend) ? null : onSend,
               borderRadius: BorderRadius.circular(22),
               child: Container(
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: isSending ? AppColors.textHint : AppColors.primary,
+                  color: (isSending || !canSend)
+                      ? AppColors.textHint
+                      : AppColors.primary,
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(Icons.send_rounded, color: Colors.white),
@@ -503,11 +800,19 @@ class _ChatBubble extends StatelessWidget {
     required this.text,
     required this.time,
     required this.isMine,
+    this.mediaUrl = '',
+    this.mediaType = '',
+    this.options = const <String>[],
+    this.onOptionTap,
   });
 
   final String text;
   final String time;
   final bool isMine;
+  final String mediaUrl;
+  final String mediaType;
+  final List<String> options;
+  final ValueChanged<String>? onOptionTap;
 
   @override
   Widget build(BuildContext context) {
@@ -536,14 +841,60 @@ class _ChatBubble extends StatelessWidget {
               ? CrossAxisAlignment.end
               : CrossAxisAlignment.start,
           children: [
-            Text(
-              text,
-              style: TextStyle(
-                color: isMine ? Colors.white : AppColors.textPrimary,
-                fontSize: 14,
-                height: 1.35,
+            if (mediaUrl.isNotEmpty && mediaType == 'image') ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.network(
+                  mediaUrl,
+                  width: 220,
+                  height: 220,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => Container(
+                    width: 220,
+                    height: 140,
+                    color: Colors.black12,
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.broken_image_outlined),
+                  ),
+                ),
               ),
-            ),
+              if (text.isNotEmpty) const SizedBox(height: 8),
+            ],
+            if (mediaUrl.isNotEmpty && mediaType == 'video') ...[
+              SizedBox(
+                width: 220,
+                height: 220,
+                child: _NetworkVideoMessage(url: mediaUrl),
+              ),
+              if (text.isNotEmpty) const SizedBox(height: 8),
+            ],
+            if (text.isNotEmpty)
+              Text(
+                text,
+                style: TextStyle(
+                  color: isMine ? Colors.white : AppColors.textPrimary,
+                  fontSize: 14,
+                  height: 1.35,
+                ),
+              )
+            else if (mediaType == 'image' && mediaUrl.isEmpty)
+              Text(
+                '📷 Sending photo...',
+                style: TextStyle(
+                  color: isMine ? Colors.white : AppColors.textPrimary,
+                  fontSize: 14,
+                  height: 1.35,
+                ),
+              )
+            else if (mediaType == 'video' && mediaUrl.isEmpty)
+              Text(
+                '🎬 Sending video...',
+                style: TextStyle(
+                  color: isMine ? Colors.white : AppColors.textPrimary,
+                  fontSize: 14,
+                  height: 1.35,
+                ),
+              ),
             if (time.isNotEmpty) ...[
               const SizedBox(height: 4),
               Text(
@@ -556,9 +907,255 @@ class _ChatBubble extends StatelessWidget {
                 ),
               ),
             ],
+            if (options.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: options
+                    .map(
+                      (option) => OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          side: const BorderSide(color: AppColors.border),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: onOptionTap == null
+                            ? null
+                            : () => onOptionTap!(option),
+                        child: Text(
+                          option,
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
           ],
         ),
       ),
+    );
+  }
+}
+
+class _SelectedMediaDraft extends StatelessWidget {
+  const _SelectedMediaDraft({
+    required this.file,
+    required this.isImage,
+    required this.onRemove,
+  });
+
+  final XFile file;
+  final bool isImage;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: isImage
+                ? FutureBuilder<Uint8List>(
+                    future: file.readAsBytes(),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) {
+                        return const Center(
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        );
+                      }
+                      return Image.memory(snapshot.data!, fit: BoxFit.cover);
+                    },
+                  )
+                : const Icon(Icons.videocam_rounded, color: AppColors.primary),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  file.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  isImage ? 'Photo ready to send' : 'Video ready to send',
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onRemove,
+            icon: const Icon(Icons.close_rounded),
+            color: AppColors.textSecondary,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NetworkVideoMessage extends StatefulWidget {
+  const _NetworkVideoMessage({required this.url});
+
+  final String url;
+
+  @override
+  State<_NetworkVideoMessage> createState() => _NetworkVideoMessageState();
+}
+
+class _NetworkVideoMessageState extends State<_NetworkVideoMessage> {
+  VideoPlayerController? _controller;
+  Future<void>? _initFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _setup();
+  }
+
+  @override
+  void didUpdateWidget(covariant _NetworkVideoMessage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) {
+      _disposeController();
+      _setup();
+    }
+  }
+
+  void _setup() {
+    final url = widget.url.trim();
+    if (url.isEmpty) return;
+
+    final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+    _controller = controller;
+    _initFuture = controller.initialize().then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  Future<void> _disposeController() async {
+    final c = _controller;
+    _controller = null;
+    _initFuture = null;
+    await c?.dispose();
+  }
+
+  @override
+  void dispose() {
+    _disposeController();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_controller == null || _initFuture == null) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.black12,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Icon(Icons.videocam_off_outlined),
+      );
+    }
+
+    return FutureBuilder<void>(
+      future: _initFuture,
+      builder: (_, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done ||
+            !_controller!.value.isInitialized) {
+          return Container(
+            decoration: BoxDecoration(
+              color: Colors.black12,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: _controller!.value.size.width,
+                  height: _controller!.value.size.height,
+                  child: VideoPlayer(_controller!),
+                ),
+              ),
+              Align(
+                alignment: Alignment.center,
+                child: IconButton.filled(
+                  onPressed: () {
+                    final isPlaying = _controller!.value.isPlaying;
+                    if (isPlaying) {
+                      _controller!.pause();
+                    } else {
+                      _controller!.play();
+                    }
+                    if (mounted) setState(() {});
+                  },
+                  icon: Icon(
+                    _controller!.value.isPlaying
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -621,10 +1218,14 @@ class _PendingMessage {
   _PendingMessage({
     required this.clientMessageId,
     required this.text,
+    required this.mediaType,
     required this.timeLabel,
   });
 
   final String clientMessageId;
   final String text;
+  final String mediaType;
   final String timeLabel;
 }
+
+enum _MediaPickChoice { galleryImage, cameraImage, galleryVideo, cameraVideo }

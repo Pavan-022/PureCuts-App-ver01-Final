@@ -10,31 +10,86 @@ service firebase.storage {
         && (request.auth.token.admin == true || request.auth.token.superAdmin == true);
     }
 
-    // Public product media
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isImage() {
+      return request.resource != null
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    function isImageOrVideo() {
+      return request.resource != null
+        && request.resource.contentType.matches('image/.*|video/.*');
+    }
+
+    // Product media
     match /products/{allPaths=**} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, update: if isAdmin()
+        && isImage()
+        && request.resource.size < 10 * 1024 * 1024;
+      allow delete: if isAdmin();
     }
 
-    // Public brand media
+    // Brand media
     match /brands/{allPaths=**} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, update: if isAdmin()
+        && isImage()
+        && request.resource.size < 10 * 1024 * 1024;
+      allow delete: if isAdmin();
     }
 
-    // Public banner media
+    // Category media
+    match /categories/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if isAdmin()
+        && isImage()
+        && request.resource.size < 10 * 1024 * 1024;
+      allow delete: if isAdmin();
+    }
+
+    // Subcategory media
+    match /subCategories/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if isAdmin()
+        && isImage()
+        && request.resource.size < 10 * 1024 * 1024;
+      allow delete: if isAdmin();
+    }
+
+    // Banner media (image/video)
     match /banners/{allPaths=**} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, update: if isAdmin()
+        && isImageOrVideo()
+        && request.resource.size < 25 * 1024 * 1024;
+      allow delete: if isAdmin();
     }
 
-    // Review media uploaded by signed-in users for their own UID folder
+    // Review media: user can upload only inside own uid folder
     match /reviews/{productId}/{uid}/{allPaths=**} {
       allow read: if true;
-      allow write: if isSignedIn()
-        && request.auth.uid == uid
+      allow create, update: if isOwner(uid)
+        && isImageOrVideo()
         && request.resource.size < 25 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*|video/.*');
+        ;
+
+      allow delete: if isOwner(uid) || isAdmin();
+    }
+
+    // Support chat media: chats/{chatId}/media/{uid}/...
+    match /chats/{chatId}/media/{uid}/{allPaths=**} {
+      allow read: if isSignedIn();
+
+      allow create, update: if (isOwner(uid) || isAdmin())
+        && isImageOrVideo()
+        && request.resource.size < 25 * 1024 * 1024
+        ;
+
+      allow delete: if isOwner(uid) || isAdmin(); 
     }
 
     // Deny everything else
