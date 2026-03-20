@@ -12,6 +12,10 @@ service cloud.firestore {
          request.auth.token.superAdmin == true);
     }
 
+    function isSuperAdmin() {
+      return signedIn() && request.auth.token.superAdmin == true;
+    }
+
     // TEMP helper to unblock dashboard banner management if claims are still rolling out.
     // Once all admin claims are stable, change this to: return isAdmin();
     function canManageBanners() {
@@ -148,6 +152,11 @@ service cloud.firestore {
     }
 
     // Dashboard collections
+    match /admins/{docId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
     match /bot_config/{docId} {
       allow read: if isAdmin();
       allow create, update, delete: if isAdmin();
@@ -166,6 +175,11 @@ service cloud.firestore {
     match /notifications/{docId} {
       allow read: if signedIn();
       allow create, update, delete: if isAdmin();
+    }
+
+    match /rolePermissions/{docId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if isSuperAdmin();
     }
 
     // --- Support Chat ---

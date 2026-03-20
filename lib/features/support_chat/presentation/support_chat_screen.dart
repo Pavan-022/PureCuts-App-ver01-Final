@@ -89,9 +89,9 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
           (item) => item.clientMessageId == pendingId,
         );
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to send selected option. $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send selected option. $e')),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -120,9 +120,9 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
       await _handleSend();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Could not restart chat flow. $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not restart chat flow. $e')),
+      );
     }
   }
 
@@ -653,11 +653,9 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                                         .toLowerCase();
                                 final options =
                                     ((data['options'] as List?)
-                                            ?.map(
-                                              (item) => item.toString().trim(),
-                                            )
-                                            .where((item) => item.isNotEmpty)
-                                            .toList(growable: false)) ??
+                                        ?.map((item) => item.toString().trim())
+                                        .where((item) => item.isNotEmpty)
+                                        .toList(growable: false)) ??
                                     const <String>[];
                                 final ts = _resolvedMessageTimestamp(data);
 

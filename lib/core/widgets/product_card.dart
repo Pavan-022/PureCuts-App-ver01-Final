@@ -162,8 +162,8 @@ class ProductCard extends StatelessWidget {
                 // Discount badge
                 if (hasDiscount)
                   Positioned(
-                    top: showBoughtEarlierBadge ? 27 : 6,
-                    left: 6,
+                    top: 6,
+                    right: showHeartIcon ? 30 : 6,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 5,
