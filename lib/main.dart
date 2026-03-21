@@ -11,6 +11,36 @@ import 'package:purecuts/features/orders/order_provider.dart';
 import 'package:purecuts/features/splash/splash_screen.dart';
 import 'firebase_options.dart';
 
+class _SlideLeftPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _SlideLeftPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    const curve = Curves.easeOutCubic;
+
+    final inAnimation = Tween<Offset>(
+      begin: const Offset(1, 0),
+      end: Offset.zero,
+    ).chain(CurveTween(curve: curve)).animate(animation);
+
+    final outAnimation = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(-0.08, 0),
+    ).chain(CurveTween(curve: curve)).animate(secondaryAnimation);
+
+    return SlideTransition(
+      position: outAnimation,
+      child: SlideTransition(position: inAnimation, child: child),
+    );
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
@@ -45,7 +75,18 @@ class _PureCutsAppState extends State<PureCutsApp> {
       child: MaterialApp(
         title: 'PureCuts',
         debugShowCheckedModeBanner: false,
-        theme: AppTheme.light,
+        theme: AppTheme.light.copyWith(
+          pageTransitionsTheme: const PageTransitionsTheme(
+            builders: {
+              TargetPlatform.android: _SlideLeftPageTransitionsBuilder(),
+              TargetPlatform.iOS: _SlideLeftPageTransitionsBuilder(),
+              TargetPlatform.macOS: _SlideLeftPageTransitionsBuilder(),
+              TargetPlatform.windows: _SlideLeftPageTransitionsBuilder(),
+              TargetPlatform.linux: _SlideLeftPageTransitionsBuilder(),
+              TargetPlatform.fuchsia: _SlideLeftPageTransitionsBuilder(),
+            },
+          ),
+        ),
         home: const SplashScreen(),
       ),
     );
