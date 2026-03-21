@@ -73,6 +73,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     final productId = (widget.product['id'] ?? '').toString().trim();
     if (productId.isEmpty) return;
     final uid = _currentUserId;
+    final rawType = (widget.product['productType'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final allowVariantFallback = rawType.isEmpty || rawType == 'variable';
     setState(() => _loadingDetail = true);
     try {
       var product = await _repository.getProductById(
@@ -80,7 +85,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         currentUserId: uid,
       );
 
-      if (product.variants.isEmpty) {
+      if (allowVariantFallback && product.variants.isEmpty) {
         try {
           final fallbackVariants = await _firestoreService.getProductVariants(
             productId,
@@ -250,6 +255,54 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
         .replaceAll(RegExp(r'_+'), '_')
         .replaceAll(RegExp(r'^_|_$'), '');
+  }
+
+  String _variantLabel(ProductVariant variant) {
+    final shade = variant.shadeName.trim();
+    if (shade.isNotEmpty) return shade;
+    final value = variant.value.trim();
+    if (value.isNotEmpty) return value;
+    return 'Variant';
+  }
+
+  bool _isColorVariant(ProductVariant variant) {
+    final attributeKey = _normalizeKey(variant.attribute);
+    final isColorAttribute =
+        attributeKey.contains('color') ||
+        attributeKey.contains('shade') ||
+        attributeKey.contains('tone');
+
+    final raw = variant.colorCode.trim().toLowerCase();
+    final hasExplicitColorCode =
+        raw.isNotEmpty &&
+        raw != '#cbd5e1' &&
+        raw != '0xffcbd5e1' &&
+        raw != 'cbd5e1' &&
+        raw != 'ff_cbd5e1';
+
+    return isColorAttribute && hasExplicitColorCode;
+  }
+
+  String _variantSectionTitle(List<ProductVariant> variants) {
+    if (variants.isEmpty) return 'Choose Option';
+
+    final rawAttr = variants
+        .map((v) => v.attribute.trim())
+        .firstWhere((attr) => attr.isNotEmpty, orElse: () => '');
+    final attrKey = _normalizeKey(rawAttr);
+
+    if (attrKey.contains('unit') ||
+        attrKey.contains('volume') ||
+        attrKey.contains('quantity') ||
+        attrKey.contains('size')) {
+      return 'Choose Unit';
+    }
+    if (attrKey.contains('color') ||
+        attrKey.contains('shade') ||
+        attrKey.contains('tone')) {
+      return 'Choose Shade';
+    }
+    return 'Choose Option';
   }
 
   String _resolveBrandLogo(HomeProvider home, String brandName) {
@@ -1074,7 +1127,6 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         ? _product.brand
         : (widget.product['brand'] ?? '').toString();
     final brandLogo = _resolveBrandLogo(home, brand);
-    final tag = (widget.product['tag'] ?? '').toString();
     final description = _product.description.trim().isNotEmpty
         ? _product.description
         : (widget.product['description'] ?? '').toString();
@@ -1196,7 +1248,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Brand pill + tag
+                  // Brand pill
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                     child: Row(
@@ -1220,26 +1272,6 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             ),
                           ),
                         ),
-                        const Spacer(),
-                        if (tag.trim().isNotEmpty)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.primary.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              tag,
-                              style: const TextStyle(
-                                color: AppColors.primary,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
                       ],
                     ),
                   ),
@@ -1367,22 +1399,22 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     ),
                   ),
 
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 16, 16, 0),
-                    child: Divider(height: 1, color: Color(0xFFF0F0F5)),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 14, 16, 10),
-                    child: Text(
-                      'Choose Shade',
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
+                  if (variants.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 16, 16, 0),
+                      child: Divider(height: 1, color: Color(0xFFF0F0F5)),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                      child: Text(
+                        _variantSectionTitle(variants),
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
-                  ),
-                  if (variants.isNotEmpty)
                     SizedBox(
                       height: 66,
                       child: ListView.separated(
@@ -1393,74 +1425,105 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         itemBuilder: (_, i) {
                           final variant = variants[i];
                           final isSelected = _selectedVariant?.id == variant.id;
-                          final shadeName = variant.shadeName.isNotEmpty
-                              ? variant.shadeName
-                              : variant.value;
+                          final label = _variantLabel(variant);
+                          final isColor = _isColorVariant(variant);
 
                           return GestureDetector(
                             onTap: () => _productState?.selectVariant(variant),
-                            child: Column(
-                              children: [
-                                AnimatedContainer(
-                                  duration: const Duration(milliseconds: 180),
-                                  width: 34,
-                                  height: 34,
-                                  decoration: BoxDecoration(
-                                    color: variant.color,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: isSelected
-                                          ? AppColors.primary
-                                          : const Color(0xFFD9D9E3),
-                                      width: isSelected ? 2.5 : 1,
+                            child: isColor
+                                ? Column(
+                                    children: [
+                                      AnimatedContainer(
+                                        duration: const Duration(
+                                          milliseconds: 180,
+                                        ),
+                                        width: 34,
+                                        height: 34,
+                                        decoration: BoxDecoration(
+                                          color: variant.color,
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                            color: isSelected
+                                                ? AppColors.primary
+                                                : const Color(0xFFD9D9E3),
+                                            width: isSelected ? 2.5 : 1,
+                                          ),
+                                          boxShadow: isSelected
+                                              ? [
+                                                  BoxShadow(
+                                                    color: AppColors.primary
+                                                        .withOpacity(0.2),
+                                                    blurRadius: 8,
+                                                  ),
+                                                ]
+                                              : null,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      SizedBox(
+                                        width: 88,
+                                        child: Text(
+                                          label,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: isSelected
+                                                ? AppColors.primary
+                                                : AppColors.textSecondary,
+                                            fontSize: 11,
+                                            fontWeight: isSelected
+                                                ? FontWeight.w700
+                                                : FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : AnimatedContainer(
+                                    duration: const Duration(milliseconds: 180),
+                                    alignment: Alignment.center,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 72,
+                                      maxWidth: 104,
                                     ),
-                                    boxShadow: isSelected
-                                        ? [
-                                            BoxShadow(
-                                              color: AppColors.primary
-                                                  .withOpacity(0.2),
-                                              blurRadius: 8,
-                                            ),
-                                          ]
-                                        : null,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                SizedBox(
-                                  width: 88,
-                                  child: Text(
-                                    shadeName,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(
                                       color: isSelected
-                                          ? AppColors.primary
-                                          : AppColors.textSecondary,
-                                      fontSize: 11,
-                                      fontWeight: isSelected
-                                          ? FontWeight.w700
-                                          : FontWeight.w500,
+                                          ? AppColors.primary.withOpacity(0.08)
+                                          : const Color(0xFFF7F7FA),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: isSelected
+                                            ? AppColors.primary
+                                            : const Color(0xFFE1E5EE),
+                                        width: isSelected ? 1.8 : 1,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      label,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: isSelected
+                                            ? AppColors.primary
+                                            : AppColors.textSecondary,
+                                        fontSize: 11,
+                                        fontWeight: isSelected
+                                            ? FontWeight.w700
+                                            : FontWeight.w600,
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ],
-                            ),
                           );
                         },
                       ),
-                    )
-                  else
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 0, 16, 0),
-                      child: Text(
-                        'No variants available for this product.',
-                        style: TextStyle(
-                          color: AppColors.textHint,
-                          fontSize: 12,
-                        ),
-                      ),
                     ),
+                  ],
 
                   const SizedBox(height: 16),
                 ],

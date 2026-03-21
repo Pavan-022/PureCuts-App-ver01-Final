@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/models/cart_model.dart';
+import 'package:purecuts/core/services/push_notification_service.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/orders/order_provider.dart';
@@ -16,8 +17,21 @@ void main() async {
   runApp(const PureCutsApp());
 }
 
-class PureCutsApp extends StatelessWidget {
+class PureCutsApp extends StatefulWidget {
   const PureCutsApp({super.key});
+
+  @override
+  State<PureCutsApp> createState() => _PureCutsAppState();
+}
+
+class _PureCutsAppState extends State<PureCutsApp> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      PushNotificationService.instance.initialize();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

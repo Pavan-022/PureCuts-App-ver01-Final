@@ -72,58 +72,31 @@ class ProductVariant {
 
 class ReviewModel {
   final String id;
-  final String userId;
   final String userName;
-  final String userEmail;
-  final String userPhone;
   final double rating;
   final String comment;
   final List<String> mediaUrls;
-  final String status;
-  final bool approved;
-  final String visibility;
   final DateTime? createdAt;
 
   const ReviewModel({
     required this.id,
-    required this.userId,
     required this.userName,
-    this.userEmail = '',
-    this.userPhone = '',
     required this.rating,
     required this.comment,
     this.mediaUrls = const [],
-    this.status = 'approved',
-    this.approved = true,
-    this.visibility = 'global',
     this.createdAt,
   });
 
   factory ReviewModel.fromMap(String id, Map<String, dynamic> map) {
     return ReviewModel(
       id: id,
-      userId: (map['userId'] ?? map['uid'] ?? id).toString(),
       userName: (map['userName'] ?? map['name'] ?? 'User').toString(),
-      userEmail: (map['userEmail'] ?? map['email'] ?? '').toString(),
-      userPhone: (map['userPhone'] ?? map['phone'] ?? '').toString(),
       rating: (map['rating'] as num?)?.toDouble() ?? 0,
       comment: (map['comment'] ?? map['review'] ?? '').toString(),
       mediaUrls: ((map['mediaUrls'] as List?) ?? const [])
           .map((e) => e.toString().trim())
           .where((e) => e.isNotEmpty)
           .toList(growable: false),
-      status: (map['status'] ?? ((map['approved'] == true) ? 'approved' : 'pending'))
-        .toString()
-        .toLowerCase(),
-      approved: map['approved'] == true ||
-        (map['status'] ?? '').toString().toLowerCase() == 'approved',
-      visibility: (map['visibility'] ??
-          (((map['approved'] == true) ||
-              (map['status'] ?? '').toString().toLowerCase() ==
-                'approved')
-            ? 'global'
-            : 'author_only'))
-        .toString(),
       createdAt: _toDateTime(map['createdAt']),
     );
   }
@@ -210,15 +183,26 @@ class Product {
       }
     }
 
+    List<String> uniqueOrdered(Iterable<String> values) {
+      final seen = <String>{};
+      final ordered = <String>[];
+      for (final value in values) {
+        final item = value.trim();
+        if (item.isEmpty) continue;
+        if (seen.add(item)) ordered.add(item);
+      }
+      return ordered;
+    }
+
     final rawImages = toStringList(map['images']);
     final rawAdditionalImages = toStringList(map['additionalImages']);
     final fallbackImage = (map['image'] ?? map['imageUrl'] ?? '').toString();
 
-    final images = <String>{
-      ...rawImages.where((item) => item.trim().isNotEmpty),
-      ...rawAdditionalImages.where((item) => item.trim().isNotEmpty),
+    final images = uniqueOrdered([
       if (fallbackImage.trim().isNotEmpty) fallbackImage,
-    }.toList(growable: false);
+      ...rawImages,
+      ...rawAdditionalImages,
+    ]);
     final effectiveVariants = variants.isNotEmpty
         ? variants
         : parseInlineVariants(map['variants']);
@@ -274,18 +258,28 @@ class ProductState extends ChangeNotifier {
 
   List<String> get displayImages {
     try {
-      final merged = <String>{
-        if (primaryImage.trim().isNotEmpty) primaryImage,
-        ..._product.images
-            .whereType<String>()
-            .map((img) => img.trim())
-            .where((img) => img.isNotEmpty),
-        ..._product.variants
-            .map((v) => v.image)
-            .whereType<String>()
-            .map((img) => img.trim())
-            .where((img) => img.isNotEmpty),
-      }.toList(growable: false);
+      final seen = <String>{};
+      final merged = <String>[];
+
+      void addImage(String value) {
+        final item = value.trim();
+        if (item.isEmpty) return;
+        if (seen.add(item)) merged.add(item);
+      }
+
+      // Keep product thumbnail first at all times.
+      for (final image in _product.images.whereType<String>()) {
+        addImage(image);
+      }
+
+      // Variant images are appended after the base product image list.
+      for (final variant in _product.variants) {
+        addImage(variant.image);
+      }
+
+      // Last-resort fallback.
+      addImage(primaryImage);
+
       return merged;
     } catch (_) {
       return const <String>[];
