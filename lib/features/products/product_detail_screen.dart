@@ -1909,6 +1909,19 @@ class _ProductImageCarousel extends StatelessWidget {
     required this.buildImage,
   });
 
+  void _openZoomViewer(BuildContext context, int initialIndex) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.95),
+      builder: (_) => _ProductImageZoomViewer(
+        images: images,
+        initialIndex: initialIndex,
+        buildImage: buildImage,
+        onPageChanged: onPageChanged,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1924,7 +1937,32 @@ class _ProductImageCarousel extends StatelessWidget {
               onPageChanged: onPageChanged,
               itemBuilder: (_, i) => Padding(
                 padding: const EdgeInsets.fromLTRB(24, 80, 24, 16),
-                child: buildImage(images[i], fit: BoxFit.contain),
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: GestureDetector(
+                        onTap: () => _openZoomViewer(context, i),
+                        child: buildImage(images[i], fit: BoxFit.contain),
+                      ),
+                    ),
+                    Positioned(
+                      right: 6,
+                      bottom: 6,
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.45),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: const Icon(
+                          Icons.zoom_in_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1995,6 +2033,94 @@ class _ProductImageCarousel extends StatelessWidget {
             ),
           ] else
             const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProductImageZoomViewer extends StatefulWidget {
+  final List<String> images;
+  final int initialIndex;
+  final Widget Function(String, {BoxFit fit}) buildImage;
+  final ValueChanged<int> onPageChanged;
+
+  const _ProductImageZoomViewer({
+    required this.images,
+    required this.initialIndex,
+    required this.buildImage,
+    required this.onPageChanged,
+  });
+
+  @override
+  State<_ProductImageZoomViewer> createState() =>
+      _ProductImageZoomViewerState();
+}
+
+class _ProductImageZoomViewerState extends State<_ProductImageZoomViewer> {
+  late final PageController _controller;
+  late int _index;
+
+  @override
+  void initState() {
+    super.initState();
+    _index = widget.initialIndex.clamp(0, widget.images.length - 1);
+    _controller = PageController(initialPage: _index);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close_rounded),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Text(
+          '${_index + 1}/${widget.images.length}',
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+      ),
+      body: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 2, bottom: 8),
+            child: Text(
+              'Pinch to zoom',
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ),
+          Expanded(
+            child: PageView.builder(
+              controller: _controller,
+              itemCount: widget.images.length,
+              onPageChanged: (i) {
+                setState(() => _index = i);
+                widget.onPageChanged(i);
+              },
+              itemBuilder: (_, i) {
+                return InteractiveViewer(
+                  minScale: 1,
+                  maxScale: 4,
+                  child: Center(
+                    child: widget.buildImage(
+                      widget.images[i],
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
         ],
       ),
     );

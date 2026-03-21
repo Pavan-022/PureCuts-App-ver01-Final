@@ -1,5 +1,7 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
+import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
 import 'package:purecuts/core/widgets/shimmer_widgets.dart';
@@ -23,11 +25,23 @@ class ProductListScreen extends StatefulWidget {
 }
 
 class _ProductListScreenState extends State<ProductListScreen> {
+  static const int _pageSize = 20;
+
   String _selectedCategory = 'All';
   String? _selectedBrand;
   String? _selectedTag;
   String _sort = 'popular';
   final _searchCtrl = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  final FirestoreService _firestoreService = FirestoreService();
+
+  final List<Map<String, dynamic>> _pagedProducts = [];
+  DocumentSnapshot<Map<String, dynamic>>? _lastProductDoc;
+  bool _isInitialLoading = false;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+  String? _pagingError;
+
   String _searchQuery = '';
 
   String _normalizeToken(String value) {
@@ -78,7 +92,81 @@ class _ProductListScreenState extends State<ProductListScreen> {
   }
 
   Future<void> _refreshProducts() async {
-    await context.read<HomeProvider>().loadData();
+    await _loadFirstPage();
+  }
+
+  Future<void> _loadFirstPage() async {
+    if (_isInitialLoading) return;
+    setState(() {
+      _isInitialLoading = true;
+      _isLoadingMore = false;
+      _pagingError = null;
+      _hasMore = true;
+      _lastProductDoc = null;
+      _pagedProducts.clear();
+    });
+
+    try {
+      final result = await _firestoreService.getProductsPage(
+        limit: _pageSize,
+        startAfterDoc: null,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _pagedProducts
+          ..clear()
+          ..addAll(result.products.map((p) => p.toProductMap()));
+        _lastProductDoc = result.lastDocument;
+        _hasMore = result.hasMore;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _pagingError = e.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isInitialLoading = false);
+      }
+    }
+  }
+
+  Future<void> _loadMorePage() async {
+    if (_isInitialLoading || _isLoadingMore || !_hasMore) return;
+
+    setState(() {
+      _isLoadingMore = true;
+      _pagingError = null;
+    });
+
+    try {
+      final result = await _firestoreService.getProductsPage(
+        limit: _pageSize,
+        startAfterDoc: _lastProductDoc,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _pagedProducts.addAll(result.products.map((p) => p.toProductMap()));
+        _lastProductDoc = result.lastDocument;
+        _hasMore = result.hasMore;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _pagingError = e.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingMore = false);
+      }
+    }
+  }
+
+  void _onProductScroll() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    final threshold = position.maxScrollExtent * 0.75;
+    if (position.pixels >= threshold) {
+      _loadMorePage();
+    }
   }
 
   @override
@@ -93,14 +181,17 @@ class _ProductListScreenState extends State<ProductListScreen> {
     if (widget.initialTag != null && widget.initialTag!.trim().isNotEmpty) {
       _selectedTag = widget.initialTag!.trim();
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<HomeProvider>().loadData();
-    });
+
+    _scrollController.addListener(_onProductScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadFirstPage());
   }
 
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _scrollController
+      ..removeListener(_onProductScroll)
+      ..dispose();
     super.dispose();
   }
 
@@ -116,7 +207,43 @@ class _ProductListScreenState extends State<ProductListScreen> {
       _selectedCategory = 'All';
     }
 
-    final products = home
+    final products = _pagedProducts
+        .where((p) {
+          if (_selectedCategory == 'All') return true;
+          return (p['category'] ?? '').toString().trim().toLowerCase() ==
+              _selectedCategory.trim().toLowerCase();
+        })
+        .where((p) {
+          if (_searchQuery.trim().isEmpty) return true;
+          final search = _normalizeToken(_searchQuery);
+          final name = _normalizeToken((p['name'] ?? '').toString());
+          final brand = _normalizeToken((p['brand'] ?? '').toString());
+          final category = _normalizeToken((p['category'] ?? '').toString());
+          final text = '$name $brand $category';
+          return text.contains(search);
+        })
+        .where((p) {
+          if ((_selectedBrand ?? '').trim().isEmpty) return true;
+          return (p['brand'] ?? '').toString().trim().toLowerCase() ==
+              _selectedBrand!.trim().toLowerCase();
+        })
+        .where((p) {
+          if ((_selectedTag ?? '').trim().isEmpty) return true;
+          return _matchesSelectedTag(_tagSearchSource(p));
+        })
+        .toList();
+
+    if (_sort == 'low') {
+      products.sort((a, b) => (a['price'] as num).compareTo(b['price'] as num));
+    } else if (_sort == 'high') {
+      products.sort((a, b) => (b['price'] as num).compareTo(a['price'] as num));
+    } else if (_sort == 'rating') {
+      products.sort(
+        (a, b) => (b['rating'] as num).compareTo(a['rating'] as num),
+      );
+    }
+
+    final legacyProducts = home
         .filteredProducts(
           category: _selectedCategory,
           query: _searchQuery,
@@ -132,6 +259,17 @@ class _ProductListScreenState extends State<ProductListScreen> {
           return _matchesSelectedTag(_tagSearchSource(p));
         })
         .toList();
+
+    final hasActiveFiltering =
+        _selectedCategory != 'All' ||
+        (_selectedBrand ?? '').trim().isNotEmpty ||
+        (_selectedTag ?? '').trim().isNotEmpty ||
+        _searchQuery.trim().isNotEmpty ||
+        _sort != 'popular';
+
+    final displayedProducts = hasActiveFiltering && legacyProducts.isNotEmpty
+        ? legacyProducts
+        : products;
 
     final title = (_selectedTag ?? '').trim().isNotEmpty
         ? _selectedTag!
@@ -382,8 +520,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
           Expanded(
             child: RefreshIndicator(
               onRefresh: _refreshProducts,
-              child: home.loading
+              child: _isInitialLoading
                   ? GridView.builder(
+                      controller: _scrollController,
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                       gridDelegate:
@@ -396,8 +535,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
                       itemCount: 6,
                       itemBuilder: (_, __) => const ProductCardShimmer(),
                     )
-                  : products.isEmpty
+                  : displayedProducts.isEmpty
                   ? ListView(
+                      controller: _scrollController,
                       physics: const AlwaysScrollableScrollPhysics(),
                       children: [
                         SizedBox(
@@ -420,6 +560,17 @@ class _ProductListScreenState extends State<ProductListScreen> {
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
+                                if (_pagingError != null) ...[
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    _pagingError!,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: AppColors.textHint,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
                           ),
@@ -427,6 +578,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
                       ],
                     )
                   : GridView.builder(
+                      controller: _scrollController,
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                       gridDelegate:
@@ -436,11 +588,31 @@ class _ProductListScreenState extends State<ProductListScreen> {
                             crossAxisSpacing: 12,
                             childAspectRatio: 0.65,
                           ),
-                      itemCount: products.length,
-                      itemBuilder: (_, i) => ProductCard(product: products[i]),
+                      itemCount:
+                          displayedProducts.length + (_isLoadingMore ? 2 : 0),
+                      itemBuilder: (_, i) {
+                        if (i >= displayedProducts.length) {
+                          return const ProductCardShimmer();
+                        }
+                        return ProductCard(product: displayedProducts[i]);
+                      },
                     ),
             ),
           ),
+          if (!_isInitialLoading && _isLoadingMore)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(0, 0, 0, 8),
+              child: SizedBox(
+                height: 22,
+                child: Center(
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              ),
+            ),
           const StickyCartBar(),
         ],
       ),

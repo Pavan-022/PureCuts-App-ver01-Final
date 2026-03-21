@@ -28,6 +28,55 @@ class FirestoreService {
     return visibility == 'publish';
   }
 
+  static const int _defaultProductPageBatch = 24;
+
+  Future<
+    ({
+      List<ProductModel> products,
+      DocumentSnapshot<Map<String, dynamic>>? lastDocument,
+      bool hasMore,
+    })
+  >
+  getProductsPage({
+    int limit = _defaultProductPageBatch,
+    DocumentSnapshot<Map<String, dynamic>>? startAfterDoc,
+  }) async {
+    final safeLimit = limit <= 0 ? _defaultProductPageBatch : limit;
+    final collected = <ProductModel>[];
+    var cursor = startAfterDoc;
+    var hasMore = true;
+
+    while (collected.length < safeLimit && hasMore) {
+      Query<Map<String, dynamic>> query = _db
+          .collection(_productsCollection)
+          .orderBy(FieldPath.documentId)
+          .limit(safeLimit);
+
+      if (cursor != null) {
+        query = query.startAfterDocument(cursor);
+      }
+
+      final snap = await query.get();
+      if (snap.docs.isEmpty) {
+        hasMore = false;
+        break;
+      }
+
+      cursor = snap.docs.last;
+      for (final doc in snap.docs) {
+        if (!_isPublishedProduct(doc.data())) continue;
+        collected.add(ProductModel.fromMap(doc.data(), doc.id));
+        if (collected.length >= safeLimit) break;
+      }
+
+      if (snap.docs.length < safeLimit) {
+        hasMore = false;
+      }
+    }
+
+    return (products: collected, lastDocument: cursor, hasMore: hasMore);
+  }
+
   String _baseProductId(String value) {
     final id = value.trim();
     if (id.isEmpty) return '';
@@ -71,8 +120,8 @@ class FirestoreService {
   Future<List<ProductModel>> getProducts() async {
     final snap = await _db.collection('products').get();
     return snap.docs
-      .where((doc) => _isPublishedProduct(doc.data()))
-      .map((doc) => ProductModel.fromMap(doc.data(), doc.id))
+        .where((doc) => _isPublishedProduct(doc.data()))
+        .map((doc) => ProductModel.fromMap(doc.data(), doc.id))
         .toList();
   }
 
@@ -117,8 +166,8 @@ class FirestoreService {
         .where('category', isEqualTo: category)
         .get();
     return snap.docs
-      .where((doc) => _isPublishedProduct(doc.data()))
-      .map((doc) => ProductModel.fromMap(doc.data(), doc.id))
+        .where((doc) => _isPublishedProduct(doc.data()))
+        .map((doc) => ProductModel.fromMap(doc.data(), doc.id))
         .toList();
   }
 
@@ -246,7 +295,8 @@ class FirestoreService {
           .map((doc) => {'id': doc.id, ...doc.data()})
           .toList(growable: false);
       rows.sort(
-        (a, b) => _toOrderIndex(a['order']).compareTo(_toOrderIndex(b['order'])),
+        (a, b) =>
+            _toOrderIndex(a['order']).compareTo(_toOrderIndex(b['order'])),
       );
       return rows;
     }
@@ -264,10 +314,9 @@ class FirestoreService {
           .toLowerCase()
           .compareTo((b['parentCategory'] ?? '').toString().toLowerCase());
       if (catCmp != 0) return catCmp;
-      return (a['name'] ?? '')
-          .toString()
-          .toLowerCase()
-          .compareTo((b['name'] ?? '').toString().toLowerCase());
+      return (a['name'] ?? '').toString().toLowerCase().compareTo(
+        (b['name'] ?? '').toString().toLowerCase(),
+      );
     });
     return rows;
   }
@@ -289,10 +338,9 @@ class FirestoreService {
           .toLowerCase()
           .compareTo((b['parentSubCategory'] ?? '').toString().toLowerCase());
       if (subCmp != 0) return subCmp;
-      return (a['name'] ?? '')
-          .toString()
-          .toLowerCase()
-          .compareTo((b['name'] ?? '').toString().toLowerCase());
+      return (a['name'] ?? '').toString().toLowerCase().compareTo(
+        (b['name'] ?? '').toString().toLowerCase(),
+      );
     });
     return rows;
   }
