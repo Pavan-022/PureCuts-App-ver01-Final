@@ -30,14 +30,26 @@ class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
   final ScrollController _recommendedScrollController = ScrollController();
   final PageController _bannerPageController = PageController();
+  final GlobalKey _headerSearchBarKey = GlobalKey();
+  final GlobalKey _categoriesSectionKey = GlobalKey();
+  final GlobalKey _hotDealsSectionKey = GlobalKey();
   Timer? _bannerAutoSlideTimer;
   int _currentBannerPage = 0;
   int _bannerCountForTimer = 0;
   Set<String> _purchasedProductIds = <String>{};
+  final ScrollController _contentScrollController = ScrollController();
   final FirestoreService _firestoreService = FirestoreService();
   bool _hasOrderHistory = false;
   bool _orderHistoryResolved = false;
   bool _orderHistoryLoading = false;
+  bool _showStickySearch = false;
+  bool _showStickyCategories = false;
+  bool _stickyLabelsOnly = false;
+  double? _stickySearchShowOffset;
+  double? _stickyShowOffset;
+  static const double _stickySearchBarHeight = 56;
+  static const double _stickyCategoryTopWhenSearchVisible =
+      _stickySearchBarHeight + 2;
   AnimationController? _bannerImageZoomController;
   Animation<double> _bannerImageZoomAnimation =
       const AlwaysStoppedAnimation<double>(1.0);
@@ -76,6 +88,10 @@ class _HomeScreenState extends State<HomeScreen>
       context.read<HomeProvider>().loadData(),
       _resolveOrderHistory(force: true),
     ]);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _recalculateStickyThresholds();
+    });
   }
 
   Future<void> _resolveOrderHistory({bool force = false}) async {
@@ -284,6 +300,44 @@ class _HomeScreenState extends State<HomeScreen>
     return 'https://firebasestorage.googleapis.com/v0/b/purecuts-11a7c.firebasestorage.app/o/${Uri.encodeComponent(path)}?alt=media';
   }
 
+  double _toDouble(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value.toDouble();
+    final raw = value.toString().trim();
+    if (raw.isEmpty) return 0;
+    final cleaned = raw.replaceAll(RegExp(r'[^0-9.-]'), '');
+    return double.tryParse(cleaned) ?? 0;
+  }
+
+  int? _resolveDiscountPercent(Map<String, dynamic> product) {
+    final explicitCandidates = [
+      product['discountPercent'],
+      product['discount_percentage'],
+      product['discount'],
+      product['offerPercent'],
+      product['offerPercentage'],
+      product['offer'],
+    ];
+
+    for (final candidate in explicitCandidates) {
+      final parsed = _toDouble(candidate);
+      if (parsed > 0) {
+        return parsed.round().clamp(1, 99);
+      }
+    }
+
+    final original = _toDouble(
+      product['originalPrice'] ?? product['mrp'] ?? product['listPrice'],
+    );
+    final sale = _toDouble(product['price'] ?? product['salePrice']);
+
+    if (original <= 0 || sale <= 0 || sale >= original) return null;
+
+    final pct = (((original - sale) / original) * 100).round();
+    if (pct <= 0) return null;
+    return pct.clamp(1, 99);
+  }
+
   Widget _buildProductImage(
     String imagePath, {
     double? width,
@@ -334,6 +388,7 @@ class _HomeScreenState extends State<HomeScreen>
   void initState() {
     super.initState();
     _ensureBannerImageZoomReady();
+    _contentScrollController.addListener(_updateStickyCategories);
 
     Future.microtask(() {
       Future.wait([
@@ -343,6 +398,65 @@ class _HomeScreenState extends State<HomeScreen>
         if (mounted) _startAutoScroll();
       });
     });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _recalculateStickyThresholds();
+    });
+  }
+
+  void _recalculateStickyThresholds() {
+    if (!mounted || !_contentScrollController.hasClients) return;
+
+    final currentOffset = _contentScrollController.offset;
+    final safeTop = MediaQuery.of(context).padding.top;
+    final stickyAnchorGlobal = safeTop - 2;
+
+    final searchContext = _headerSearchBarKey.currentContext;
+    if (searchContext != null) {
+      final searchBox = searchContext.findRenderObject() as RenderBox?;
+      if (searchBox != null) {
+        final searchTopGlobal = searchBox.localToGlobal(Offset.zero).dy;
+        _stickySearchShowOffset =
+            currentOffset + (searchTopGlobal - stickyAnchorGlobal);
+      }
+    }
+
+    final categoriesContext = _categoriesSectionKey.currentContext;
+    if (categoriesContext != null) {
+      final categoriesBox = categoriesContext.findRenderObject() as RenderBox?;
+      if (categoriesBox != null) {
+        final categoriesTopGlobal = categoriesBox.localToGlobal(Offset.zero).dy;
+        _stickyShowOffset =
+            currentOffset + (categoriesTopGlobal - stickyAnchorGlobal);
+      }
+    }
+
+    _updateStickyCategories();
+  }
+
+  void _updateStickyCategories() {
+    if (!mounted || !_contentScrollController.hasClients) return;
+
+    if (_stickyShowOffset == null || _stickySearchShowOffset == null) {
+      _recalculateStickyThresholds();
+      return;
+    }
+
+    final offset = _contentScrollController.offset;
+    final shouldShowSearch =
+        offset >= (_stickySearchShowOffset ?? double.infinity);
+    final shouldShowSticky = offset >= (_stickyShowOffset ?? double.infinity);
+    const labelsOnly = false;
+
+    if (shouldShowSearch != _showStickySearch ||
+        shouldShowSticky != _showStickyCategories ||
+        labelsOnly != _stickyLabelsOnly) {
+      setState(() {
+        _showStickySearch = shouldShowSearch;
+        _showStickyCategories = shouldShowSticky;
+        _stickyLabelsOnly = labelsOnly;
+      });
+    }
   }
 
   void _startAutoScroll() {
@@ -434,6 +548,8 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     _recommendedScrollController.dispose();
+    _contentScrollController.removeListener(_updateStickyCategories);
+    _contentScrollController.dispose();
     _bannerAutoSlideTimer?.cancel();
     _bannerPageController.dispose();
     _bannerImageZoomController?.dispose();
@@ -452,11 +568,182 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  String _categoryName(Map<String, dynamic> category) {
+    final raw = (category['name'] ?? '').toString().trim();
+    return raw.isNotEmpty ? raw : 'Category';
+  }
+
+  void _openCategory(String categoryName) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CategoriesScreen(initialCategory: categoryName),
+      ),
+    );
+  }
+
+  Widget _buildStickyCategoryBar(HomeProvider home) {
+    final cats = home.categories;
+    if (cats.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    Widget buildIcon(String? iconPath) {
+      final cleaned = (iconPath ?? '').trim();
+      if (cleaned.isEmpty) {
+        return const Icon(
+          Icons.category_outlined,
+          color: AppColors.textHint,
+          size: 16,
+        );
+      }
+      if (cleaned.startsWith('assets/')) {
+        return Image.asset(
+          cleaned,
+          width: 16,
+          height: 16,
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => const Icon(
+            Icons.category_outlined,
+            color: AppColors.textHint,
+            size: 16,
+          ),
+        );
+      }
+      return Image.network(
+        cleaned,
+        width: 16,
+        height: 16,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => const Icon(
+          Icons.category_outlined,
+          color: AppColors.textHint,
+          size: 16,
+        ),
+      );
+    }
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
+      padding: EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: _stickyLabelsOnly ? 7 : 9,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(0),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x15000000),
+            blurRadius: 12,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: SizedBox(
+        height: _stickyLabelsOnly ? 34 : 40,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: cats.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 6),
+          itemBuilder: (_, i) {
+            final cat = cats[i];
+            final name = _categoryName(cat);
+            final rawIconPath = cat['icon'] ?? cat['image'];
+            final iconPath = rawIconPath == null
+                ? null
+                : rawIconPath.toString();
+
+            return GestureDetector(
+              onTap: () => _openCategory(name),
+              child: Container(
+                constraints: BoxConstraints(
+                  minWidth: _stickyLabelsOnly ? 86 : 92,
+                ),
+                padding: EdgeInsets.symmetric(
+                  horizontal: _stickyLabelsOnly ? 10 : 9,
+                  vertical: _stickyLabelsOnly ? 8 : 7,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF4F2FA),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFE4DFEF)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.max,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (!_stickyLabelsOnly) ...[
+                      buildIcon(iconPath),
+                      const SizedBox(width: 6),
+                    ],
+                    Text(
+                      name,
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: _stickyLabelsOnly ? 12 : 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStickySearchBar() {
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+      child: GestureDetector(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const ProductListScreen()),
+        ),
+        child: Container(
+          height: 48,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x16A855F7),
+                blurRadius: 14,
+                offset: Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: const [
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: Icon(Icons.search, color: AppColors.textHint, size: 20),
+              ),
+              Expanded(
+                child: Text(
+                  'Search hair color, scissors, shampoos...',
+                  style: TextStyle(color: AppColors.textHint, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     _ensureBannerImageZoomReady();
     final home = context.watch<HomeProvider>();
     final screenHeight = MediaQuery.of(context).size.height;
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: Stack(
@@ -485,18 +772,69 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
           SafeArea(
-            child: RefreshIndicator(
-              onRefresh: _refreshHomeData,
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildHeader(),
-                    home.loading ? _buildShimmer() : _buildContent(home),
-                  ],
+            child: Stack(
+              children: [
+                RefreshIndicator(
+                  onRefresh: _refreshHomeData,
+                  child: SingleChildScrollView(
+                    controller: _contentScrollController,
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildHeader(),
+                        home.loading ? _buildShimmer() : _buildContent(home),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
+                if (!home.loading)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: -2,
+                    child: IgnorePointer(
+                      ignoring: !_showStickySearch,
+                      child: AnimatedSlide(
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOutCubic,
+                        offset: _showStickySearch
+                            ? Offset.zero
+                            : const Offset(0, -0.22),
+                        child: AnimatedOpacity(
+                          duration: const Duration(milliseconds: 160),
+                          curve: Curves.easeOut,
+                          opacity: _showStickySearch ? 1 : 0,
+                          child: _buildStickySearchBar(),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (!home.loading)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: _showStickySearch
+                        ? _stickyCategoryTopWhenSearchVisible
+                        : -2,
+                    child: IgnorePointer(
+                      ignoring: !_showStickyCategories,
+                      child: AnimatedSlide(
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOutCubic,
+                        offset: _showStickyCategories
+                            ? Offset.zero
+                            : const Offset(0, -0.22),
+                        child: AnimatedOpacity(
+                          duration: const Duration(milliseconds: 160),
+                          curve: Curves.easeOut,
+                          opacity: _showStickyCategories ? 1 : 0,
+                          child: _buildStickyCategoryBar(home),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ],
@@ -714,6 +1052,7 @@ class _HomeScreenState extends State<HomeScreen>
           ),
           // Search bar
           Padding(
+            key: _headerSearchBarKey,
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             child: GestureDetector(
               onTap: () => Navigator.push(
@@ -788,6 +1127,12 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildContent(HomeProvider home) {
+    if (_stickyShowOffset == null || _stickySearchShowOffset == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _recalculateStickyThresholds();
+      });
+    }
+
     final products = home.productMaps;
     final banners = home.banners;
     final hasBannerData = banners.isNotEmpty;
@@ -844,16 +1189,27 @@ class _HomeScreenState extends State<HomeScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Categories section
-        _buildSectionHeader('Categories', 'View All'),
-        const SizedBox(height: 12),
-        _buildCategoriesGrid(home),
+        Container(
+          key: _categoriesSectionKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildSectionHeader('Categories', 'View All'),
+              const SizedBox(height: 12),
+              _buildCategoriesGrid(home),
+            ],
+          ),
+        ),
         if (hasBannerData) ...[
           const SizedBox(height: 14),
           _buildBannerCarousel(banners),
         ],
         const SizedBox(height: 20),
         // Hot deals section
-        _buildHotDealsHeader(context),
+        Container(
+          key: _hotDealsSectionKey,
+          child: _buildHotDealsHeader(context),
+        ),
         const SizedBox(height: 12),
         _buildRecentlyOrdered(browseItems),
         const SizedBox(height: 20),
@@ -1458,6 +1814,8 @@ class _HomeScreenState extends State<HomeScreen>
           final p = products[i];
           final productId = _baseProductId((p['id'] ?? '').toString());
           final showBoughtEarlier = _purchasedProductIds.contains(productId);
+          final discountPercent = _resolveDiscountPercent(p);
+          final hasDiscount = discountPercent != null;
           return GestureDetector(
             onTap: () => _openProductDetail(p),
             child: SizedBox(
@@ -1515,6 +1873,29 @@ class _HomeScreenState extends State<HomeScreen>
                                 color: Colors.white,
                                 fontSize: 7.5,
                                 fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (hasDiscount)
+                        Positioned(
+                          top: 6,
+                          right: 6,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFF3B30),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '-$discountPercent%',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 8,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
                           ),

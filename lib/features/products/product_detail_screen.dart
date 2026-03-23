@@ -30,8 +30,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   final ImagePicker _imagePicker = ImagePicker();
   final PageController _pageController = PageController();
+  final Map<int, bool> _detailsExpandedByTab = {0: false, 1: false, 2: false};
   ProductState? _productState;
-  bool _detailsExpanded = false;
   int _selectedDetailsTab = 0;
   bool _loadingDetail = false;
   bool _isWishlisted = false;
@@ -410,6 +410,141 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       if (items.isNotEmpty) return items;
     }
     return const [];
+  }
+
+  bool _isLikelyImageUrl(String value) {
+    final v = value.trim();
+    if (v.isEmpty) return false;
+    if (!(v.startsWith('http://') || v.startsWith('https://'))) return false;
+
+    final lower = v.toLowerCase();
+    final hasImageExt = RegExp(
+      r'\.(png|jpe?g|webp|gif|bmp|heic)(\?|#|$)',
+      caseSensitive: false,
+    ).hasMatch(lower);
+
+    return hasImageExt || lower.contains('firebasestorage.googleapis.com');
+  }
+
+  Widget _buildDescriptionImage(String imageUrl) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: SizedBox(
+          width: double.infinity,
+          height: 180,
+          child: _buildImage(imageUrl, fit: BoxFit.cover),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRichDescription(String rawText) {
+    final content = rawText.trim();
+    if (content.isEmpty) {
+      return const Text(
+        'No description available for this product.',
+        style: TextStyle(
+          color: AppColors.textPrimary,
+          fontSize: 15,
+          height: 1.42,
+        ),
+      );
+    }
+
+    final imageTagRegex = RegExp(
+      r'!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)',
+      caseSensitive: false,
+      multiLine: true,
+    );
+
+    final widgets = <Widget>[];
+
+    void addChunk(String chunk) {
+      final lines = chunk.split('\n').map((line) => line.trimRight()).toList();
+      final textLines = <String>[];
+
+      void flushText() {
+        final text = textLines.join('\n').trim();
+        if (text.isEmpty) return;
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              text,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 15,
+                height: 1.42,
+              ),
+            ),
+          ),
+        );
+        textLines.clear();
+      }
+
+      for (final line in lines) {
+        final trimmed = line.trim();
+        if (_isLikelyImageUrl(trimmed)) {
+          flushText();
+          widgets.add(_buildDescriptionImage(trimmed));
+          continue;
+        }
+        textLines.add(line);
+      }
+      flushText();
+    }
+
+    var cursor = 0;
+    for (final match in imageTagRegex.allMatches(content)) {
+      final before = content.substring(cursor, match.start);
+      addChunk(before);
+
+      final imageUrl = (match.group(1) ?? '').trim();
+      if (imageUrl.isNotEmpty) {
+        widgets.add(_buildDescriptionImage(imageUrl));
+      }
+
+      cursor = match.end;
+    }
+
+    if (cursor < content.length) {
+      addChunk(content.substring(cursor));
+    }
+
+    if (widgets.isEmpty) {
+      addChunk(content);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: widgets,
+    );
+  }
+
+  bool _isTabExpanded(int tabIndex) => _detailsExpandedByTab[tabIndex] ?? false;
+
+  void _toggleTabExpanded(int tabIndex) {
+    setState(() {
+      _detailsExpandedByTab[tabIndex] = !_isTabExpanded(tabIndex);
+    });
+  }
+
+  void _setDetailsTab(int tabIndex) {
+    if (tabIndex < 0 || tabIndex > 2) return;
+    setState(() => _selectedDetailsTab = tabIndex);
+  }
+
+  void _onDetailsHorizontalSwipe(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity < -120 && _selectedDetailsTab < 2) {
+      _setDetailsTab(_selectedDetailsTab + 1);
+      return;
+    }
+    if (velocity > 120 && _selectedDetailsTab > 0) {
+      _setDetailsTab(_selectedDetailsTab - 1);
+    }
   }
 
   Future<void> _checkReviewEligibility() async {
@@ -902,38 +1037,37 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   Widget _buildDetailsTabBody({
+    required int tabIndex,
     required String description,
     required List<String> highlights,
     required List<String> howToUse,
   }) {
     final hasDescription = description.trim().isNotEmpty;
+    final isExpanded = _isTabExpanded(tabIndex);
 
-    if (_selectedDetailsTab == 0) {
+    if (tabIndex == 0) {
       final content = hasDescription
           ? description
           : 'No description available for this product.';
-      final shouldCollapse = content.length > 210;
-      final displayText = (!_detailsExpanded && shouldCollapse)
+      final hasMediaMarkup = RegExp(
+        r'!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)',
+        caseSensitive: false,
+      ).hasMatch(content);
+      final shouldCollapse = !hasMediaMarkup && content.length > 210;
+      final displayText = (!isExpanded && shouldCollapse)
           ? '${content.substring(0, 210).trim()}...'
           : content;
 
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            displayText,
-            style: const TextStyle(
-              color: AppColors.textPrimary,
-              fontSize: 15,
-              height: 1.42,
-            ),
-          ),
+          _buildRichDescription(displayText),
           if (shouldCollapse)
             Align(
               alignment: Alignment.centerRight,
               child: TextButton(
                 onPressed: () {
-                  setState(() => _detailsExpanded = !_detailsExpanded);
+                  _toggleTabExpanded(tabIndex);
                 },
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.primary,
@@ -947,7 +1081,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(_detailsExpanded ? 'Read Less' : 'Read More'),
+                    Text(isExpanded ? 'Read Less' : 'Read More'),
                     const SizedBox(width: 2),
                     const Icon(Icons.chevron_right_rounded, size: 16),
                   ],
@@ -958,8 +1092,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       );
     }
 
-    final items = _selectedDetailsTab == 1 ? highlights : howToUse;
-    final fallback = _selectedDetailsTab == 1
+    final items = tabIndex == 1 ? highlights : howToUse;
+    final fallback = tabIndex == 1
         ? 'No highlights available for this product.'
         : 'How-to-use instructions are not available yet.';
 
@@ -975,7 +1109,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }
 
     final shouldCollapse = items.length > 4;
-    final displayItems = (!_detailsExpanded && shouldCollapse)
+    final displayItems = (!isExpanded && shouldCollapse)
         ? items.take(4).toList()
         : items;
 
@@ -1016,7 +1150,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             alignment: Alignment.centerRight,
             child: TextButton(
               onPressed: () {
-                setState(() => _detailsExpanded = !_detailsExpanded);
+                _toggleTabExpanded(tabIndex);
               },
               style: TextButton.styleFrom(
                 foregroundColor: AppColors.primary,
@@ -1024,7 +1158,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              child: Text(_detailsExpanded ? 'Read Less' : 'Read More'),
+              child: Text(isExpanded ? 'Read Less' : 'Read More'),
             ),
           ),
       ],
@@ -1556,14 +1690,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         Expanded(
                           child: InkWell(
                             onTap: () {
-                              setState(() {
-                                _selectedDetailsTab = const [
+                              _setDetailsTab(
+                                const [
                                   'Description',
                                   'Highlights',
                                   'How to use',
-                                ].indexOf(tab);
-                                _detailsExpanded = false;
-                              });
+                                ].indexOf(tab),
+                              );
                             },
                             child: Column(
                               children: [
@@ -1620,10 +1753,15 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       color: const Color(0xFFF7F7FA),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: _buildDetailsTabBody(
-                      description: description,
-                      highlights: highlights,
-                      howToUse: howToUse,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onHorizontalDragEnd: _onDetailsHorizontalSwipe,
+                      child: _buildDetailsTabBody(
+                        tabIndex: _selectedDetailsTab,
+                        description: description,
+                        highlights: highlights,
+                        howToUse: howToUse,
+                      ),
                     ),
                   ),
                 ],

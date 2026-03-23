@@ -1,0 +1,617 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:purecuts/core/models/cart_model.dart';
+import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/core/widgets/product_card.dart';
+import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
+import 'package:purecuts/features/home/home_provider.dart';
+
+class SubSubCategoryScreen extends StatefulWidget {
+  final String categoryName;
+  final String initialSubCategory;
+  final Set<String> purchasedProductIds;
+
+  const SubSubCategoryScreen({
+    super.key,
+    required this.categoryName,
+    required this.initialSubCategory,
+    required this.purchasedProductIds,
+  });
+
+  @override
+  State<SubSubCategoryScreen> createState() => _SubSubCategoryScreenState();
+}
+
+class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
+  static const int _pageSize = 12;
+
+  final TextEditingController _searchController = TextEditingController();
+  final ScrollController _productsScrollController = ScrollController();
+  String _searchQuery = '';
+  String? _selectedBrand;
+  String? _selectedSubCategory;
+  String? _selectedSubSubCategory;
+  int _visibleProductCount = _pageSize;
+  int _currentFilteredProductCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedSubCategory = widget.initialSubCategory;
+    _productsScrollController.addListener(_onProductsScroll);
+  }
+
+  @override
+  void dispose() {
+    _productsScrollController.removeListener(_onProductsScroll);
+    _productsScrollController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _resetPagination() {
+    _visibleProductCount = _pageSize;
+  }
+
+  void _onProductsScroll() {
+    if (!_productsScrollController.hasClients) return;
+    if (_productsScrollController.position.extentAfter > 320) return;
+    if (_visibleProductCount >= _currentFilteredProductCount) return;
+
+    setState(() {
+      _visibleProductCount = (_visibleProductCount + _pageSize).clamp(
+        _pageSize,
+        _currentFilteredProductCount,
+      );
+    });
+  }
+
+  String _normalize(String value) => value.trim().toLowerCase();
+
+  String _resolveBrandLogo(HomeProvider home, String brandName) {
+    final normalized = _normalize(brandName);
+    if (normalized.isEmpty) return '';
+
+    for (final brand in home.brands) {
+      final candidate = _normalize((brand['name'] ?? '').toString());
+      if (candidate == normalized) {
+        return (brand['image'] ?? brand['logo'] ?? brand['icon'] ?? '')
+            .toString()
+            .trim();
+      }
+    }
+
+    return '';
+  }
+
+  String _baseProductId(String value) {
+    final id = value.trim();
+    if (id.isEmpty) return '';
+    final sep = id.indexOf('::');
+    if (sep <= 0) return id;
+    return id.substring(0, sep);
+  }
+
+  String _productSubSubCategory(Map<String, dynamic> product) {
+    return (product['subSubCategory'] ??
+            product['subsubCategory'] ??
+            product['sub_sub_category'] ??
+            '')
+        .toString();
+  }
+
+  List<Map<String, dynamic>> _productsForSubCategory(
+    HomeProvider home,
+    String category,
+    String subCategory,
+  ) {
+    final exact = home.filteredProducts(
+      category: category,
+      subCategory: subCategory,
+    );
+    if (exact.isNotEmpty) return exact;
+
+    final inCategory = home.filteredProducts(category: category);
+    final needle = _normalize(subCategory);
+
+    return inCategory
+        .where((product) {
+          final productSub =
+              (product['subCategory'] ?? product['subcategory'] ?? '')
+                  .toString();
+          if (_normalize(productSub) == needle) return true;
+
+          final tags = product['tags'];
+          if (tags is List) {
+            final joined = tags.map((e) => e.toString()).join(' ');
+            if (_normalize(joined).contains(needle)) return true;
+          }
+
+          final name = (product['name'] ?? '').toString();
+          return _normalize(name).contains(needle);
+        })
+        .toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _productsForSelection(
+    HomeProvider home,
+    String category,
+    String? subCategory,
+    String? subSubCategory,
+    String query,
+  ) {
+    if ((subCategory ?? '').trim().isEmpty) {
+      return home.filteredProducts(category: category, query: query);
+    }
+
+    final exact = home.filteredProducts(
+      category: category,
+      subCategory: subCategory,
+      subSubCategory: subSubCategory,
+      query: query,
+    );
+    if (exact.isNotEmpty) return exact;
+
+    var subProducts = _productsForSubCategory(home, category, subCategory!);
+
+    if ((subSubCategory ?? '').trim().isNotEmpty) {
+      final needle = _normalize(subSubCategory!);
+      subProducts = subProducts
+          .where((product) {
+            final direct =
+                _normalize(_productSubSubCategory(product)) == needle;
+            if (direct) return true;
+
+            final haystack = [
+              product['name'],
+              product['description'],
+              product['shortDescription'],
+              product['tag'],
+              product['tags'],
+            ].map((v) => v?.toString().toLowerCase() ?? '').join(' ');
+            return haystack.contains(needle);
+          })
+          .toList(growable: false);
+    }
+
+    final q = _normalize(query);
+    if (q.isEmpty) return subProducts;
+
+    return subProducts
+        .where((product) {
+          final haystack = [
+            product['name'],
+            product['brand'],
+            product['description'],
+            product['tag'],
+          ].map((v) => v?.toString().toLowerCase() ?? '').join(' ');
+          return haystack.contains(q);
+        })
+        .toList(growable: false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final home = context.watch<HomeProvider>();
+    final subCategories = home.subCategoriesFor(widget.categoryName);
+
+    final availableSubCategoryNames = subCategories
+        .map((s) => (s['name'] ?? '').toString())
+        .where((name) => name.trim().isNotEmpty)
+        .toSet();
+
+    final selectedSubCategory =
+        availableSubCategoryNames.contains(_selectedSubCategory)
+        ? _selectedSubCategory
+        : (subCategories.isEmpty
+              ? null
+              : (subCategories.first['name'] ?? '').toString());
+
+    final subSubCategories = selectedSubCategory == null
+        ? const <Map<String, dynamic>>[]
+        : home.subSubCategoriesFor(widget.categoryName, selectedSubCategory);
+
+    final availableSubSubCategoryNames = subSubCategories
+        .map((s) => (s['name'] ?? '').toString())
+        .where((name) => name.trim().isNotEmpty)
+        .toSet();
+
+    final selectedSubSubCategory =
+        availableSubSubCategoryNames.contains(_selectedSubSubCategory)
+        ? _selectedSubSubCategory
+        : null;
+
+    final products = _productsForSelection(
+      home,
+      widget.categoryName,
+      selectedSubCategory,
+      selectedSubSubCategory,
+      _searchQuery,
+    );
+
+    final brands =
+        products
+            .map((p) => (p['brand'] ?? '').toString().trim())
+            .where((brand) => brand.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+    final selectedBrand = brands.contains(_selectedBrand)
+        ? _selectedBrand
+        : null;
+    final brandFilteredProducts = selectedBrand == null
+        ? products
+        : products
+              .where(
+                (p) =>
+                    _normalize((p['brand'] ?? '').toString()) ==
+                    _normalize(selectedBrand),
+              )
+              .toList(growable: false);
+
+    _currentFilteredProductCount = brandFilteredProducts.length;
+    final visibleCount = _visibleProductCount.clamp(
+      0,
+      _currentFilteredProductCount,
+    );
+    final visibleProducts = brandFilteredProducts
+        .take(visibleCount)
+        .toList(growable: false);
+    final hasMoreProducts = visibleCount < _currentFilteredProductCount;
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        titleSpacing: 0,
+        title: Text(
+          selectedSubCategory ?? widget.categoryName,
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Container(
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE7EAF0)),
+              ),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (v) => setState(() {
+                  _searchQuery = v;
+                  _resetPagination();
+                }),
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textPrimary,
+                ),
+                decoration: const InputDecoration(
+                  hintText: 'Search products',
+                  hintStyle: TextStyle(fontSize: 12, color: AppColors.textHint),
+                  prefixIcon: Icon(
+                    Icons.search_rounded,
+                    size: 18,
+                    color: AppColors.textHint,
+                  ),
+                  border: InputBorder.none,
+                  isCollapsed: true,
+                  contentPadding: EdgeInsets.symmetric(vertical: 11),
+                ),
+              ),
+            ),
+          ),
+          if (brands.isNotEmpty)
+            SizedBox(
+              height: 66,
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                scrollDirection: Axis.horizontal,
+                itemCount: brands.length + 1,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (_, i) {
+                  final isAll = i == 0;
+                  final label = isAll ? 'All Brands' : brands[i - 1];
+                  final logoPath = isAll
+                      ? ''
+                      : _resolveBrandLogo(home, brands[i - 1]);
+                  final selected = isAll
+                      ? selectedBrand == null
+                      : selectedBrand == label;
+
+                  return GestureDetector(
+                    onTap: () => setState(() {
+                      _selectedBrand = isAll ? null : label;
+                      _resetPagination();
+                    }),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      width: 54,
+                      height: 54,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? const Color(0xFFEFF8E4)
+                            : const Color(0xFFF4F6FA),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: selected
+                              ? AppColors.success
+                              : const Color(0xFFE1E5EA),
+                        ),
+                      ),
+                      child: isAll
+                          ? Icon(
+                              Icons.apps_rounded,
+                              size: 28,
+                              color: selected
+                                  ? AppColors.success
+                                  : AppColors.textSecondary,
+                            )
+                          : _ThumbIcon(path: logoPath, size: 34),
+                    ),
+                  );
+                },
+              ),
+            ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
+              child: Row(
+                children: [
+                  Container(
+                    width: 82,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF7F8FA),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: ListView.separated(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      itemCount: subSubCategories.length + 1,
+                      separatorBuilder: (_, __) => const SizedBox(height: 3),
+                      itemBuilder: (_, i) {
+                        final isAll = i == 0;
+                        final name = isAll
+                            ? 'All'
+                            : (subSubCategories[i - 1]['name'] ?? '')
+                                  .toString();
+                        final iconPath = isAll
+                            ? null
+                            : (subSubCategories[i - 1]['icon'] ??
+                                      subSubCategories[i - 1]['image'])
+                                  ?.toString();
+                        final selected = isAll
+                            ? selectedSubSubCategory == null
+                            : selectedSubSubCategory == name;
+
+                        return _SubSubRailItem(
+                          label: name,
+                          iconPath: iconPath,
+                          selected: selected,
+                          onTap: () => setState(() {
+                            _selectedSubSubCategory = isAll ? null : name;
+                            _resetPagination();
+                          }),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: visibleProducts.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'No products found for this selection',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          )
+                        : Column(
+                            children: [
+                              Expanded(
+                                child: GridView.builder(
+                                  controller: _productsScrollController,
+                                  padding: const EdgeInsets.fromLTRB(
+                                    0,
+                                    0,
+                                    0,
+                                    8,
+                                  ),
+                                  gridDelegate:
+                                      const SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: 2,
+                                        mainAxisSpacing: 10,
+                                        crossAxisSpacing: 10,
+                                        childAspectRatio: 0.48,
+                                      ),
+                                  itemCount: visibleProducts.length,
+                                  itemBuilder: (_, i) {
+                                    final product = visibleProducts[i];
+                                    final productId = _baseProductId(
+                                      (product['id'] ?? '').toString(),
+                                    );
+                                    return ProductCard(
+                                      product: product,
+                                      showHeartIcon: false,
+                                      showBoughtEarlierBadge: widget
+                                          .purchasedProductIds
+                                          .contains(productId),
+                                    );
+                                  },
+                                ),
+                              ),
+                              if (hasMoreProducts)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    0,
+                                    0,
+                                    0,
+                                    100,
+                                  ),
+                                  child: SizedBox(
+                                    width: double.infinity,
+                                    height: 36,
+                                    child: OutlinedButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          _visibleProductCount =
+                                              (_visibleProductCount + _pageSize)
+                                                  .clamp(
+                                                    _pageSize,
+                                                    _currentFilteredProductCount,
+                                                  );
+                                        });
+                                      },
+                                      style: OutlinedButton.styleFrom(
+                                        side: const BorderSide(
+                                          color: Color(0xFFD9DDE4),
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'Load more (${_currentFilteredProductCount - visibleCount} left)',
+                                        style: const TextStyle(
+                                          color: AppColors.textSecondary,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              else
+                                const SizedBox(height: 100),
+                            ],
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      bottomNavigationBar: Consumer<CartModel>(
+        builder: (context, cart, _) {
+          if (cart.itemCount == 0) return const SizedBox.shrink();
+          return const StickyCartBar();
+        },
+      ),
+    );
+  }
+}
+
+class _SubSubRailItem extends StatelessWidget {
+  final String label;
+  final String? iconPath;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _SubSubRailItem({
+    required this.label,
+    required this.iconPath,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 6),
+        padding: const EdgeInsets.fromLTRB(5, 7, 5, 7),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFEFF8E4) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected ? AppColors.success : Colors.transparent,
+            width: selected ? 1.4 : 1,
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Center(child: _ThumbIcon(path: iconPath ?? '')),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: selected ? AppColors.success : AppColors.textSecondary,
+                fontSize: 11,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                height: 1.15,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThumbIcon extends StatelessWidget {
+  final String path;
+  final double size;
+
+  const _ThumbIcon({required this.path, this.size = 20});
+
+  @override
+  Widget build(BuildContext context) {
+    const fallback = Icon(
+      Icons.category_outlined,
+      size: 17,
+      color: AppColors.textSecondary,
+    );
+
+    final trimmed = path.trim();
+    if (trimmed.isEmpty) return fallback;
+
+    if (trimmed.startsWith('assets/')) {
+      return Image.asset(
+        trimmed,
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => fallback,
+      );
+    }
+
+    return Image.network(
+      trimmed,
+      width: size,
+      height: size,
+      fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => fallback,
+    );
+  }
+}

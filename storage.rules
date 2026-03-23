@@ -60,6 +60,24 @@ service firebase.storage {
       allow delete: if isAdmin();
     }
 
+    // Sub-subcategory media
+    match /subSubCategories/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if isAdmin()
+        && isImage()
+        && request.resource.size < 10 * 1024 * 1024;
+      allow delete: if isAdmin();
+    }
+
+    // Legacy path compatibility (older dashboard uploads)
+    match /subsubcategories/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if isAdmin()
+        && isImage()
+        && request.resource.size < 10 * 1024 * 1024;
+      allow delete: if isAdmin();
+    }
+
     // Banner media (image/video)
     match /banners/{allPaths=**} {
       allow read: if true;

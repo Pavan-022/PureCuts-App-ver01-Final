@@ -26,7 +26,7 @@ class _MainNavScreenState extends State<MainNavScreen> {
   @override
   void initState() {
     super.initState();
-    _pageController = PageController(initialPage: _index);
+    _pageController = PageController(initialPage: _index, keepPage: true);
   }
 
   @override
@@ -35,12 +35,32 @@ class _MainNavScreenState extends State<MainNavScreen> {
     super.dispose();
   }
 
+  void _onNavTap(int i) {
+    if (i == _index) return;
+
+    final isNearTab = (i - _index).abs() == 1;
+    if (isNearTab) {
+      _pageController.animateToPage(
+        i,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+      return;
+    }
+
+    _pageController.jumpToPage(i);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: PageView(
         controller: _pageController,
-        onPageChanged: (i) => setState(() => _index = i),
+        physics: const ClampingScrollPhysics(),
+        onPageChanged: (i) {
+          if (i == _index) return;
+          setState(() => _index = i);
+        },
         children: _screens,
       ),
       floatingActionButton: const SupportChatFab(),
@@ -63,14 +83,7 @@ class _MainNavScreenState extends State<MainNavScreen> {
         ),
         child: BottomNavigationBar(
           currentIndex: _index,
-          onTap: (i) {
-            setState(() => _index = i);
-            _pageController.animateToPage(
-              i,
-              duration: const Duration(milliseconds: 320),
-              curve: Curves.easeOutCubic,
-            );
-          },
+          onTap: _onNavTap,
           backgroundColor: Colors.transparent,
           elevation: 0,
           selectedItemColor: AppColors.primary,
