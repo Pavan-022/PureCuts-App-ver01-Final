@@ -2,7 +2,7 @@
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/models/cart_model.dart';
-import 'package:purecuts/features/orders/order_confirm_screen.dart';
+import 'package:purecuts/features/orders/checkout_screen.dart';
 
 class CartScreen extends StatelessWidget {
   const CartScreen({super.key});
@@ -317,8 +317,7 @@ class CartScreen extends StatelessWidget {
                           onPressed: () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) =>
-                                  OrderConfirmScreen(total: grandTotal),
+                              builder: (_) => const CheckoutScreen(),
                             ),
                           ),
                           child: const Row(

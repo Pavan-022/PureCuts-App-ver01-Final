@@ -107,6 +107,11 @@ class FirestoreService {
     await _db.collection('users').doc(uid).update({field: value});
   }
 
+  Future<void> updateUserFields(String uid, Map<String, dynamic> data) async {
+    if (uid.trim().isEmpty || data.isEmpty) return;
+    await _db.collection('users').doc(uid).set(data, SetOptions(merge: true));
+  }
+
   // ── Fetch user profile ────────────────────────────────────────────────────
 
   Future<UserModel?> getUserProfile(String uid) async {
@@ -497,6 +502,10 @@ class FirestoreService {
     required String uid,
     required List<Map<String, dynamic>> items,
     required int total,
+    Map<String, dynamic>? deliveryAddress,
+    Map<String, dynamic>? contactDetails,
+    String? paymentMethod,
+    Map<String, dynamic>? billDetails,
   }) async {
     final cleanUid = uid.trim();
     if (cleanUid.isEmpty || items.isEmpty) return null;
@@ -525,6 +534,65 @@ class FirestoreService {
     final customerPhone = (userData['phone'] ?? userData['mobile'] ?? '')
         .toString()
         .trim();
+
+    final normalizedDeliveryAddress = {
+      ...?deliveryAddress,
+      'line1': (deliveryAddress?['line1'] ?? '').toString().trim(),
+      'line2': (deliveryAddress?['line2'] ?? '').toString().trim(),
+      'landmark': (deliveryAddress?['landmark'] ?? '').toString().trim(),
+      'city': (deliveryAddress?['city'] ?? '').toString().trim(),
+      'state': (deliveryAddress?['state'] ?? '').toString().trim(),
+      'pincode':
+          (deliveryAddress?['pincode'] ??
+                  deliveryAddress?['postalCode'] ??
+                  userData['pincode'] ??
+                  '')
+              .toString()
+              .trim(),
+      'country': (deliveryAddress?['country'] ?? userData['country'] ?? 'India')
+          .toString()
+          .trim(),
+      'mapLink': (deliveryAddress?['mapLink'] ?? '').toString().trim(),
+    };
+
+    final normalizedContactDetails = {
+      ...?contactDetails,
+      'receiverName': (contactDetails?['receiverName'] ?? customerName)
+          .toString()
+          .trim(),
+      'phone': (contactDetails?['phone'] ?? customerPhone).toString().trim(),
+    };
+
+    final normalizedDeliveryDetails = {
+      'deliveryAddress': normalizedDeliveryAddress,
+      'contactDetails': normalizedContactDetails,
+      'deliveryPlaced': true,
+      'lastOrderRef': orderRef,
+    };
+
+    final addressLine1 = (normalizedDeliveryAddress['line1'] ?? '')
+        .toString()
+        .trim();
+    final addressLine2 = (normalizedDeliveryAddress['line2'] ?? '')
+        .toString()
+        .trim();
+    final addressCity = (normalizedDeliveryAddress['city'] ?? '')
+        .toString()
+        .trim();
+    final addressState = (normalizedDeliveryAddress['state'] ?? '')
+        .toString()
+        .trim();
+    final addressPincode = (normalizedDeliveryAddress['pincode'] ?? '')
+        .toString()
+        .trim();
+
+    final addressSummary = [
+      addressLine1,
+      addressLine2,
+      addressCity,
+      addressState,
+      addressPincode,
+    ].where((e) => e.isNotEmpty).join(', ');
 
     var totalItems = 0;
     final normalizedItems = items
@@ -563,8 +631,16 @@ class FirestoreService {
       'customerId': cleanUid,
       'customerName': customerName,
       'customerEmail': customerEmail,
-      'customerPhone': customerPhone,
-      'phone': customerPhone,
+      'customerPhone': (normalizedContactDetails['phone'] ?? customerPhone)
+          .toString(),
+      'phone': (normalizedContactDetails['phone'] ?? customerPhone).toString(),
+      'deliveryAddress': normalizedDeliveryAddress,
+      'address': addressSummary.isNotEmpty
+          ? addressSummary
+          : (userData['address'] ?? '').toString(),
+      'contactDetails': normalizedContactDetails,
+      'paymentMethod': (paymentMethod ?? '').toString().trim(),
+      'billDetails': {...?billDetails},
       'items': normalizedItems,
       'productIds': productIds,
       'itemCount': normalizedItems.length,
@@ -574,6 +650,7 @@ class FirestoreService {
       'amount': total,
       'totalAmount': total,
       'grandTotal': total,
+      'deliveryPlaced': true,
       'status': 'placed',
       'orderStatus': 'placed',
       'paymentStatus': 'pending',
@@ -583,6 +660,13 @@ class FirestoreService {
 
     await _db.collection(_usersCollection).doc(cleanUid).set({
       'purchasedProductIds': FieldValue.arrayUnion(productIds),
+      'deliveryAddressDetails': normalizedDeliveryAddress,
+      'contactDetails': normalizedContactDetails,
+      'deliveryDetails': {
+        ...normalizedDeliveryDetails,
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      'deliveryPlaced': true,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
 

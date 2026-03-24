@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/models/cart_model.dart';
+import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
-import 'package:purecuts/features/cart/cart_screen.dart';
 import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 import 'package:purecuts/features/orders/order_provider.dart';
 
@@ -101,94 +101,26 @@ class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildHeader(allBought.length),
-            if (allBought.isNotEmpty) _buildSearchBar(),
-            const SizedBox(height: 4),
-            Expanded(
-              child: orderProvider.isLoading && allBought.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
-                  : allBought.isEmpty
-                  ? _buildNeverOrdered(context)
-                  : products.isEmpty
-                  ? _buildEmpty()
-                  : _buildList(products),
+                if (allBought.isNotEmpty) _buildSearchBar(),
+                const SizedBox(height: 4),
+                Expanded(
+                  child: orderProvider.isLoading && allBought.isEmpty
+                      ? const Center(child: CircularProgressIndicator())
+                      : allBought.isEmpty
+                      ? _buildNeverOrdered(context)
+                      : products.isEmpty
+                      ? _buildEmpty()
+                      : _buildList(products),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
         ],
       ),
       bottomNavigationBar: Consumer<CartModel>(
         builder: (context, cart, _) {
           if (cart.itemCount == 0) return const SizedBox.shrink();
-          return GestureDetector(
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const CartScreen()),
-            ),
-            child: Container(
-              margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.primary.withOpacity(0.35),
-                    blurRadius: 20,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.20),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '${cart.itemCount} item${cart.itemCount > 1 ? 's' : ''}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Text(
-                      'Go to Cart',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    '₹${cart.totalPrice}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  const Icon(
-                    Icons.arrow_forward_ios_rounded,
-                    color: Colors.white,
-                    size: 13,
-                  ),
-                ],
-              ),
-            ),
-          );
+          return const StickyCartBar();
         },
       ),
     );

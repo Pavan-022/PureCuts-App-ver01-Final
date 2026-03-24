@@ -11,6 +11,8 @@ import 'package:purecuts/features/orders/order_provider.dart';
 import 'package:purecuts/features/splash/splash_screen.dart';
 import 'firebase_options.dart';
 
+late final CartModel _initialCartModel;
+
 class _SlideLeftPageTransitionsBuilder extends PageTransitionsBuilder {
   const _SlideLeftPageTransitionsBuilder();
 
@@ -44,6 +46,11 @@ class _SlideLeftPageTransitionsBuilder extends PageTransitionsBuilder {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  try {
+    _initialCartModel = await CartModel.create();
+  } catch (_) {
+    _initialCartModel = CartModel.empty();
+  }
   runApp(const PureCutsApp());
 }
 
@@ -68,7 +75,7 @@ class _PureCutsAppState extends State<PureCutsApp> {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
-        ChangeNotifierProvider(create: (_) => CartModel()),
+        ChangeNotifierProvider<CartModel>.value(value: _initialCartModel),
         ChangeNotifierProvider(create: (_) => HomeProvider()),
         ChangeNotifierProvider(create: (_) => OrderProvider()),
       ],

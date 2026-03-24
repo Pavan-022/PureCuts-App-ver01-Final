@@ -390,6 +390,156 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  Future<bool> updateCheckoutDeliveryDetails({
+    required Map<String, dynamic> deliveryAddress,
+    required Map<String, dynamic> contactDetails,
+    List<Map<String, dynamic>>? addresses,
+    int? selectedAddressIndex,
+  }) async {
+    final uid = _service.currentUser?.uid;
+    if (uid == null) return false;
+
+    final addressLine = [
+      (deliveryAddress['line1'] ?? '').toString().trim(),
+      (deliveryAddress['line2'] ?? '').toString().trim(),
+      (deliveryAddress['city'] ?? '').toString().trim(),
+      (deliveryAddress['state'] ?? '').toString().trim(),
+      (deliveryAddress['pincode'] ?? '').toString().trim(),
+    ].where((part) => part.isNotEmpty).join(', ');
+
+    final normalizedDelivery = {
+      ...deliveryAddress,
+      'line1': (deliveryAddress['line1'] ?? '').toString().trim(),
+      'line2': (deliveryAddress['line2'] ?? '').toString().trim(),
+      'landmark': (deliveryAddress['landmark'] ?? '').toString().trim(),
+      'city': (deliveryAddress['city'] ?? '').toString().trim(),
+      'state': (deliveryAddress['state'] ?? '').toString().trim(),
+      'pincode': (deliveryAddress['pincode'] ?? '').toString().trim(),
+      'country': (deliveryAddress['country'] ?? 'India').toString().trim(),
+      'mapLink': (deliveryAddress['mapLink'] ?? '').toString().trim(),
+    };
+
+    final normalizedContact = {
+      ...contactDetails,
+      'receiverName': (contactDetails['receiverName'] ?? '').toString().trim(),
+      'phone': (contactDetails['phone'] ?? _user?.phone ?? '')
+          .toString()
+          .trim(),
+    };
+
+    final normalizedAddresses = (addresses ?? <Map<String, dynamic>>[])
+        .map((entry) {
+          final rawAddress = (entry['deliveryAddress'] is Map)
+              ? Map<String, dynamic>.from(entry['deliveryAddress'] as Map)
+              : <String, dynamic>{};
+          final rawContact = (entry['contactDetails'] is Map)
+              ? Map<String, dynamic>.from(entry['contactDetails'] as Map)
+              : <String, dynamic>{};
+
+          return {
+            'deliveryAddress': {
+              ...rawAddress,
+              'line1': (rawAddress['line1'] ?? '').toString().trim(),
+              'line2': (rawAddress['line2'] ?? '').toString().trim(),
+              'landmark': (rawAddress['landmark'] ?? '').toString().trim(),
+              'city': (rawAddress['city'] ?? '').toString().trim(),
+              'state': (rawAddress['state'] ?? '').toString().trim(),
+              'pincode': (rawAddress['pincode'] ?? '').toString().trim(),
+              'country': (rawAddress['country'] ?? 'India').toString().trim(),
+              'mapLink': (rawAddress['mapLink'] ?? '').toString().trim(),
+            },
+            'contactDetails': {
+              ...rawContact,
+              'receiverName': (rawContact['receiverName'] ?? '')
+                  .toString()
+                  .trim(),
+              'phone': (rawContact['phone'] ?? '').toString().trim(),
+            },
+          };
+        })
+        .where(
+          (entry) => (entry['deliveryAddress'] as Map<String, dynamic>)['line1']
+              .toString()
+              .trim()
+              .isNotEmpty,
+        )
+        .toList(growable: true);
+
+    if (normalizedAddresses.isEmpty) {
+      normalizedAddresses.add({
+        'deliveryAddress': normalizedDelivery,
+        'contactDetails': normalizedContact,
+      });
+    }
+
+    var safeSelectedIndex = (selectedAddressIndex ?? 0);
+    if (safeSelectedIndex < 0 ||
+        safeSelectedIndex >= normalizedAddresses.length) {
+      safeSelectedIndex = 0;
+    }
+
+    final selectedEntry = normalizedAddresses[safeSelectedIndex];
+    final selectedAddress =
+        selectedEntry['deliveryAddress'] as Map<String, dynamic>;
+    final selectedContact =
+        selectedEntry['contactDetails'] as Map<String, dynamic>;
+
+    final normalizedDeliveryDetails = {
+      'deliveryAddress': selectedAddress,
+      'contactDetails': selectedContact,
+      'addresses': normalizedAddresses,
+      'selectedAddressIndex': safeSelectedIndex,
+      'deliveryPlaced': false,
+      'updatedAt': DateTime.now().toIso8601String(),
+    };
+
+    final selectedAddressLine = [
+      (selectedAddress['line1'] ?? '').toString().trim(),
+      (selectedAddress['line2'] ?? '').toString().trim(),
+      (selectedAddress['city'] ?? '').toString().trim(),
+      (selectedAddress['state'] ?? '').toString().trim(),
+      (selectedAddress['pincode'] ?? '').toString().trim(),
+    ].where((part) => part.isNotEmpty).join(', ');
+
+    try {
+      await _service.firestoreService.updateUserFields(uid, {
+        'address': selectedAddressLine.isNotEmpty
+            ? selectedAddressLine
+            : addressLine,
+        'country': selectedAddress['country'],
+        'state': selectedAddress['state'],
+        'pincode': selectedAddress['pincode'],
+        'deliveryAddressDetails': selectedAddress,
+        'contactDetails': selectedContact,
+        'deliveryDetails': normalizedDeliveryDetails,
+        'deliveryPlaced': false,
+        'phone': selectedContact['phone'],
+      });
+
+      if (_user != null) {
+        _user = _user!.copyWith(
+          address: selectedAddressLine.isNotEmpty
+              ? selectedAddressLine
+              : addressLine,
+          country: selectedAddress['country']?.toString(),
+          state: selectedAddress['state']?.toString(),
+          pincode: selectedAddress['pincode']?.toString(),
+          phone: selectedContact['phone']?.toString(),
+          deliveryAddressDetails: selectedAddress,
+          contactDetails: selectedContact,
+          deliveryDetails: normalizedDeliveryDetails,
+        );
+      } else {
+        _user = await _service.getCurrentUserData();
+      }
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('[AuthProvider] updateCheckoutDeliveryDetails error: $e');
+      return false;
+    }
+  }
+
   // ── Error Messages ────────────────────────────────────────────────────────
 
   String _friendlyError(FirebaseAuthException e) {

@@ -8,8 +8,8 @@ import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
-import 'package:purecuts/features/cart/cart_screen.dart';
 import 'package:purecuts/features/home/home_provider.dart';
+import 'package:purecuts/features/orders/checkout_screen.dart';
 import 'package:purecuts/features/orders/order_provider.dart';
 import 'package:purecuts/features/products/detail/product_models.dart';
 import 'package:purecuts/features/products/detail/product_repository.dart';
@@ -2844,7 +2844,7 @@ class _BottomCartBar extends StatelessWidget {
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (_) => const CartScreen(),
+                                      builder: (_) => const CheckoutScreen(),
                                     ),
                                   );
                                 },

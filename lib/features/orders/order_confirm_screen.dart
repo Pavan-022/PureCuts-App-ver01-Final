@@ -12,7 +12,21 @@ import 'package:purecuts/features/orders/order_provider.dart';
 
 class OrderConfirmScreen extends StatefulWidget {
   final int total;
-  const OrderConfirmScreen({super.key, required this.total});
+  final List<Map<String, dynamic>>? orderedItems;
+  final Map<String, dynamic>? deliveryAddress;
+  final Map<String, dynamic>? contactDetails;
+  final String? paymentMethod;
+  final Map<String, dynamic>? billDetails;
+
+  const OrderConfirmScreen({
+    super.key,
+    required this.total,
+    this.orderedItems,
+    this.deliveryAddress,
+    this.contactDetails,
+    this.paymentMethod,
+    this.billDetails,
+  });
 
   @override
   State<OrderConfirmScreen> createState() => _OrderConfirmScreenState();
@@ -49,21 +63,23 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
     final auth = context.read<AuthProvider>();
     final uid = auth.user?.uid ?? FirebaseAuth.instance.currentUser?.uid ?? '';
 
-    final orderedItems = cart.items
-        .map(
-          (item) => {
-            'id': item.id,
-            'name': item.name,
-            'brand': item.brand,
-            'image': item.image,
-            'price': item.price,
-            'originalPrice': item.price,
-            'size': '',
-            'tag': '',
-            'quantity': item.quantity,
-          },
-        )
-        .toList();
+    final orderedItems = widget.orderedItems?.isNotEmpty == true
+        ? widget.orderedItems!
+        : cart.items
+              .map(
+                (item) => {
+                  'id': item.id,
+                  'name': item.name,
+                  'brand': item.brand,
+                  'image': item.image,
+                  'price': item.price,
+                  'originalPrice': item.price,
+                  'size': '',
+                  'tag': '',
+                  'quantity': item.quantity,
+                },
+              )
+              .toList();
 
     orders.addOrderedItems(orderedItems);
 
@@ -73,6 +89,10 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
             uid: uid,
             items: orderedItems,
             total: widget.total,
+            deliveryAddress: widget.deliveryAddress,
+            contactDetails: widget.contactDetails,
+            paymentMethod: widget.paymentMethod,
+            billDetails: widget.billDetails,
           )
           .then((ref) {
             if (!mounted) return;

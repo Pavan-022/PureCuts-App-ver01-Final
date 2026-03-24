@@ -12,6 +12,9 @@ class UserModel {
   final String? country;
   final String? state;
   final String? pincode;
+  final Map<String, dynamic>? deliveryAddressDetails;
+  final Map<String, dynamic>? contactDetails;
+  final Map<String, dynamic>? deliveryDetails;
   final String role;
   final DateTime? createdAt;
 
@@ -27,6 +30,9 @@ class UserModel {
     this.country,
     this.state,
     this.pincode,
+    this.deliveryAddressDetails,
+    this.contactDetails,
+    this.deliveryDetails,
     this.role = 'salon_owner',
     this.createdAt,
   });
@@ -44,6 +50,15 @@ class UserModel {
       country: map['country'],
       state: map['state'],
       pincode: map['pincode'],
+      deliveryAddressDetails: map['deliveryAddressDetails'] is Map
+          ? Map<String, dynamic>.from(map['deliveryAddressDetails'] as Map)
+          : null,
+      contactDetails: map['contactDetails'] is Map
+          ? Map<String, dynamic>.from(map['contactDetails'] as Map)
+          : null,
+      deliveryDetails: map['deliveryDetails'] is Map
+          ? Map<String, dynamic>.from(map['deliveryDetails'] as Map)
+          : null,
       role: map['role'] ?? 'salon_owner',
       createdAt: map['createdAt'] != null
           ? (map['createdAt'] as Timestamp).toDate()
@@ -63,6 +78,9 @@ class UserModel {
       'country': country,
       'state': state,
       'pincode': pincode,
+      'deliveryAddressDetails': deliveryAddressDetails,
+      'contactDetails': contactDetails,
+      'deliveryDetails': deliveryDetails,
       'role': role,
       'createdAt': createdAt != null
           ? Timestamp.fromDate(createdAt!)
@@ -82,6 +100,9 @@ class UserModel {
     String? country,
     String? state,
     String? pincode,
+    Object? deliveryAddressDetails = _sentinel,
+    Object? contactDetails = _sentinel,
+    Object? deliveryDetails = _sentinel,
     String? role,
     DateTime? createdAt,
   }) {
@@ -97,6 +118,15 @@ class UserModel {
       country: country ?? this.country,
       state: state ?? this.state,
       pincode: pincode ?? this.pincode,
+      deliveryAddressDetails: deliveryAddressDetails == _sentinel
+          ? this.deliveryAddressDetails
+          : deliveryAddressDetails as Map<String, dynamic>?,
+      contactDetails: contactDetails == _sentinel
+          ? this.contactDetails
+          : contactDetails as Map<String, dynamic>?,
+      deliveryDetails: deliveryDetails == _sentinel
+          ? this.deliveryDetails
+          : deliveryDetails as Map<String, dynamic>?,
       role: role ?? this.role,
       createdAt: createdAt ?? this.createdAt,
     );

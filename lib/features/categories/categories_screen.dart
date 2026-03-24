@@ -23,6 +23,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   String _searchQuery = '';
   String _preferredCategory = 'All';
   Set<String> _purchasedProductIds = <String>{};
+  final Set<String> _expandedCategories = <String>{};
 
   @override
   void initState() {
@@ -30,6 +31,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
     if (widget.initialCategory != null && widget.initialCategory!.isNotEmpty) {
       _preferredCategory = widget.initialCategory!;
     }
+    Future.microtask(() => context.read<HomeProvider>().loadData());
     _resolvePurchasedProducts();
   }
 
@@ -88,9 +90,21 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
       if (categoryName.trim().isEmpty) continue;
 
       final allSubs = home.subCategoriesFor(categoryName);
-      if (allSubs.isEmpty) continue;
-
       final categoryMatches = _matchesQuery(categoryName, query);
+
+      if (allSubs.isEmpty) {
+        if (categoryMatches) {
+          sections.add(
+            _CategorySectionData(
+              categoryName: categoryName,
+              subCategories: const [],
+              totalSubCategories: 0,
+            ),
+          );
+        }
+        continue;
+      }
+
       final filteredSubs = categoryMatches
           ? allSubs
           : allSubs
@@ -134,6 +148,10 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _refreshCategories() async {
+    await context.read<HomeProvider>().loadData();
   }
 
   @override
@@ -213,32 +231,70 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                     ),
                   ),
                   Expanded(
-                    child: sections.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'No categories found',
-                              style: TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
+                    child: RefreshIndicator(
+                      onRefresh: _refreshCategories,
+                      child: sections.isEmpty
+                          ? ListView(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.fromLTRB(
+                                12,
+                                40,
+                                12,
+                                110,
                               ),
-                            ),
-                          )
-                        : ListView.builder(
-                            padding: const EdgeInsets.fromLTRB(12, 4, 12, 110),
-                            itemCount: sections.length,
-                            itemBuilder: (_, i) {
-                              final section = sections[i];
-                              return _CategorySection(
-                                section: section,
-                                onTapSubCategory: (subName) =>
-                                    _openSubSubCategoryPage(
-                                      section.categoryName,
-                                      subName,
+                              children: const [
+                                Center(
+                                  child: Text(
+                                    'No categories found',
+                                    style: TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
                                     ),
-                              );
-                            },
-                          ),
+                                  ),
+                                ),
+                              ],
+                            )
+                          : ListView.builder(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.fromLTRB(
+                                12,
+                                4,
+                                12,
+                                110,
+                              ),
+                              itemCount: sections.length,
+                              itemBuilder: (_, i) {
+                                final section = sections[i];
+                                return _CategorySection(
+                                  section: section,
+                                  expanded: _expandedCategories.contains(
+                                    section.categoryName,
+                                  ),
+                                  onToggleExpanded: () {
+                                    setState(() {
+                                      if (_expandedCategories.contains(
+                                        section.categoryName,
+                                      )) {
+                                        _expandedCategories.remove(
+                                          section.categoryName,
+                                        );
+                                      } else {
+                                        _expandedCategories.add(
+                                          section.categoryName,
+                                        );
+                                      }
+                                    });
+                                  },
+                                  onTapSubCategory: (subName) =>
+                                      _openSubSubCategoryPage(
+                                        section.categoryName,
+                                        subName,
+                                      ),
+                                );
+                              },
+                            ),
+                    ),
                   ),
                 ],
               ),
@@ -267,17 +323,25 @@ class _CategorySectionData {
 
 class _CategorySection extends StatelessWidget {
   final _CategorySectionData section;
+  final bool expanded;
+  final VoidCallback onToggleExpanded;
   final ValueChanged<String> onTapSubCategory;
 
   const _CategorySection({
     required this.section,
+    required this.expanded,
+    required this.onToggleExpanded,
     required this.onTapSubCategory,
   });
 
   @override
   Widget build(BuildContext context) {
-    final shown = section.subCategories.take(8).toList(growable: false);
-    final hasMore = section.totalSubCategories > shown.length;
+    final maxCollapsedItems = 8;
+    final shown = expanded
+        ? section.subCategories
+        : section.subCategories.take(maxCollapsedItems).toList(growable: false);
+    final hasMore = section.totalSubCategories > maxCollapsedItems;
+    final remainingCount = section.totalSubCategories - maxCollapsedItems;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -299,35 +363,51 @@ class _CategorySection extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: shown.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 4,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
-                childAspectRatio: 0.58,
+            if (shown.isEmpty)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 4),
+                child: Text(
+                  'No sub-categories added yet.',
+                  style: TextStyle(
+                    color: AppColors.textHint,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              )
+            else
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: shown.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 4,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 8,
+                  childAspectRatio: 0.62,
+                ),
+                itemBuilder: (_, i) {
+                  final sub = shown[i];
+                  final name = (sub['name'] ?? '').toString();
+                  return _SubCategoryMiniCard(
+                    label: name,
+                    iconPath: (sub['icon'] ?? sub['image'])?.toString(),
+                    onTap: () => onTapSubCategory(name),
+                  );
+                },
               ),
-              itemBuilder: (_, i) {
-                final sub = shown[i];
-                final name = (sub['name'] ?? '').toString();
-                return _SubCategoryMiniCard(
-                  label: name,
-                  iconPath: (sub['icon'] ?? sub['image'])?.toString(),
-                  onTap: () => onTapSubCategory(name),
-                );
-              },
-            ),
             if (hasMore)
               Padding(
                 padding: const EdgeInsets.only(top: 2),
-                child: Text(
-                  '+${section.totalSubCategories - shown.length} more',
-                  style: const TextStyle(
-                    color: AppColors.textHint,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
+                child: GestureDetector(
+                  onTap: onToggleExpanded,
+                  child: Text(
+                    expanded ? 'Show less' : '+$remainingCount more',
+                    style: TextStyle(
+                      color: expanded ? AppColors.primary : AppColors.textHint,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
@@ -351,18 +431,22 @@ class _SubCategoryMiniCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isLongLabel = label.trim().length > 20;
+
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF2F4F6),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE1E5EA)),
-        ),
-        child: Column(
-          children: [
-            Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AspectRatio(
+            aspectRatio: 1,
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF2F4F6),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE1E5EA)),
+              ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(9),
                 child: Container(
@@ -371,21 +455,24 @@ class _SubCategoryMiniCard extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: 34,
+            child: Text(
               label,
               textAlign: TextAlign.center,
-              maxLines: 3,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 color: AppColors.textPrimary,
-                fontSize: 10.5,
+                fontSize: isLongLabel ? 10.0 : 10.8,
                 fontWeight: FontWeight.w600,
-                height: 1.15,
+                height: 1.2,
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -401,7 +488,7 @@ class _CategoryIcon extends StatelessWidget {
     const fallback = Icon(
       Icons.category_outlined,
       color: AppColors.textSecondary,
-      size: 18,
+      size: 34,
     );
 
     final trimmed = iconPath.trim();
@@ -410,8 +497,8 @@ class _CategoryIcon extends StatelessWidget {
     if (trimmed.startsWith('assets/')) {
       return Image.asset(
         trimmed,
-        width: 22,
-        height: 22,
+        width: 52,
+        height: 52,
         fit: BoxFit.contain,
         errorBuilder: (_, __, ___) => fallback,
       );
@@ -419,8 +506,8 @@ class _CategoryIcon extends StatelessWidget {
 
     return Image.network(
       trimmed,
-      width: 22,
-      height: 22,
+      width: 52,
+      height: 52,
       fit: BoxFit.contain,
       errorBuilder: (_, __, ___) => fallback,
     );

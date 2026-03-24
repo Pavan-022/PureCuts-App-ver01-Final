@@ -56,14 +56,18 @@ class _MainNavScreenState extends State<MainNavScreen> {
     return Scaffold(
       body: PageView(
         controller: _pageController,
-        physics: const ClampingScrollPhysics(),
+        physics: const NeverScrollableScrollPhysics(),
         onPageChanged: (i) {
           if (i == _index) return;
           setState(() => _index = i);
         },
         children: _screens,
       ),
-      floatingActionButton: const SupportChatFab(),
+      floatingActionButton: const Padding(
+        padding: EdgeInsets.only(bottom: 58),
+        child: SupportChatFab(),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           color: Colors.white,

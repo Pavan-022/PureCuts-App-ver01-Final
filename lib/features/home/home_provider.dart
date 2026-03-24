@@ -26,9 +26,8 @@ class HomeProvider extends ChangeNotifier {
   List<Map<String, dynamic>> get banners => _banners;
 
   List<Map<String, dynamic>> get categories {
-    final source = _categories.isNotEmpty
-        ? _categories
-        : AppConstants.categories;
+    final hasRemoteCategories = _categories.isNotEmpty;
+    final source = hasRemoteCategories ? _categories : AppConstants.categories;
     final merged = <String, Map<String, dynamic>>{};
 
     for (final category in source) {
@@ -42,14 +41,32 @@ class HomeProvider extends ChangeNotifier {
       final normalized = _normalizeCategory(category);
       final key = _normalizedKey(normalized['name'] as String?);
       if (_hiddenCategoryNames.contains(key)) continue;
-      merged.putIfAbsent(key, () => normalized);
+
+      if (!hasRemoteCategories) {
+        merged.putIfAbsent(key, () => normalized);
+        continue;
+      }
+
+      // Firestore is source-of-truth when available.
+      // Only enrich already-present categories (e.g., fill missing icon).
+      if (merged.containsKey(key)) {
+        final existing = merged[key] ?? const <String, dynamic>{};
+        merged[key] = {
+          ...normalized,
+          ...existing,
+          'icon': (existing['icon'] ?? '').toString().trim().isNotEmpty
+              ? existing['icon']
+              : normalized['icon'],
+        };
+      }
     }
 
     return merged.values.toList();
   }
 
   List<Map<String, dynamic>> get subCategories {
-    final source = _subCategories.isNotEmpty
+    final hasRemoteSubCategories = _subCategories.isNotEmpty;
+    final source = hasRemoteSubCategories
         ? _subCategories
         : AppConstants.subCategories;
     final merged = <String, Map<String, dynamic>>{};
@@ -69,7 +86,23 @@ class HomeProvider extends ChangeNotifier {
       if (_hiddenCategoryNames.contains(parentKey)) continue;
       final key =
           '$parentKey::${_normalizedKey(normalized['name'] as String?)}';
-      merged.putIfAbsent(key, () => normalized);
+
+      if (!hasRemoteSubCategories) {
+        merged.putIfAbsent(key, () => normalized);
+        continue;
+      }
+
+      // Do not introduce extra fallback sub-categories when Firestore data exists.
+      if (merged.containsKey(key)) {
+        final existing = merged[key] ?? const <String, dynamic>{};
+        merged[key] = {
+          ...normalized,
+          ...existing,
+          'icon': (existing['icon'] ?? '').toString().trim().isNotEmpty
+              ? existing['icon']
+              : normalized['icon'],
+        };
+      }
     }
 
     final items = merged.values.toList();
@@ -104,7 +137,8 @@ class HomeProvider extends ChangeNotifier {
   }
 
   List<Map<String, dynamic>> get subSubCategories {
-    final source = _subSubCategories.isNotEmpty
+    final hasRemoteSubSubCategories = _subSubCategories.isNotEmpty;
+    final source = hasRemoteSubSubCategories
         ? _subSubCategories
         : AppConstants.subSubCategories;
     final merged = <String, Map<String, dynamic>>{};
@@ -129,7 +163,23 @@ class HomeProvider extends ChangeNotifier {
       if (_hiddenCategoryNames.contains(parentCategoryKey)) continue;
       final key =
           '$parentCategoryKey::${_normalizedKey(normalized['parentSubCategory'] as String?)}::${_normalizedKey(normalized['name'] as String?)}';
-      merged.putIfAbsent(key, () => normalized);
+
+      if (!hasRemoteSubSubCategories) {
+        merged.putIfAbsent(key, () => normalized);
+        continue;
+      }
+
+      // Do not inject extra fallback rows when Firestore data exists.
+      if (merged.containsKey(key)) {
+        final existing = merged[key] ?? const <String, dynamic>{};
+        merged[key] = {
+          ...normalized,
+          ...existing,
+          'icon': (existing['icon'] ?? '').toString().trim().isNotEmpty
+              ? existing['icon']
+              : normalized['icon'],
+        };
+      }
     }
 
     final items = merged.values.toList();
@@ -266,9 +316,7 @@ class HomeProvider extends ChangeNotifier {
           (subSubCategory) =>
               _normalizedKey(subSubCategory['parentCategory'] as String?) ==
                   categoryKey &&
-              _normalizedKey(
-                    subSubCategory['parentSubCategory'] as String?,
-                  ) ==
+              _normalizedKey(subSubCategory['parentSubCategory'] as String?) ==
                   subCategoryKey,
         )
         .toList();
@@ -282,13 +330,13 @@ class HomeProvider extends ChangeNotifier {
         .toString();
   }
 
-        String productSubSubCategory(Map<String, dynamic> product) {
-          return (product['subSubCategory'] ??
-          product['subsubCategory'] ??
-          product['sub_sub_category'] ??
-          '')
-          .toString();
-        }
+  String productSubSubCategory(Map<String, dynamic> product) {
+    return (product['subSubCategory'] ??
+            product['subsubCategory'] ??
+            product['sub_sub_category'] ??
+            '')
+        .toString();
+  }
 
   /// Returns all products as the legacy Map format (for widgets that expect Map)
   List<Map<String, dynamic>> get productMaps {

@@ -11,10 +11,10 @@ import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/categories/categories_screen.dart';
-import 'package:purecuts/features/cart/cart_screen.dart';
 import 'package:purecuts/features/favorites/favorites_screen.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/location/location_picker_sheet.dart';
+import 'package:purecuts/features/orders/checkout_screen.dart';
 import 'package:purecuts/features/products/product_detail_screen.dart';
 import 'package:purecuts/features/products/product_list_screen.dart';
 import 'package:purecuts/features/profile/profile_screen.dart';
@@ -50,6 +50,8 @@ class _HomeScreenState extends State<HomeScreen>
   static const double _stickySearchBarHeight = 56;
   static const double _stickyCategoryTopWhenSearchVisible =
       _stickySearchBarHeight + 2;
+  static const double _stickySearchHysteresis = 20;
+  static const double _stickyCategoryHysteresis = 16;
   AnimationController? _bannerImageZoomController;
   Animation<double> _bannerImageZoomAnimation =
       const AlwaysStoppedAnimation<double>(1.0);
@@ -443,9 +445,21 @@ class _HomeScreenState extends State<HomeScreen>
     }
 
     final offset = _contentScrollController.offset;
-    final shouldShowSearch =
-        offset >= (_stickySearchShowOffset ?? double.infinity);
-    final shouldShowSticky = offset >= (_stickyShowOffset ?? double.infinity);
+    final stickySearchOffset = _stickySearchShowOffset ?? double.infinity;
+    final stickyCategoryOffset = _stickyShowOffset ?? double.infinity;
+
+    final searchShowThreshold = stickySearchOffset;
+    final searchHideThreshold = stickySearchOffset - _stickySearchHysteresis;
+    final categoryShowThreshold = stickyCategoryOffset;
+    final categoryHideThreshold =
+        stickyCategoryOffset - _stickyCategoryHysteresis;
+
+    final shouldShowSearch = _showStickySearch
+        ? offset >= searchHideThreshold
+        : offset >= searchShowThreshold;
+    final shouldShowSticky = _showStickyCategories
+        ? offset >= categoryHideThreshold
+        : offset >= categoryShowThreshold;
     const labelsOnly = false;
 
     if (shouldShowSearch != _showStickySearch ||
@@ -789,21 +803,23 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                 ),
                 if (!home.loading)
-                  Positioned(
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOutCubic,
                     left: 0,
                     right: 0,
                     top: -2,
                     child: IgnorePointer(
                       ignoring: !_showStickySearch,
                       child: AnimatedSlide(
-                        duration: const Duration(milliseconds: 180),
+                        duration: const Duration(milliseconds: 260),
                         curve: Curves.easeOutCubic,
                         offset: _showStickySearch
                             ? Offset.zero
-                            : const Offset(0, -0.22),
+                            : const Offset(0, -0.10),
                         child: AnimatedOpacity(
-                          duration: const Duration(milliseconds: 160),
-                          curve: Curves.easeOut,
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOutCubic,
                           opacity: _showStickySearch ? 1 : 0,
                           child: _buildStickySearchBar(),
                         ),
@@ -811,7 +827,9 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
                 if (!home.loading)
-                  Positioned(
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 280),
+                    curve: Curves.easeOutCubic,
                     left: 0,
                     right: 0,
                     top: _showStickySearch
@@ -820,14 +838,14 @@ class _HomeScreenState extends State<HomeScreen>
                     child: IgnorePointer(
                       ignoring: !_showStickyCategories,
                       child: AnimatedSlide(
-                        duration: const Duration(milliseconds: 180),
+                        duration: const Duration(milliseconds: 280),
                         curve: Curves.easeOutCubic,
                         offset: _showStickyCategories
                             ? Offset.zero
-                            : const Offset(0, -0.22),
+                            : const Offset(0, -0.10),
                         child: AnimatedOpacity(
-                          duration: const Duration(milliseconds: 160),
-                          curve: Curves.easeOut,
+                          duration: const Duration(milliseconds: 240),
+                          curve: Curves.easeOutCubic,
                           opacity: _showStickyCategories ? 1 : 0,
                           child: _buildStickyCategoryBar(home),
                         ),
@@ -946,7 +964,7 @@ class _HomeScreenState extends State<HomeScreen>
                   builder: (_, cart, __) => GestureDetector(
                     onTap: () => Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => const CartScreen()),
+                      MaterialPageRoute(builder: (_) => const CheckoutScreen()),
                     ),
                     child: Stack(
                       clipBehavior: Clip.none,

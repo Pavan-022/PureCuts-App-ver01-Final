@@ -28,7 +28,7 @@ class SupportChatFab extends StatelessWidget {
         return Stack(
           clipBehavior: Clip.none,
           children: [
-            FloatingActionButton.extended(
+            FloatingActionButton(
               heroTag: null,
               backgroundColor: AppColors.primary,
               onPressed: () async {
@@ -38,8 +38,7 @@ class SupportChatFab extends StatelessWidget {
                   ),
                 );
               },
-              icon: const Icon(Icons.support_agent_rounded),
-              label: const Text('Support'),
+              child: const Icon(Icons.support_agent_rounded),
             ),
             if (unreadCount > 0)
               Positioned(

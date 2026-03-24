@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/products/product_list_screen.dart';
 
@@ -178,8 +180,9 @@ class _BrandsScreenState extends State<BrandsScreen> {
                           itemBuilder: (_, i) {
                             final brand = brands[i];
                             final name = (brand['name'] ?? '').toString();
-                            final image = (brand['image'] ?? brand['logo'] ?? '')
-                                .toString();
+                            final image =
+                                (brand['image'] ?? brand['logo'] ?? '')
+                                    .toString();
 
                             return Material(
                               color: Colors.white,
@@ -208,6 +211,12 @@ class _BrandsScreenState extends State<BrandsScreen> {
             ),
           ),
         ],
+      ),
+      bottomNavigationBar: Consumer<CartModel>(
+        builder: (context, cart, _) {
+          if (cart.itemCount == 0) return const SizedBox.shrink();
+          return const StickyCartBar();
+        },
       ),
     );
   }
