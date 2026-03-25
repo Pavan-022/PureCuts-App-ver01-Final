@@ -283,26 +283,142 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     return isColorAttribute && hasExplicitColorCode;
   }
 
+  String _humanizeLabel(String raw) {
+    final text = raw
+        .trim()
+        .replaceAll(RegExp(r'[_\-]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ');
+    if (text.isEmpty) return '';
+
+    final words = text
+        .split(' ')
+        .where((w) => w.trim().isNotEmpty)
+        .map((word) {
+          final trimmed = word.trim();
+          if (trimmed.isEmpty) return '';
+          if (trimmed.length == 1) return trimmed.toUpperCase();
+          return '${trimmed[0].toUpperCase()}${trimmed.substring(1)}';
+        })
+        .where((w) => w.isNotEmpty)
+        .toList();
+
+    return words.join(' ');
+  }
+
   String _variantSectionTitle(List<ProductVariant> variants) {
+    final dashboardTitle = (widget.product['variableOptions'] ?? '')
+        .toString()
+        .trim();
+    if (dashboardTitle.isNotEmpty) return dashboardTitle;
+
     if (variants.isEmpty) return 'Choose Option';
 
     final rawAttr = variants
         .map((v) => v.attribute.trim())
         .firstWhere((attr) => attr.isNotEmpty, orElse: () => '');
-    final attrKey = _normalizeKey(rawAttr);
 
-    if (attrKey.contains('unit') ||
-        attrKey.contains('volume') ||
-        attrKey.contains('quantity') ||
-        attrKey.contains('size')) {
-      return 'Choose Unit';
-    }
-    if (attrKey.contains('color') ||
-        attrKey.contains('shade') ||
-        attrKey.contains('tone')) {
-      return 'Choose Shade';
-    }
+    final humanized = _humanizeLabel(rawAttr);
+    if (humanized.isNotEmpty) return humanized;
+
     return 'Choose Option';
+  }
+
+  Widget _buildVariantOptionTile(
+    ProductVariant variant,
+    bool isSelected, {
+    required bool compactMode,
+  }) {
+    final label = _variantLabel(variant);
+    final isColor = _isColorVariant(variant);
+
+    if (isColor) {
+      return GestureDetector(
+        onTap: () => _productState?.selectVariant(variant),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                width: compactMode ? 34 : 30,
+                height: compactMode ? 34 : 30,
+                decoration: BoxDecoration(
+                  color: variant.color,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: isSelected
+                        ? AppColors.primary
+                        : const Color(0xFFD9D9E3),
+                    width: isSelected ? 2.5 : 1,
+                  ),
+                  boxShadow: isSelected
+                      ? [
+                          BoxShadow(
+                            color: AppColors.primary.withOpacity(0.2),
+                            blurRadius: 8,
+                          ),
+                        ]
+                      : null,
+                ),
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                width: compactMode ? 88 : double.infinity,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: isSelected
+                        ? AppColors.primary
+                        : AppColors.textSecondary,
+                    fontSize: compactMode ? 11 : 10,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: () => _productState?.selectVariant(variant),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        alignment: Alignment.center,
+        constraints: compactMode
+            ? const BoxConstraints(minWidth: 72, maxWidth: 104)
+            : const BoxConstraints(minWidth: 0),
+        padding: EdgeInsets.symmetric(
+          horizontal: compactMode ? 10 : 8,
+          vertical: compactMode ? 8 : 7,
+        ),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppColors.primary.withOpacity(0.08)
+              : const Color(0xFFF7F7FA),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? AppColors.primary : const Color(0xFFE1E5EE),
+            width: isSelected ? 1.8 : 1,
+          ),
+        ),
+        child: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: isSelected ? AppColors.primary : AppColors.textSecondary,
+            fontSize: compactMode ? 11 : 10,
+            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+          ),
+        ),
+      ),
+    );
   }
 
   String _resolveBrandLogo(HomeProvider home, String brandName) {
@@ -1540,123 +1656,78 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-                      child: Text(
-                        _variantSectionTitle(variants),
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _variantSectionTitle(variants),
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if (variants.length > 10) ...[
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Scroll to see more options',
+                              style: TextStyle(
+                                color: AppColors.textHint,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (variants.length > 10)
+                      SizedBox(
+                        height: 246,
+                        child: GridView.builder(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                          physics: const BouncingScrollPhysics(),
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 3,
+                                mainAxisSpacing: 10,
+                                crossAxisSpacing: 10,
+                                childAspectRatio: 1.65,
+                              ),
+                          itemCount: variants.length,
+                          itemBuilder: (_, i) {
+                            final variant = variants[i];
+                            final isSelected =
+                                _selectedVariant?.id == variant.id;
+                            return _buildVariantOptionTile(
+                              variant,
+                              isSelected,
+                              compactMode: false,
+                            );
+                          },
+                        ),
+                      )
+                    else
+                      SizedBox(
+                        height: 66,
+                        child: ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                          scrollDirection: Axis.horizontal,
+                          itemCount: variants.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(width: 10),
+                          itemBuilder: (_, i) {
+                            final variant = variants[i];
+                            final isSelected =
+                                _selectedVariant?.id == variant.id;
+                            return _buildVariantOptionTile(
+                              variant,
+                              isSelected,
+                              compactMode: true,
+                            );
+                          },
                         ),
                       ),
-                    ),
-                    SizedBox(
-                      height: 66,
-                      child: ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-                        scrollDirection: Axis.horizontal,
-                        itemCount: variants.length,
-                        separatorBuilder: (_, __) => const SizedBox(width: 10),
-                        itemBuilder: (_, i) {
-                          final variant = variants[i];
-                          final isSelected = _selectedVariant?.id == variant.id;
-                          final label = _variantLabel(variant);
-                          final isColor = _isColorVariant(variant);
-
-                          return GestureDetector(
-                            onTap: () => _productState?.selectVariant(variant),
-                            child: isColor
-                                ? Column(
-                                    children: [
-                                      AnimatedContainer(
-                                        duration: const Duration(
-                                          milliseconds: 180,
-                                        ),
-                                        width: 34,
-                                        height: 34,
-                                        decoration: BoxDecoration(
-                                          color: variant.color,
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                            color: isSelected
-                                                ? AppColors.primary
-                                                : const Color(0xFFD9D9E3),
-                                            width: isSelected ? 2.5 : 1,
-                                          ),
-                                          boxShadow: isSelected
-                                              ? [
-                                                  BoxShadow(
-                                                    color: AppColors.primary
-                                                        .withOpacity(0.2),
-                                                    blurRadius: 8,
-                                                  ),
-                                                ]
-                                              : null,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 6),
-                                      SizedBox(
-                                        width: 88,
-                                        child: Text(
-                                          label,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                            color: isSelected
-                                                ? AppColors.primary
-                                                : AppColors.textSecondary,
-                                            fontSize: 11,
-                                            fontWeight: isSelected
-                                                ? FontWeight.w700
-                                                : FontWeight.w500,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  )
-                                : AnimatedContainer(
-                                    duration: const Duration(milliseconds: 180),
-                                    alignment: Alignment.center,
-                                    constraints: const BoxConstraints(
-                                      minWidth: 72,
-                                      maxWidth: 104,
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 8,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: isSelected
-                                          ? AppColors.primary.withOpacity(0.08)
-                                          : const Color(0xFFF7F7FA),
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: isSelected
-                                            ? AppColors.primary
-                                            : const Color(0xFFE1E5EE),
-                                        width: isSelected ? 1.8 : 1,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      label,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: isSelected
-                                            ? AppColors.primary
-                                            : AppColors.textSecondary,
-                                        fontSize: 11,
-                                        fontWeight: isSelected
-                                            ? FontWeight.w700
-                                            : FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                          );
-                        },
-                      ),
-                    ),
                   ],
 
                   const SizedBox(height: 16),

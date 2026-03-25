@@ -1,5 +1,4 @@
 ﻿import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
@@ -8,16 +7,19 @@ import 'package:purecuts/core/widgets/shimmer_widgets.dart';
 import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/support_chat/widgets/support_chat_fab.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class ProductListScreen extends StatefulWidget {
   final String? initialCategory;
   final String? initialBrand;
   final String? initialTag;
+  final String? initialQuery;
   const ProductListScreen({
     super.key,
     this.initialCategory,
     this.initialBrand,
     this.initialTag,
+    this.initialQuery,
   });
 
   @override
@@ -25,8 +27,6 @@ class ProductListScreen extends StatefulWidget {
 }
 
 class _ProductListScreenState extends State<ProductListScreen> {
-  static const int _pageSize = 20;
-
   String _selectedCategory = 'All';
   String? _selectedBrand;
   String? _selectedTag;
@@ -34,15 +34,38 @@ class _ProductListScreenState extends State<ProductListScreen> {
   final _searchCtrl = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FirestoreService _firestoreService = FirestoreService();
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _speechReady = false;
+  bool _isListening = false;
+  bool _speechDialogVisible = false;
+  String? _speechLocaleId;
+  ValueNotifier<String>? _activeTranscript;
+  bool _pendingVoiceSearch = false;
 
   final List<Map<String, dynamic>> _pagedProducts = [];
-  DocumentSnapshot<Map<String, dynamic>>? _lastProductDoc;
   bool _isInitialLoading = false;
-  bool _isLoadingMore = false;
-  bool _hasMore = true;
   String? _pagingError;
 
   String _searchQuery = '';
+
+  String _speechErrorMessage(dynamic error) {
+    final rawMsg = (error?.errorMsg ?? error?.toString() ?? '').toString();
+    final msg = rawMsg.toLowerCase();
+    if (msg.contains('no_match') ||
+        msg.contains('no match') ||
+        msg.contains('speech_timeout') ||
+        msg.contains('speech timeout') ||
+        msg.contains('aborted')) {
+      return 'Didn\'t catch that. Try speaking a little slower.';
+    }
+    if (msg.contains('permission') || msg.contains('not allowed')) {
+      return 'Microphone permission is required. Please enable it in settings.';
+    }
+    final permanent = (error?.permanent == true);
+    return permanent
+        ? 'Microphone is unavailable right now. Please try again.'
+        : 'Listening stopped. Tap mic and try again.';
+  }
 
   String _normalizeToken(String value) {
     return value
@@ -95,30 +118,270 @@ class _ProductListScreenState extends State<ProductListScreen> {
     await _loadFirstPage();
   }
 
+  Future<void> _initSpeech() async {
+    final available = await _speech.initialize(
+      onStatus: (status) {
+        if (!mounted) return;
+        final normalized = status.toLowerCase();
+        final listening = normalized.contains('listening');
+        if (_isListening != listening) {
+          setState(() => _isListening = listening);
+        }
+        if (!listening && _pendingVoiceSearch) {
+          final spoken = (_activeTranscript?.value ?? '').trim();
+          if (spoken.isNotEmpty &&
+              spoken != 'Listening...' &&
+              !spoken.startsWith('Didn\'t catch')) {
+            _submitVoiceQuery(spoken);
+            return;
+          }
+        }
+        if (!listening &&
+            _activeTranscript != null &&
+            _activeTranscript!.value == 'Listening...') {
+          _activeTranscript!.value =
+              'Didn\'t catch that. Try speaking again clearly.';
+        }
+      },
+      onError: (error) {
+        if (!mounted) return;
+        setState(() => _isListening = false);
+        if (_activeTranscript != null) {
+          final current = _activeTranscript!.value.trim();
+          if (current.isEmpty || current == 'Listening...') {
+            _activeTranscript!.value = _speechErrorMessage(error);
+          }
+        }
+      },
+    );
+
+    if (!mounted) return;
+    if (available) {
+      try {
+        final systemLocale = await _speech.systemLocale();
+        final locales = await _speech.locales();
+        if (systemLocale != null && systemLocale.localeId.trim().isNotEmpty) {
+          _speechLocaleId = systemLocale.localeId;
+        } else {
+          final preferred = locales.where((l) {
+            final id = l.localeId.toLowerCase();
+            return id == 'en_in' || id.startsWith('en_');
+          });
+          _speechLocaleId =
+              (preferred.isNotEmpty
+                      ? preferred.first
+                      : locales.isNotEmpty
+                      ? locales.first
+                      : null)
+                  ?.localeId;
+        }
+      } catch (_) {
+        // Keep locale null to let plugin choose device default.
+      }
+    }
+
+    setState(() {
+      _speechReady = available;
+      if (!available) {
+        _isListening = false;
+      }
+    });
+  }
+
+  Future<void> _toggleVoiceSearch() async {
+    if (!_speechReady) {
+      await _initSpeech();
+    }
+
+    if (!_speechReady) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Voice search is unavailable on this device.'),
+        ),
+      );
+      return;
+    }
+
+    if (_isListening) {
+      _pendingVoiceSearch = false;
+      await _speech.stop();
+      _closeSpeechDialog();
+      if (!mounted) return;
+      setState(() => _isListening = false);
+      return;
+    }
+
+    final transcript = ValueNotifier<String>('Listening...');
+    _activeTranscript = transcript;
+    _showSpeechDialog(
+      title: 'Voice search',
+      transcript: transcript,
+      onSubmit: () {
+        final spoken = transcript.value.trim();
+        if (spoken.isEmpty || spoken == 'Listening...') return;
+        _submitVoiceQuery(spoken);
+      },
+    );
+
+    var launched = false;
+    _pendingVoiceSearch = true;
+    await _speech.cancel();
+    final started = await _speech.listen(
+      listenOptions: stt.SpeechListenOptions(
+        listenMode: stt.ListenMode.search,
+        partialResults: true,
+        cancelOnError: false,
+      ),
+      listenFor: const Duration(seconds: 20),
+      pauseFor: const Duration(seconds: 5),
+      localeId: _speechLocaleId,
+      onResult: (result) {
+        if (!mounted || launched) return;
+        final spoken = result.recognizedWords.trim();
+        transcript.value = spoken.isEmpty ? 'Listening...' : spoken;
+        _searchCtrl
+          ..text = spoken
+          ..selection = TextSelection.fromPosition(
+            TextPosition(offset: spoken.length),
+          );
+        setState(() => _searchQuery = spoken);
+        if (!result.finalResult || spoken.isEmpty) return;
+        launched = true;
+        _submitVoiceQuery(spoken);
+      },
+    );
+
+    if (!started) {
+      _pendingVoiceSearch = false;
+      _closeSpeechDialog();
+      _activeTranscript = null;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not start voice input. Please try again.'),
+        ),
+      );
+    }
+
+    if (!mounted) return;
+    setState(() => _isListening = started);
+  }
+
+  void _submitVoiceQuery(String spoken) {
+    if (!_pendingVoiceSearch || !mounted) return;
+    _pendingVoiceSearch = false;
+    _closeSpeechDialog();
+    _searchCtrl
+      ..text = spoken
+      ..selection = TextSelection.fromPosition(
+        TextPosition(offset: spoken.length),
+      );
+    setState(() {
+      _isListening = false;
+      _searchQuery = spoken;
+    });
+  }
+
+  void _closeSpeechDialog() {
+    if (!_speechDialogVisible || !mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+    _speechDialogVisible = false;
+    _activeTranscript = null;
+  }
+
+  void _showSpeechDialog({
+    required String title,
+    required ValueNotifier<String> transcript,
+    required VoidCallback onSubmit,
+  }) {
+    if (!mounted || _speechDialogVisible) return;
+    _speechDialogVisible = true;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: ValueListenableBuilder<String>(
+            valueListenable: transcript,
+            builder: (_, text, __) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        _isListening ? Icons.mic : Icons.mic_none_rounded,
+                        color: _isListening
+                            ? AppColors.primary
+                            : AppColors.textHint,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(_isListening ? 'Listening...' : 'Tap mic to speak'),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      text,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await _speech.stop();
+                _pendingVoiceSearch = false;
+                _closeSpeechDialog();
+                if (!mounted) return;
+                setState(() => _isListening = false);
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(onPressed: onSubmit, child: const Text('Search')),
+          ],
+        );
+      },
+    ).whenComplete(() {
+      _speechDialogVisible = false;
+      _activeTranscript = null;
+      transcript.dispose();
+    });
+  }
+
   Future<void> _loadFirstPage() async {
     if (_isInitialLoading) return;
     setState(() {
       _isInitialLoading = true;
-      _isLoadingMore = false;
       _pagingError = null;
-      _hasMore = true;
-      _lastProductDoc = null;
       _pagedProducts.clear();
     });
 
     try {
-      final result = await _firestoreService.getProductsPage(
-        limit: _pageSize,
-        startAfterDoc: null,
-      );
+      final products = await _firestoreService.getProducts();
 
       if (!mounted) return;
       setState(() {
         _pagedProducts
           ..clear()
-          ..addAll(result.products.map((p) => p.toProductMap()));
-        _lastProductDoc = result.lastDocument;
-        _hasMore = result.hasMore;
+          ..addAll(products.map((p) => p.toProductMap()));
       });
     } catch (e) {
       if (!mounted) return;
@@ -127,45 +390,6 @@ class _ProductListScreenState extends State<ProductListScreen> {
       if (mounted) {
         setState(() => _isInitialLoading = false);
       }
-    }
-  }
-
-  Future<void> _loadMorePage() async {
-    if (_isInitialLoading || _isLoadingMore || !_hasMore) return;
-
-    setState(() {
-      _isLoadingMore = true;
-      _pagingError = null;
-    });
-
-    try {
-      final result = await _firestoreService.getProductsPage(
-        limit: _pageSize,
-        startAfterDoc: _lastProductDoc,
-      );
-
-      if (!mounted) return;
-      setState(() {
-        _pagedProducts.addAll(result.products.map((p) => p.toProductMap()));
-        _lastProductDoc = result.lastDocument;
-        _hasMore = result.hasMore;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _pagingError = e.toString());
-    } finally {
-      if (mounted) {
-        setState(() => _isLoadingMore = false);
-      }
-    }
-  }
-
-  void _onProductScroll() {
-    if (!_scrollController.hasClients) return;
-    final position = _scrollController.position;
-    final threshold = position.maxScrollExtent * 0.75;
-    if (position.pixels >= threshold) {
-      _loadMorePage();
     }
   }
 
@@ -181,17 +405,24 @@ class _ProductListScreenState extends State<ProductListScreen> {
     if (widget.initialTag != null && widget.initialTag!.trim().isNotEmpty) {
       _selectedTag = widget.initialTag!.trim();
     }
+    if (widget.initialQuery != null && widget.initialQuery!.trim().isNotEmpty) {
+      _searchQuery = widget.initialQuery!.trim();
+      _searchCtrl.text = _searchQuery;
+      _searchCtrl.selection = TextSelection.fromPosition(
+        TextPosition(offset: _searchQuery.length),
+      );
+    }
 
-    _scrollController.addListener(_onProductScroll);
+    _initSpeech();
+
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadFirstPage());
   }
 
   @override
   void dispose() {
+    _speech.stop();
     _searchCtrl.dispose();
-    _scrollController
-      ..removeListener(_onProductScroll)
-      ..dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -365,19 +596,39 @@ class _ProductListScreenState extends State<ProductListScreen> {
                   color: AppColors.textHint,
                   size: 20,
                 ),
-                suffixIcon: _searchQuery.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(
-                          Icons.clear,
-                          color: AppColors.textHint,
-                          size: 18,
+                suffixIconConstraints: BoxConstraints(
+                  minWidth: _searchQuery.isNotEmpty ? 96 : 52,
+                ),
+                suffixIcon: SizedBox(
+                  width: _searchQuery.isNotEmpty ? 96 : 52,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_searchQuery.isNotEmpty)
+                        IconButton(
+                          icon: const Icon(
+                            Icons.clear,
+                            color: AppColors.textHint,
+                            size: 18,
+                          ),
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            setState(() => _searchQuery = '');
+                          },
                         ),
-                        onPressed: () {
-                          _searchCtrl.clear();
-                          setState(() => _searchQuery = '');
-                        },
-                      )
-                    : null,
+                      IconButton(
+                        onPressed: _toggleVoiceSearch,
+                        icon: Icon(
+                          _isListening ? Icons.mic : Icons.mic_none_rounded,
+                          color: _isListening
+                              ? AppColors.primary
+                              : AppColors.textHint,
+                          size: 20,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 filled: true,
                 fillColor: AppColors.background,
                 isDense: true,
@@ -395,7 +646,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
               itemCount: categories.length,
               itemBuilder: (_, i) {
                 final cat = categories[i];
@@ -533,7 +784,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
                             childAspectRatio: 0.65,
                           ),
                       itemCount: 6,
-                      itemBuilder: (_, __) => const ProductCardShimmer(),
+                      itemBuilder: (_, _) => const ProductCardShimmer(),
                     )
                   : displayedProducts.isEmpty
                   ? ListView(
@@ -588,31 +839,13 @@ class _ProductListScreenState extends State<ProductListScreen> {
                             crossAxisSpacing: 12,
                             childAspectRatio: 0.65,
                           ),
-                      itemCount:
-                          displayedProducts.length + (_isLoadingMore ? 2 : 0),
+                      itemCount: displayedProducts.length,
                       itemBuilder: (_, i) {
-                        if (i >= displayedProducts.length) {
-                          return const ProductCardShimmer();
-                        }
                         return ProductCard(product: displayedProducts[i]);
                       },
                     ),
             ),
           ),
-          if (!_isInitialLoading && _isLoadingMore)
-            const Padding(
-              padding: EdgeInsets.fromLTRB(0, 0, 0, 8),
-              child: SizedBox(
-                height: 22,
-                child: Center(
-                  child: SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-              ),
-            ),
           const StickyCartBar(),
         ],
       ),

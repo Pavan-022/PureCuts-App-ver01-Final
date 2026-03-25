@@ -7,6 +7,7 @@ import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 import 'package:purecuts/features/orders/order_provider.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class PreviouslyBoughtScreen extends StatefulWidget {
   const PreviouslyBoughtScreen({super.key});
@@ -16,8 +17,298 @@ class PreviouslyBoughtScreen extends StatefulWidget {
 }
 
 class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  final stt.SpeechToText _speech = stt.SpeechToText();
   String _search = '';
   String? _lastHydratedUid;
+  bool _speechReady = false;
+  bool _isListening = false;
+  String? _speechLocaleId;
+  bool _speechDialogVisible = false;
+  ValueNotifier<String>? _activeTranscript;
+  bool _pendingVoiceSearch = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(() {
+      final value = _searchController.text;
+      if (_search == value) return;
+      setState(() => _search = value);
+    });
+    _initSpeech();
+  }
+
+  @override
+  void dispose() {
+    _speech.stop();
+    _activeTranscript?.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  String _speechErrorMessage(dynamic error) {
+    final rawMsg = (error?.errorMsg ?? error?.toString() ?? '').toString();
+    final msg = rawMsg.toLowerCase();
+    if (msg.contains('no_match') ||
+        msg.contains('no match') ||
+        msg.contains('speech_timeout') ||
+        msg.contains('speech timeout') ||
+        msg.contains('aborted')) {
+      return 'Didn\'t catch that. Try speaking clearly.';
+    }
+    if (msg.contains('permission') || msg.contains('not allowed')) {
+      return 'Microphone permission is required. Please enable it in settings.';
+    }
+    final permanent = (error?.permanent == true);
+    return permanent
+        ? 'Microphone is unavailable right now. Please try again.'
+        : 'Listening stopped. Tap mic and try again.';
+  }
+
+  Future<void> _initSpeech() async {
+    final available = await _speech.initialize(
+      onStatus: (status) {
+        if (!mounted) return;
+        final normalized = status.toLowerCase();
+        final listening = normalized.contains('listening');
+        if (_isListening != listening) {
+          setState(() => _isListening = listening);
+        }
+        if (!listening && _pendingVoiceSearch) {
+          final spoken = (_activeTranscript?.value ?? '').trim();
+          if (spoken.isNotEmpty &&
+              spoken != 'Listening...' &&
+              !spoken.startsWith('Didn\'t catch')) {
+            _submitVoiceQuery(spoken);
+            return;
+          }
+        }
+        if (!listening &&
+            _activeTranscript != null &&
+            _activeTranscript!.value == 'Listening...') {
+          _activeTranscript!.value =
+              'Didn\'t catch that. Try speaking again clearly.';
+        }
+      },
+      onError: (error) {
+        if (!mounted) return;
+        setState(() => _isListening = false);
+        if (_activeTranscript != null) {
+          final current = _activeTranscript!.value.trim();
+          if (current.isEmpty || current == 'Listening...') {
+            _activeTranscript!.value = _speechErrorMessage(error);
+          }
+        }
+      },
+    );
+
+    if (!mounted) return;
+
+    if (available) {
+      try {
+        final systemLocale = await _speech.systemLocale();
+        final locales = await _speech.locales();
+        if (systemLocale != null && systemLocale.localeId.trim().isNotEmpty) {
+          _speechLocaleId = systemLocale.localeId;
+        } else {
+          final preferred = locales.where((l) {
+            final id = l.localeId.toLowerCase();
+            return id == 'en_in' || id.startsWith('en_');
+          });
+          _speechLocaleId =
+              (preferred.isNotEmpty
+                      ? preferred.first
+                      : locales.isNotEmpty
+                      ? locales.first
+                      : null)
+                  ?.localeId;
+        }
+      } catch (_) {
+        // Keep locale null to allow plugin default.
+      }
+    }
+
+    setState(() {
+      _speechReady = available;
+      if (!available) _isListening = false;
+    });
+  }
+
+  Future<void> _toggleVoiceSearch() async {
+    if (!_speechReady) {
+      await _initSpeech();
+    }
+
+    if (!_speechReady) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Voice search is unavailable on this device.'),
+        ),
+      );
+      return;
+    }
+
+    if (_isListening) {
+      _pendingVoiceSearch = false;
+      await _speech.stop();
+      _closeSpeechDialog();
+      if (!mounted) return;
+      setState(() => _isListening = false);
+      return;
+    }
+
+    final transcript = ValueNotifier<String>('Listening...');
+    _activeTranscript = transcript;
+    _showSpeechDialog(
+      title: 'Voice search',
+      transcript: transcript,
+      onSubmit: () {
+        final spoken = transcript.value.trim();
+        if (spoken.isEmpty || spoken == 'Listening...') return;
+        _submitVoiceQuery(spoken);
+      },
+    );
+
+    var launched = false;
+    _pendingVoiceSearch = true;
+    await _speech.cancel();
+
+    final started = await _speech.listen(
+      listenOptions: stt.SpeechListenOptions(
+        listenMode: stt.ListenMode.search,
+        partialResults: true,
+        cancelOnError: false,
+      ),
+      listenFor: const Duration(seconds: 20),
+      pauseFor: const Duration(seconds: 5),
+      localeId: _speechLocaleId,
+      onResult: (result) {
+        if (!mounted || launched) return;
+        final spoken = result.recognizedWords.trim();
+        transcript.value = spoken.isEmpty ? 'Listening...' : spoken;
+        _searchController
+          ..text = spoken
+          ..selection = TextSelection.fromPosition(
+            TextPosition(offset: spoken.length),
+          );
+        if (!result.finalResult || spoken.isEmpty) return;
+        launched = true;
+        _submitVoiceQuery(spoken);
+      },
+    );
+
+    if (!started) {
+      _pendingVoiceSearch = false;
+      _closeSpeechDialog();
+      _activeTranscript = null;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not start voice input. Please try again.'),
+        ),
+      );
+    }
+
+    if (!mounted) return;
+    setState(() => _isListening = started);
+  }
+
+  void _submitVoiceQuery(String spoken) {
+    if (!_pendingVoiceSearch || !mounted) return;
+    _pendingVoiceSearch = false;
+    _closeSpeechDialog();
+    _searchController
+      ..text = spoken
+      ..selection = TextSelection.fromPosition(
+        TextPosition(offset: spoken.length),
+      );
+    setState(() => _isListening = false);
+  }
+
+  void _closeSpeechDialog() {
+    if (!_speechDialogVisible || !mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+    _speechDialogVisible = false;
+    _activeTranscript = null;
+  }
+
+  void _showSpeechDialog({
+    required String title,
+    required ValueNotifier<String> transcript,
+    required VoidCallback onSubmit,
+  }) {
+    if (!mounted || _speechDialogVisible) return;
+    _speechDialogVisible = true;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: ValueListenableBuilder<String>(
+            valueListenable: transcript,
+            builder: (_, text, __) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        _isListening ? Icons.mic : Icons.mic_none_rounded,
+                        color: _isListening
+                            ? AppColors.primary
+                            : AppColors.textHint,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(_isListening ? 'Listening...' : 'Tap mic to speak'),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      text,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await _speech.stop();
+                _pendingVoiceSearch = false;
+                _closeSpeechDialog();
+                if (!mounted) return;
+                setState(() => _isListening = false);
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(onPressed: onSubmit, child: const Text('Search')),
+          ],
+        );
+      },
+    ).whenComplete(() {
+      _speechDialogVisible = false;
+      _activeTranscript = null;
+      transcript.dispose();
+    });
+  }
 
   @override
   void didChangeDependencies() {
@@ -101,8 +392,11 @@ class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildHeader(allBought.length),
-                if (allBought.isNotEmpty) _buildSearchBar(),
-                const SizedBox(height: 4),
+                if (allBought.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _buildSearchBar(),
+                  const SizedBox(height: 8),
+                ],
                 Expanded(
                   child: orderProvider.isLoading && allBought.isEmpty
                       ? const Center(child: CircularProgressIndicator())
@@ -186,14 +480,26 @@ class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
           borderRadius: BorderRadius.circular(12),
         ),
         child: TextField(
-          onChanged: (v) => setState(() => _search = v),
+          controller: _searchController,
           style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             hintText: 'Search your past purchases...',
-            hintStyle: TextStyle(color: AppColors.textHint, fontSize: 13),
-            prefixIcon: Icon(Icons.search, color: AppColors.textHint, size: 18),
+            hintStyle: const TextStyle(color: AppColors.textHint, fontSize: 13),
+            prefixIcon: const Icon(
+              Icons.search,
+              color: AppColors.textHint,
+              size: 18,
+            ),
+            suffixIcon: IconButton(
+              onPressed: _toggleVoiceSearch,
+              icon: Icon(
+                _isListening ? Icons.mic : Icons.mic_none_rounded,
+                color: _isListening ? AppColors.primary : AppColors.textHint,
+                size: 20,
+              ),
+            ),
             border: InputBorder.none,
-            contentPadding: EdgeInsets.symmetric(vertical: 12),
+            contentPadding: const EdgeInsets.symmetric(vertical: 12),
           ),
         ),
       ),

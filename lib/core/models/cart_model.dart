@@ -49,10 +49,17 @@ class CartItem {
 class CartModel extends ChangeNotifier {
   static const String _storageKey = 'purecuts_cart_items_v1';
   static const String _storageListKey = 'purecuts_cart_items_v1_list';
+  static const int _maxPreviewItems = 3;
   static Future<SharedPreferences>? _prefsFuture;
   final List<CartItem> _items;
+  final List<String> _previewOrder = <String>[];
+  int _addEventTick = 0;
+  String? _lastAddedProductId;
+  String? _lastAddedImage;
 
-  CartModel._(this._items);
+  CartModel._(this._items) {
+    _rebuildPreviewFromItems();
+  }
 
   factory CartModel.empty() => CartModel._(<CartItem>[]);
 
@@ -77,6 +84,20 @@ class CartModel extends ChangeNotifier {
   }
 
   List<CartItem> get items => List.unmodifiable(_items);
+
+  List<CartItem> get previewItems {
+    final byId = <String, CartItem>{for (final item in _items) item.id: item};
+    return _previewOrder
+        .map((id) => byId[id])
+        .whereType<CartItem>()
+        .toList(growable: false);
+  }
+
+  int get addEventTick => _addEventTick;
+
+  String? get lastAddedProductId => _lastAddedProductId;
+
+  String? get lastAddedImage => _lastAddedImage;
 
   int get itemCount => _items.fold(0, (sum, item) => sum + item.quantity);
 
@@ -109,6 +130,12 @@ class CartModel extends ChangeNotifier {
         ),
       );
     }
+
+    _touchPreview(productId);
+    _lastAddedProductId = productId;
+    _lastAddedImage = (product['image'] ?? '').toString();
+    _addEventTick++;
+
     _persist();
     notifyListeners();
   }
@@ -121,6 +148,7 @@ class CartModel extends ChangeNotifier {
       } else {
         _items.removeAt(idx);
       }
+      _syncPreviewWithItems();
       _persist();
       notifyListeners();
     }
@@ -128,6 +156,7 @@ class CartModel extends ChangeNotifier {
 
   void clear() {
     _items.clear();
+    _previewOrder.clear();
     _persist();
     notifyListeners();
   }
@@ -137,7 +166,34 @@ class CartModel extends ChangeNotifier {
     _items
       ..clear()
       ..addAll(items);
+    _rebuildPreviewFromItems();
     notifyListeners();
+  }
+
+  void _touchPreview(String productId) {
+    _previewOrder.remove(productId);
+    _previewOrder.add(productId);
+    while (_previewOrder.length > _maxPreviewItems) {
+      _previewOrder.removeAt(0);
+    }
+  }
+
+  void _rebuildPreviewFromItems() {
+    _previewOrder
+      ..clear()
+      ..addAll(_items.map((item) => item.id));
+
+    while (_previewOrder.length > _maxPreviewItems) {
+      _previewOrder.removeAt(0);
+    }
+  }
+
+  void _syncPreviewWithItems() {
+    final existing = _items.map((item) => item.id).toSet();
+    _previewOrder.removeWhere((id) => !existing.contains(id));
+    while (_previewOrder.length > _maxPreviewItems) {
+      _previewOrder.removeAt(0);
+    }
   }
 
   Future<void> _persist() async {

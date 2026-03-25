@@ -18,6 +18,7 @@ import 'package:purecuts/features/orders/checkout_screen.dart';
 import 'package:purecuts/features/products/product_detail_screen.dart';
 import 'package:purecuts/features/products/product_list_screen.dart';
 import 'package:purecuts/features/profile/profile_screen.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:video_player/video_player.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -55,6 +56,32 @@ class _HomeScreenState extends State<HomeScreen>
   AnimationController? _bannerImageZoomController;
   Animation<double> _bannerImageZoomAnimation =
       const AlwaysStoppedAnimation<double>(1.0);
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _speechReady = false;
+  bool _isListening = false;
+  bool _speechDialogVisible = false;
+  String? _speechLocaleId;
+  ValueNotifier<String>? _activeTranscript;
+  bool _pendingVoiceSubmit = false;
+
+  String _speechErrorMessage(dynamic error) {
+    final rawMsg = (error?.errorMsg ?? error?.toString() ?? '').toString();
+    final msg = rawMsg.toLowerCase();
+    if (msg.contains('no_match') ||
+        msg.contains('no match') ||
+        msg.contains('speech_timeout') ||
+        msg.contains('speech timeout') ||
+        msg.contains('aborted')) {
+      return 'Didn\'t catch that. Try speaking a little slower.';
+    }
+    if (msg.contains('permission') || msg.contains('not allowed')) {
+      return 'Microphone permission is required. Please enable it in settings.';
+    }
+    final permanent = (error?.permanent == true);
+    return permanent
+        ? 'Microphone is unavailable right now. Please try again.'
+        : 'Listening stopped. Tap mic and try again.';
+  }
 
   void _ensureBannerImageZoomReady() {
     if (_bannerImageZoomController != null) return;
@@ -143,6 +170,251 @@ class _HomeScreenState extends State<HomeScreen>
       context,
       MaterialPageRoute(builder: (_) => ProductDetailScreen(product: product)),
     );
+  }
+
+  void _openProductSearch({String? query}) {
+    final trimmed = query?.trim() ?? '';
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+            ProductListScreen(initialQuery: trimmed.isEmpty ? null : trimmed),
+      ),
+    );
+  }
+
+  Future<void> _initSpeech() async {
+    final available = await _speech.initialize(
+      onStatus: (status) {
+        if (!mounted) return;
+        final normalized = status.toLowerCase();
+        final listening = normalized.contains('listening');
+        if (_isListening != listening) {
+          setState(() => _isListening = listening);
+        }
+        if (!listening && _pendingVoiceSubmit) {
+          final spoken = (_activeTranscript?.value ?? '').trim();
+          if (spoken.isNotEmpty &&
+              spoken != 'Listening...' &&
+              !spoken.startsWith('Didn\'t catch')) {
+            _submitVoiceQuery(spoken);
+            return;
+          }
+        }
+        if (!listening &&
+            _activeTranscript != null &&
+            _activeTranscript!.value == 'Listening...') {
+          _activeTranscript!.value =
+              'Didn\'t catch that. Try speaking again clearly.';
+        }
+      },
+      onError: (error) {
+        if (!mounted) return;
+        setState(() => _isListening = false);
+        if (_activeTranscript != null) {
+          final current = _activeTranscript!.value.trim();
+          if (current.isEmpty || current == 'Listening...') {
+            _activeTranscript!.value = _speechErrorMessage(error);
+          }
+        }
+      },
+    );
+
+    if (!mounted) return;
+    if (available) {
+      try {
+        final systemLocale = await _speech.systemLocale();
+        final locales = await _speech.locales();
+        if (systemLocale != null && systemLocale.localeId.trim().isNotEmpty) {
+          _speechLocaleId = systemLocale.localeId;
+        } else {
+          final preferred = locales.where((l) {
+            final id = l.localeId.toLowerCase();
+            return id == 'en_in' || id.startsWith('en_');
+          });
+          _speechLocaleId =
+              (preferred.isNotEmpty
+                      ? preferred.first
+                      : locales.isNotEmpty
+                      ? locales.first
+                      : null)
+                  ?.localeId;
+        }
+      } catch (_) {
+        // Keep locale null to let plugin choose device default.
+      }
+    }
+
+    setState(() {
+      _speechReady = available;
+      if (!available) {
+        _isListening = false;
+      }
+    });
+  }
+
+  Future<void> _toggleVoiceSearch() async {
+    if (!_speechReady) {
+      await _initSpeech();
+    }
+
+    if (!_speechReady) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Voice search is unavailable on this device.'),
+        ),
+      );
+      return;
+    }
+
+    if (_isListening) {
+      _pendingVoiceSubmit = false;
+      await _speech.stop();
+      _closeSpeechDialog();
+      if (!mounted) return;
+      setState(() => _isListening = false);
+      return;
+    }
+
+    final transcript = ValueNotifier<String>('Listening...');
+    _activeTranscript = transcript;
+    _showSpeechDialog(
+      title: 'Voice search',
+      transcript: transcript,
+      onSubmit: () {
+        final spoken = transcript.value.trim();
+        if (spoken.isEmpty || spoken == 'Listening...') return;
+        _submitVoiceQuery(spoken);
+      },
+    );
+
+    var launched = false;
+    _pendingVoiceSubmit = true;
+    await _speech.cancel();
+    final started = await _speech.listen(
+      listenOptions: stt.SpeechListenOptions(
+        listenMode: stt.ListenMode.search,
+        partialResults: true,
+        cancelOnError: false,
+      ),
+      listenFor: const Duration(seconds: 20),
+      pauseFor: const Duration(seconds: 5),
+      localeId: _speechLocaleId,
+      onResult: (result) {
+        if (!mounted || launched) return;
+        final spoken = result.recognizedWords.trim();
+        transcript.value = spoken.isEmpty ? 'Listening...' : spoken;
+        if (!result.finalResult || spoken.isEmpty) return;
+        launched = true;
+        _submitVoiceQuery(spoken);
+      },
+    );
+
+    if (!started) {
+      _pendingVoiceSubmit = false;
+      _closeSpeechDialog();
+      _activeTranscript = null;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not start voice input. Please try again.'),
+        ),
+      );
+    }
+
+    if (!mounted) return;
+    setState(() => _isListening = started);
+  }
+
+  void _submitVoiceQuery(String spoken) {
+    if (!_pendingVoiceSubmit || !mounted) return;
+    _pendingVoiceSubmit = false;
+    _closeSpeechDialog();
+    setState(() => _isListening = false);
+    _openProductSearch(query: spoken);
+  }
+
+  void _closeSpeechDialog() {
+    if (!_speechDialogVisible || !mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+    _speechDialogVisible = false;
+    _activeTranscript = null;
+  }
+
+  void _showSpeechDialog({
+    required String title,
+    required ValueNotifier<String> transcript,
+    required VoidCallback onSubmit,
+  }) {
+    if (!mounted || _speechDialogVisible) return;
+    _speechDialogVisible = true;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: ValueListenableBuilder<String>(
+            valueListenable: transcript,
+            builder: (_, text, __) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        _isListening ? Icons.mic : Icons.mic_none_rounded,
+                        color: _isListening
+                            ? AppColors.primary
+                            : AppColors.textHint,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(_isListening ? 'Listening...' : 'Tap mic to speak'),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      text,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await _speech.stop();
+                _closeSpeechDialog();
+                if (!mounted) return;
+                setState(() => _isListening = false);
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(onPressed: onSubmit, child: const Text('Search')),
+          ],
+        );
+      },
+    ).whenComplete(() {
+      _speechDialogVisible = false;
+      _activeTranscript = null;
+      transcript.dispose();
+    });
   }
 
   Widget _buildSmallCartControl(Map<String, dynamic> product) {
@@ -390,9 +662,11 @@ class _HomeScreenState extends State<HomeScreen>
   void initState() {
     super.initState();
     _ensureBannerImageZoomReady();
+    _initSpeech();
     _contentScrollController.addListener(_updateStickyCategories);
 
-    Future.microtask(() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       Future.wait([
         context.read<HomeProvider>().loadData(),
         _resolveOrderHistory(force: true),
@@ -561,6 +835,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
+    _speech.stop();
     _recommendedScrollController.dispose();
     _contentScrollController.removeListener(_updateStickyCategories);
     _contentScrollController.dispose();
@@ -715,38 +990,58 @@ class _HomeScreenState extends State<HomeScreen>
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
-      child: GestureDetector(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const ProductListScreen()),
+      child: Container(
+        height: 48,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x16A855F7),
+              blurRadius: 14,
+              offset: Offset(0, 4),
+            ),
+          ],
         ),
-        child: Container(
-          height: 48,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x16A855F7),
-                blurRadius: 14,
-                offset: Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Row(
-            children: const [
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: 12),
-                child: Icon(Icons.search, color: AppColors.textHint, size: 20),
-              ),
-              Expanded(
-                child: Text(
-                  'Search hair color, scissors, shampoos...',
-                  style: TextStyle(color: AppColors.textHint, fontSize: 13),
+        child: Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(24),
+                onTap: () => _openProductSearch(),
+                child: const Row(
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12),
+                      child: Icon(
+                        Icons.search,
+                        color: AppColors.textHint,
+                        size: 20,
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        'Search hair color, scissors, shampoos...',
+                        style: TextStyle(
+                          color: AppColors.textHint,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+            IconButton(
+              onPressed: _toggleVoiceSearch,
+              icon: Icon(
+                _isListening ? Icons.mic : Icons.mic_none_rounded,
+                color: _isListening ? AppColors.primary : AppColors.textHint,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 4),
+          ],
         ),
       ),
     );
@@ -1072,45 +1367,60 @@ class _HomeScreenState extends State<HomeScreen>
           Padding(
             key: _headerSearchBarKey,
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: GestureDetector(
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ProductListScreen()),
+            child: Container(
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x16A855F7),
+                    blurRadius: 14,
+                    offset: Offset(0, 4),
+                  ),
+                ],
               ),
-              child: Container(
-                height: 48,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x16A855F7),
-                      blurRadius: 14,
-                      offset: Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12),
-                      child: Icon(
-                        Icons.search,
-                        color: AppColors.textHint,
-                        size: 20,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(24),
+                      onTap: () => _openProductSearch(),
+                      child: const Row(
+                        children: [
+                          Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 12),
+                            child: Icon(
+                              Icons.search,
+                              color: AppColors.textHint,
+                              size: 20,
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              'Search hair color, scissors, shampoos...',
+                              style: TextStyle(
+                                color: AppColors.textHint,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const Expanded(
-                      child: Text(
-                        'Search hair color, scissors, shampoos...',
-                        style: TextStyle(
-                          color: AppColors.textHint,
-                          fontSize: 13,
-                        ),
-                      ),
+                  ),
+                  IconButton(
+                    onPressed: _toggleVoiceSearch,
+                    icon: Icon(
+                      _isListening ? Icons.mic : Icons.mic_none_rounded,
+                      color: _isListening
+                          ? AppColors.primary
+                          : AppColors.textHint,
+                      size: 20,
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 4),
+                ],
               ),
             ),
           ),

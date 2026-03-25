@@ -53,5 +53,7 @@
 	<string>Allow Purecuts to use camera for capturing review media.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allow Purecuts to record audio when capturing review videos.</string>
+	<key>NSpeechRecognitionUsageDescription</key>
+	<string>Allow Purecuts to use speech recognition for voice search in product search.</string>
 </dict>
 </plist>

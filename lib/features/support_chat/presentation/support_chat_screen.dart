@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/support_chat/services/support_chat_service.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:video_player/video_player.dart';
 
 class SupportChatScreen extends StatefulWidget {
@@ -24,9 +25,14 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _composerFocusNode = FocusNode();
   final ImagePicker _imagePicker = ImagePicker();
+  final stt.SpeechToText _speech = stt.SpeechToText();
 
   bool _sending = false;
   bool _hasDraftText = false;
+  bool _speechReady = false;
+  bool _isListening = false;
+  String? _speechLocaleId;
+  String _voiceDraftPrefix = '';
   String? _chatId;
   String? _bootstrapError;
   XFile? _selectedMedia;
@@ -101,6 +107,128 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
     }
   }
 
+  String _speechErrorMessage(dynamic error) {
+    final rawMsg = (error?.errorMsg ?? error?.toString() ?? '').toString();
+    final msg = rawMsg.toLowerCase();
+    if (msg.contains('no_match') ||
+        msg.contains('no match') ||
+        msg.contains('speech_timeout') ||
+        msg.contains('speech timeout') ||
+        msg.contains('aborted')) {
+      return 'Didn\'t catch that. Try speaking a little slower.';
+    }
+    if (msg.contains('permission') || msg.contains('not allowed')) {
+      return 'Microphone permission is required. Please enable it in settings.';
+    }
+    final permanent = (error?.permanent == true);
+    return permanent
+        ? 'Microphone is unavailable right now. Please try again.'
+        : 'Listening stopped. Tap mic and try again.';
+  }
+
+  Future<void> _initSpeech() async {
+    final available = await _speech.initialize(
+      onStatus: (status) {
+        if (!mounted) return;
+        final listening = status.toLowerCase().contains('listening');
+        if (_isListening != listening) {
+          setState(() => _isListening = listening);
+        }
+      },
+      onError: (error) {
+        if (!mounted) return;
+        setState(() => _isListening = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_speechErrorMessage(error))));
+      },
+    );
+
+    if (!mounted) return;
+    if (available) {
+      try {
+        final systemLocale = await _speech.systemLocale();
+        final locales = await _speech.locales();
+        if (systemLocale != null && systemLocale.localeId.trim().isNotEmpty) {
+          _speechLocaleId = systemLocale.localeId;
+        } else {
+          final preferred = locales.where((l) {
+            final id = l.localeId.toLowerCase();
+            return id == 'en_in' || id.startsWith('en_');
+          });
+          _speechLocaleId =
+              (preferred.isNotEmpty
+                      ? preferred.first
+                      : locales.isNotEmpty
+                      ? locales.first
+                      : null)
+                  ?.localeId;
+        }
+      } catch (_) {
+        // Keep locale null to let plugin pick device default.
+      }
+    }
+
+    setState(() {
+      _speechReady = available;
+      if (!available) _isListening = false;
+    });
+  }
+
+  Future<void> _toggleComposerVoiceInput() async {
+    if (!_speechReady) {
+      await _initSpeech();
+    }
+
+    if (!_speechReady) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Voice input is unavailable on this device.'),
+        ),
+      );
+      return;
+    }
+
+    if (_isListening) {
+      await _speech.stop();
+      if (!mounted) return;
+      setState(() => _isListening = false);
+      return;
+    }
+
+    _voiceDraftPrefix = _controller.text.trim();
+
+    final started = await _speech.listen(
+      listenOptions: stt.SpeechListenOptions(
+        listenMode: stt.ListenMode.dictation,
+        partialResults: true,
+        cancelOnError: false,
+      ),
+      listenFor: const Duration(seconds: 20),
+      pauseFor: const Duration(seconds: 5),
+      localeId: _speechLocaleId,
+      onResult: (result) {
+        if (!mounted) return;
+        final spoken = result.recognizedWords.trim();
+        final nextText = spoken.isEmpty
+            ? _voiceDraftPrefix
+            : (_voiceDraftPrefix.isEmpty
+                  ? spoken
+                  : '$_voiceDraftPrefix $spoken');
+
+        _controller
+          ..text = nextText
+          ..selection = TextSelection.fromPosition(
+            TextPosition(offset: nextText.length),
+          );
+      },
+    );
+
+    if (!mounted) return;
+    setState(() => _isListening = started);
+  }
+
   void _onDraftChanged() {
     final next = _controller.text.trim().isNotEmpty;
     if (_hasDraftText == next) return;
@@ -131,6 +259,7 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
     super.initState();
     _service = widget.service ?? SupportChatService();
     _controller.addListener(_onDraftChanged);
+    _initSpeech();
     _bootstrapChat();
   }
 
@@ -171,6 +300,7 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
 
   @override
   void dispose() {
+    _speech.stop();
     _controller.removeListener(_onDraftChanged);
     _controller.dispose();
     _scrollController.dispose();
@@ -688,7 +818,9 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                   focusNode: _composerFocusNode,
                   onSend: _handleSend,
                   onAttach: _pickMedia,
+                  onVoiceInput: _toggleComposerVoiceInput,
                   isSending: _sending,
+                  isListening: _isListening,
                   canSend: _hasDraftText || _selectedMedia != null,
                 ),
               ],
@@ -707,7 +839,9 @@ class _Composer extends StatelessWidget {
     required this.focusNode,
     required this.onSend,
     required this.onAttach,
+    required this.onVoiceInput,
     required this.isSending,
+    required this.isListening,
     required this.canSend,
   });
 
@@ -715,7 +849,9 @@ class _Composer extends StatelessWidget {
   final FocusNode focusNode;
   final VoidCallback onSend;
   final VoidCallback onAttach;
+  final VoidCallback onVoiceInput;
   final bool isSending;
+  final bool isListening;
   final bool canSend;
 
   @override
@@ -767,6 +903,30 @@ class _Composer extends StatelessWidget {
                     borderRadius: BorderRadius.circular(16),
                     borderSide: BorderSide.none,
                   ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            InkWell(
+              onTap: isSending ? null : onVoiceInput,
+              borderRadius: BorderRadius.circular(22),
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: isListening
+                      ? AppColors.primary.withValues(alpha: 0.14)
+                      : AppColors.surface,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: isListening ? AppColors.primary : AppColors.border,
+                  ),
+                ),
+                child: Icon(
+                  isListening ? Icons.mic : Icons.mic_none_rounded,
+                  color: isListening
+                      ? AppColors.primary
+                      : AppColors.textSecondary,
                 ),
               ),
             ),

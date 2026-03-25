@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/core/theme/spacing.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/features/orders/checkout_screen.dart';
 
@@ -90,7 +91,7 @@ class CartScreen extends StatelessWidget {
                       size: 36,
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: AppSpacing.xl),
                   const Text(
                     'Your cart is empty',
                     style: TextStyle(
@@ -99,7 +100,7 @@ class CartScreen extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: AppSpacing.xs),
                   const Text(
                     'Add products to get started',
                     style: TextStyle(color: AppColors.textHint, fontSize: 14),
@@ -117,22 +118,24 @@ class CartScreen extends StatelessWidget {
               ListView(
                 padding: const EdgeInsets.only(bottom: 140),
                 children: [
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   // Cart items
                   ...cart.items.map((item) => _CartItem(item: item)),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   // Promo code
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.lg,
+                    ),
                     child: Container(
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(AppRadius.xxl),
                       ),
                       child: Row(
                         children: [
                           const Padding(
-                            padding: EdgeInsets.only(left: 16),
+                            padding: EdgeInsets.only(left: AppSpacing.lg),
                             child: Icon(
                               Icons.sell_outlined,
                               color: AppColors.textHint,
@@ -153,24 +156,26 @@ class CartScreen extends StatelessWidget {
                                 ),
                                 border: InputBorder.none,
                                 contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 16,
+                                  horizontal: AppSpacing.md,
+                                  vertical: AppSpacing.lg,
                                 ),
                               ),
                             ),
                           ),
                           Padding(
-                            padding: const EdgeInsets.all(6),
+                            padding: const EdgeInsets.all(AppSpacing.xs),
                             child: TextButton(
                               style: TextButton.styleFrom(
                                 backgroundColor: AppColors.primary,
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
+                                  borderRadius: BorderRadius.circular(
+                                    AppRadius.md,
+                                  ),
                                 ),
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 18,
-                                  vertical: 10,
+                                  horizontal: AppSpacing.lg,
+                                  vertical: AppSpacing.md,
                                 ),
                                 minimumSize: Size.zero,
                                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -189,15 +194,17 @@ class CartScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   // Order summary card
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.lg,
+                    ),
                     child: Container(
-                      padding: const EdgeInsets.all(20),
+                      padding: const EdgeInsets.all(AppSpacing.xl),
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(AppRadius.xxl),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -210,18 +217,20 @@ class CartScreen extends StatelessWidget {
                               fontWeight: FontWeight.w700,
                             ),
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: AppSpacing.lg),
                           _summaryRow('Subtotal', '\u20B9${cart.totalPrice}'),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: AppSpacing.md),
                           _summaryRow(
                             'Shipping',
                             'FREE',
                             valueColor: AppColors.success,
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: AppSpacing.md),
                           _summaryRow('Tax (8%)', '\u20B9$tax'),
                           const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 14),
+                            padding: EdgeInsets.symmetric(
+                              vertical: AppSpacing.md,
+                            ),
                             child: Divider(
                               height: 1,
                               thickness: 1,
@@ -254,7 +263,7 @@ class CartScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                 ],
               ),
               // Sticky checkout bar
@@ -264,10 +273,10 @@ class CartScreen extends StatelessWidget {
                 right: 0,
                 child: Container(
                   padding: EdgeInsets.fromLTRB(
-                    20,
-                    14,
-                    20,
-                    MediaQuery.of(context).padding.bottom + 14,
+                    AppSpacing.xl,
+                    AppSpacing.md,
+                    AppSpacing.xl,
+                    MediaQuery.of(context).padding.bottom + AppSpacing.md,
                   ),
                   decoration: const BoxDecoration(
                     color: Colors.white,
@@ -302,7 +311,7 @@ class CartScreen extends StatelessWidget {
                           ),
                         ],
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: AppSpacing.lg),
                       Expanded(
                         child: ElevatedButton(
                           style: ElevatedButton.styleFrom(
@@ -310,7 +319,7 @@ class CartScreen extends StatelessWidget {
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 15),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
+                              borderRadius: BorderRadius.circular(AppRadius.xl),
                             ),
                             elevation: 0,
                           ),
@@ -375,12 +384,17 @@ class _CartItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        0,
+        AppSpacing.lg,
+        AppSpacing.md,
+      ),
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(AppSpacing.md),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(AppRadius.xxl),
         ),
         child: Row(
           children: [
@@ -390,10 +404,10 @@ class _CartItem extends StatelessWidget {
               height: 72,
               decoration: BoxDecoration(
                 color: AppColors.surface,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(AppRadius.lg),
               ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(AppRadius.lg),
                 child: Image.network(
                   item.image,
                   width: 72,
@@ -407,7 +421,7 @@ class _CartItem extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: AppSpacing.md),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -464,7 +478,7 @@ class _CartItem extends StatelessWidget {
                         height: 32,
                         decoration: BoxDecoration(
                           color: AppColors.surface,
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(AppRadius.md),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,

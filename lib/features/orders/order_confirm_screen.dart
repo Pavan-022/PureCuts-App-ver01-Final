@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/core/theme/spacing.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
@@ -131,10 +132,10 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
     return Scaffold(
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppSpacing.xxl),
           child: Column(
             children: [
-              const SizedBox(height: 40),
+              const SizedBox(height: 36),
               ScaleTransition(
                 scale: _scaleAnim,
                 child: Container(
@@ -160,7 +161,7 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
                   ),
                 ),
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: AppSpacing.xxl),
               const Text(
                 'Order Placed! 🎉',
                 style: TextStyle(
@@ -169,7 +170,7 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
                   fontWeight: FontWeight.w800,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Text(
                 '₹${widget.total} • ${_orderRef ?? 'Generating Order ID...'}',
                 style: const TextStyle(
@@ -177,13 +178,13 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
                   fontSize: 14,
                 ),
               ),
-              const SizedBox(height: 40),
+              const SizedBox(height: 36),
               // Status stepper
               Container(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(AppSpacing.xl),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(AppRadius.xxl),
                   border: Border.all(color: AppColors.divider),
                 ),
                 child: Column(
@@ -197,13 +198,13 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
                         fontSize: 15,
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     ...List.generate(_steps.length, (i) {
                       final stepIndex = _steps.indexOf(_status);
                       final isDone = i <= stepIndex;
                       final isActive = i == stepIndex;
                       return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.only(bottom: AppSpacing.md),
                         child: Row(
                           children: [
                             AnimatedContainer(
@@ -230,7 +231,7 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
                                     )
                                   : null,
                             ),
-                            const SizedBox(width: 12),
+                            const SizedBox(width: AppSpacing.md),
                             Text(
                               _steps[i],
                               style: TextStyle(
