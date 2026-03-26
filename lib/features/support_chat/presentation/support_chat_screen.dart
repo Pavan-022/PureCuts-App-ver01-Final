@@ -525,6 +525,39 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
     return 0;
   }
 
+  bool _isLegacyQuantityPrompt(Map<String, dynamic> data) {
+    final senderRole = (data['senderRole'] as String? ?? '')
+        .trim()
+        .toLowerCase();
+    final sender = (data['sender'] as String? ?? '').trim().toLowerCase();
+    final isBotLike = senderRole == 'bot' || sender == 'bot';
+    if (!isBotLike) return false;
+
+    final text = (data['text'] as String? ?? data['message'] as String? ?? '')
+        .trim()
+        .toLowerCase();
+    final options =
+        ((data['options'] as List?)
+            ?.map((item) => item.toString().trim().toLowerCase())
+            .where((item) => item.isNotEmpty)
+            .toList(growable: false)) ??
+        const <String>[];
+
+    final isRangeOption = (String v) {
+      final normalized = v.trim();
+      return RegExp(r'^(\d+\s*-\s*\d+|\d+\+)$').hasMatch(normalized);
+    };
+
+    final hasLegacyText =
+        text.contains('select quantity range') ||
+        (text.contains('you are eligible for') &&
+            text.contains('quantity range'));
+    final hasLegacyOptions =
+        options.isNotEmpty && options.every((opt) => isRangeOption(opt));
+
+    return hasLegacyText || hasLegacyOptions;
+  }
+
   Timestamp? _resolvedMessageTimestamp(Map<String, dynamic> data) {
     final serverTs = data['serverTimestamp'];
     if (serverTs is Timestamp) return serverTs;
@@ -675,7 +708,13 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                                     return ams.compareTo(bms);
                                   });
 
-                            final acknowledgedClientIds = orderedDocs
+                            final visibleDocs = orderedDocs
+                                .where(
+                                  (doc) => !_isLegacyQuantityPrompt(doc.data()),
+                                )
+                                .toList(growable: false);
+
+                            final acknowledgedClientIds = visibleDocs
                                 .map(
                                   (doc) =>
                                       (doc.data()['clientMessageId']
@@ -685,7 +724,7 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                                 )
                                 .where((id) => id.isNotEmpty)
                                 .toSet();
-                            if (orderedDocs.isEmpty) {
+                            if (visibleDocs.isEmpty) {
                               final pendingOnly = _pendingMessages;
                               if (pendingOnly.isEmpty) {
                                 return _EmptyChat(onStart: _focusComposer);
@@ -710,7 +749,7 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                               );
                             }
 
-                            final hasUnreadAdminMessage = orderedDocs.any((
+                            final hasUnreadAdminMessage = visibleDocs.any((
                               doc,
                             ) {
                               final data = doc.data();
@@ -733,10 +772,10 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                             }
 
                             final hasNewMessage =
-                                orderedDocs.length != _lastRenderedMessageCount;
+                                visibleDocs.length != _lastRenderedMessageCount;
                             if (hasNewMessage) {
                               final animate = _lastRenderedMessageCount > 0;
-                              _lastRenderedMessageCount = orderedDocs.length;
+                              _lastRenderedMessageCount = visibleDocs.length;
                               _scrollToBottom(animated: animate);
                             }
 
@@ -752,12 +791,12 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                               controller: _scrollController,
                               padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
                               itemCount:
-                                  orderedDocs.length + visiblePending.length,
+                                  visibleDocs.length + visiblePending.length,
                               itemBuilder: (context, index) {
-                                if (index >= orderedDocs.length) {
+                                if (index >= visibleDocs.length) {
                                   final pending =
                                       visiblePending[index -
-                                          orderedDocs.length];
+                                          visibleDocs.length];
                                   return _ChatBubble(
                                     text: pending.text,
                                     mediaType: pending.mediaType,
@@ -766,7 +805,7 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                                   );
                                 }
 
-                                final data = orderedDocs[index].data();
+                                final data = visibleDocs[index].data();
                                 final senderId =
                                     (data['senderId'] as String? ?? '').trim();
                                 final isMine = senderId == user.uid;

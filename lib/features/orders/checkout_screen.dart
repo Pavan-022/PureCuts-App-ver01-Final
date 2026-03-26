@@ -16,10 +16,74 @@ class CheckoutScreen extends StatefulWidget {
 }
 
 class _CheckoutScreenState extends State<CheckoutScreen> {
-  static const int _deliveryCharge = 30;
+  // Delivery charge constants
+  static const int _puneDeliveryCharge = 19;
+  static const int _otherDeliveryCharge = 30;
+  static const int _freeDeliveryThreshold = 1000;
   static const int _handlingCharge = 5;
   static const int _smallCartThreshold = 99;
   static const int _smallCartCharge = 20;
+
+  // All Pune pincodes
+  static const Set<String> _punePincodes = {
+    // Pune city core
+    '411001',
+    '411002',
+    '411003',
+    '411004',
+    '411005',
+    '411006',
+    '411007',
+    '411008',
+    '411009',
+    '411010',
+    '411011',
+    '411012',
+    '411013',
+    '411014',
+    '411015',
+    '411016',
+    '411017',
+    '411018',
+    '411019',
+    '411020',
+    '411021',
+    '411022',
+    '411023',
+    '411024',
+    '411025',
+    '411026',
+    '411027',
+    '411028',
+    '411029',
+    '411030',
+    '411031',
+    '411032',
+    '411033',
+    '411034',
+    '411035',
+    '411036',
+    '411037',
+    '411038',
+    '411039',
+    '411040',
+    '411041',
+    '411042',
+    '411043',
+    '411044',
+    '411045',
+    '411046',
+    '411047',
+    '411048',
+    // Pimpri-Chinchwad areas
+    '412001', '412108', '412115',
+    // Hadapsar and suburbs
+    '411050', '411051',
+    // Outer Pune areas
+    '413001', '413101', '413201', '413202',
+
+    '412207',
+  };
 
   String _selectedPaymentMethod = 'Google Pay UPI';
 
@@ -201,10 +265,27 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     return itemTotal < _smallCartThreshold ? _smallCartCharge : 0;
   }
 
+  /// Check if delivery location is Pune based on pincode
+  bool _isPuneDelivery() {
+    final pincode = _pincodeController.text.trim();
+    return _punePincodes.contains(pincode);
+  }
+
+  /// Calculate delivery charge based on location and order value
+  int _calculateDeliveryCharge(int itemTotal) {
+    // Free delivery for orders >= ₹1000
+    if (itemTotal >= _freeDeliveryThreshold) {
+      return 0;
+    }
+    // Location-based delivery charge
+    return _isPuneDelivery() ? _puneDeliveryCharge : _otherDeliveryCharge;
+  }
+
   int _grandTotal(CartModel cart) {
     final itemTotal = _itemTotal(cart);
+    final deliveryCharge = _calculateDeliveryCharge(itemTotal);
     return itemTotal +
-        _deliveryCharge +
+        deliveryCharge +
         _handlingCharge +
         _smallCartChargeAmount(itemTotal);
   }
@@ -626,7 +707,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         .toList(growable: false);
 
     final itemTotal = _itemTotal(cart);
-    final smallCart = _smallCartChargeAmount(itemTotal);
+    final deliveryChargeValue = _calculateDeliveryCharge(itemTotal);
     final grandTotal = _grandTotal(cart);
 
     if (!mounted) return;
@@ -641,9 +722,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           paymentMethod: _selectedPaymentMethod,
           billDetails: {
             'itemTotal': itemTotal,
-            'deliveryCharge': _deliveryCharge,
-            'handlingCharge': _handlingCharge,
-            'smallCartCharge': smallCart,
+            'deliveryCharge': deliveryChargeValue,
+            'handlingCharge': 0,
             'grandTotal': grandTotal,
           },
         ),
@@ -664,7 +744,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
 
     final itemTotal = _itemTotal(cart);
-    final smallCart = _smallCartChargeAmount(itemTotal);
     final grandTotal = _grandTotal(cart);
     final recommendations = _recommendations(cart: cart, home: home);
 
@@ -1071,25 +1150,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     children: [
                       _billRow('Items total', '₹$itemTotal'),
                       const SizedBox(height: AppSpacing.sm),
-                      _billRow('Delivery charge', '₹$_deliveryCharge'),
+                      _billRow(
+                        'Delivery charge',
+                        _calculateDeliveryCharge(itemTotal) == 0
+                            ? 'FREE'
+                            : '₹${_calculateDeliveryCharge(itemTotal)}',
+                      ),
                       const SizedBox(height: AppSpacing.sm),
-                      _billRow('Handling charge', '₹$_handlingCharge'),
+                      _billRow('Handling charge', '₹0'),
                       const SizedBox(height: AppSpacing.sm),
-                      _billRow('Small cart charge', '₹$smallCart'),
-                      if (smallCart > 0) ...[
-                        const SizedBox(height: AppSpacing.xs),
-                        const Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'No small cart charge on orders above ₹99',
-                            style: TextStyle(
-                              color: Color(0xFFE85D04),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
                         child: Divider(height: 1),

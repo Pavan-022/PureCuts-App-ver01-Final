@@ -540,6 +540,39 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  // ── Update User Profile ───────────────────────────────────────────────────
+
+  Future<bool> updateUserProfile(Map<String, dynamic> data) async {
+    try {
+      _setLoading();
+      final uid = _service.currentUser?.uid;
+      if (uid == null || uid.trim().isEmpty) {
+        _setError('User not authenticated. Please log in again.');
+        return false;
+      }
+
+      debugPrint('[AuthProvider] updateUserProfile for UID=$uid');
+      final success = await _service.updateUserProfile(uid: uid, data: data);
+
+      if (!success) {
+        _setError('Failed to update profile. Please try again.');
+        return false;
+      }
+
+      // Reload user data
+      _user = await _service.getCurrentUserData();
+      _status = AuthStatus.authenticated;
+      notifyListeners();
+
+      debugPrint('[AuthProvider] updateUserProfile: success');
+      return true;
+    } catch (e, st) {
+      debugPrint('[AuthProvider] updateUserProfile error: $e\n$st');
+      _setError('Failed to update profile. Please try again.');
+      return false;
+    }
+  }
+
   // ── Error Messages ────────────────────────────────────────────────────────
 
   String _friendlyError(FirebaseAuthException e) {

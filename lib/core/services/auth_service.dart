@@ -19,20 +19,26 @@ class AuthService {
       email: email.trim(),
       password: password,
     );
-    debugPrint('[AuthService] Email account created. UID=${credential.user?.uid}');
+    debugPrint(
+      '[AuthService] Email account created. UID=${credential.user?.uid}',
+    );
     await credential.user?.sendEmailVerification();
     debugPrint('[AuthService] Verification email sent.');
   }
 
   Future<void> resendVerificationEmail() async {
-    debugPrint('[AuthService] resendVerificationEmail for UID=${_auth.currentUser?.uid}');
+    debugPrint(
+      '[AuthService] resendVerificationEmail for UID=${_auth.currentUser?.uid}',
+    );
     await _auth.currentUser?.sendEmailVerification();
   }
 
   Future<bool> reloadAndCheckEmailVerified() async {
     await _auth.currentUser?.reload();
     final verified = _auth.currentUser?.emailVerified ?? false;
-    debugPrint('[AuthService] checkEmailVerified: $verified (UID=${_auth.currentUser?.uid})');
+    debugPrint(
+      '[AuthService] checkEmailVerified: $verified (UID=${_auth.currentUser?.uid})',
+    );
     return verified;
   }
 
@@ -45,19 +51,27 @@ class AuthService {
     required void Function(PhoneAuthCredential credential) onAutoVerified,
     int? resendToken,
   }) async {
-    debugPrint('[AuthService] verifyPhoneNumber: $phoneNumber (resendToken=$resendToken)');
+    debugPrint(
+      '[AuthService] verifyPhoneNumber: $phoneNumber (resendToken=$resendToken)',
+    );
     await _auth.verifyPhoneNumber(
       phoneNumber: phoneNumber,
       verificationCompleted: (credential) {
-        debugPrint('[AuthService] Phone auto-verified (Android silent verification).');
+        debugPrint(
+          '[AuthService] Phone auto-verified (Android silent verification).',
+        );
         onAutoVerified(credential);
       },
       verificationFailed: (e) {
-        debugPrint('[AuthService] Phone verification failed — code: ${e.code}, message: ${e.message}');
+        debugPrint(
+          '[AuthService] Phone verification failed — code: ${e.code}, message: ${e.message}',
+        );
         onFailed(e);
       },
       codeSent: (verificationId, resendToken) {
-        debugPrint('[AuthService] OTP code sent. verificationId=${verificationId.substring(0, 10)}…');
+        debugPrint(
+          '[AuthService] OTP code sent. verificationId=${verificationId.substring(0, 10)}…',
+        );
         onCodeSent(verificationId, resendToken);
       },
       codeAutoRetrievalTimeout: (_) {
@@ -102,9 +116,12 @@ class AuthService {
     final user = _auth.currentUser;
     if (user == null) throw Exception('No authenticated user found.');
 
-    final resolvedEmail =
-        email.trim().isNotEmpty ? email.trim() : (user.email ?? '');
-    debugPrint('[AuthService] saveUserProfile: UID=${user.uid}, email=$resolvedEmail');
+    final resolvedEmail = email.trim().isNotEmpty
+        ? email.trim()
+        : (user.email ?? '');
+    debugPrint(
+      '[AuthService] saveUserProfile: UID=${user.uid}, email=$resolvedEmail',
+    );
 
     await user.updateDisplayName(registrationData['ownerName'] ?? '');
 
@@ -157,7 +174,9 @@ class AuthService {
     final uid = userCredential.user!.uid;
     debugPrint('[AuthService] Phone sign-in succeeded. UID=$uid');
     final profile = await _firestoreService.getUserProfile(uid);
-    debugPrint('[AuthService] Firestore profile: ${profile == null ? 'not found' : 'found'}');
+    debugPrint(
+      '[AuthService] Firestore profile: ${profile == null ? 'not found' : 'found'}',
+    );
     return profile;
   }
 
@@ -176,16 +195,22 @@ class AuthService {
   Future<void> linkAutoVerifiedPhone(PhoneAuthCredential credential) async {
     final user = _auth.currentUser;
     if (user == null) {
-      debugPrint('[AuthService] linkAutoVerifiedPhone: no current user — skipping.');
+      debugPrint(
+        '[AuthService] linkAutoVerifiedPhone: no current user — skipping.',
+      );
       return;
     }
     final hasPhone = user.providerData.any((p) => p.providerId == 'phone');
     if (!hasPhone) {
-      debugPrint('[AuthService] linkAutoVerifiedPhone: linking for UID=${user.uid}');
+      debugPrint(
+        '[AuthService] linkAutoVerifiedPhone: linking for UID=${user.uid}',
+      );
       await user.linkWithCredential(credential);
       debugPrint('[AuthService] linkAutoVerifiedPhone: done.');
     } else {
-      debugPrint('[AuthService] linkAutoVerifiedPhone: phone already linked — skipping.');
+      debugPrint(
+        '[AuthService] linkAutoVerifiedPhone: phone already linked — skipping.',
+      );
     }
   }
 
@@ -208,7 +233,9 @@ class AuthService {
     debugPrint('[AuthService] getCurrentUserData: UID=${user.uid}');
     try {
       final data = await _firestoreService.getUserProfile(user.uid);
-      debugPrint('[AuthService] getCurrentUserData: ${data == null ? 'not found in Firestore' : 'loaded'} for UID=${user.uid}');
+      debugPrint(
+        '[AuthService] getCurrentUserData: ${data == null ? 'not found in Firestore' : 'loaded'} for UID=${user.uid}',
+      );
       return data;
     } catch (e, st) {
       debugPrint('[AuthService] getCurrentUserData failed: $e\n$st');
@@ -218,7 +245,9 @@ class AuthService {
 
   /// Deletes the current Firebase Auth user. Used to roll back a failed registration.
   Future<void> deleteCurrentUser() async {
-    debugPrint('[AuthService] deleteCurrentUser: UID=${_auth.currentUser?.uid}');
+    debugPrint(
+      '[AuthService] deleteCurrentUser: UID=${_auth.currentUser?.uid}',
+    );
     try {
       await _auth.currentUser?.delete();
       debugPrint('[AuthService] deleteCurrentUser: done.');
@@ -227,7 +256,28 @@ class AuthService {
     }
   }
 
+  /// Update user profile information in Firestore
+  Future<bool> updateUserProfile({
+    required String uid,
+    required Map<String, dynamic> data,
+  }) async {
+    final cleanUid = uid.trim();
+    if (cleanUid.isEmpty) {
+      debugPrint('[AuthService] updateUserProfile: empty UID provided');
+      return false;
+    }
+
+    debugPrint('[AuthService] updateUserProfile: UID=$cleanUid');
+    try {
+      return await _firestoreService.updateUserProfile(
+        uid: cleanUid,
+        data: data,
+      );
+    } catch (e, st) {
+      debugPrint('[AuthService] updateUserProfile failed: $e\n$st');
+      return false;
+    }
+  }
+
   // ── Private Helpers ───────────────────────────────────────────────────────
-
 }
-

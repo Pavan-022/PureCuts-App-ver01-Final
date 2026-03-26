@@ -238,6 +238,7 @@ class SupportChatService {
         'step': 'START',
         'selectedCategory': '',
         'selectedQuantity': '',
+        'selectedRequirement': '',
         'isCompleted': false,
       },
       'updatedAt': FieldValue.serverTimestamp(),

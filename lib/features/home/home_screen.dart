@@ -10,6 +10,7 @@ import 'package:purecuts/core/widgets/shimmer_widgets.dart';
 import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
+import 'package:purecuts/features/categories/parent_category_screen.dart';
 import 'package:purecuts/features/categories/categories_screen.dart';
 import 'package:purecuts/features/favorites/favorites_screen.dart';
 import 'package:purecuts/features/home/home_provider.dart';
@@ -866,7 +867,7 @@ class _HomeScreenState extends State<HomeScreen>
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => CategoriesScreen(initialCategory: categoryName),
+        builder: (_) => ParentCategoryScreen(categoryName: categoryName),
       ),
     );
   }
@@ -1814,13 +1815,7 @@ class _HomeScreenState extends State<HomeScreen>
           return SizedBox(
             width: 82,
             child: GestureDetector(
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) =>
-                      CategoriesScreen(initialCategory: categoryName),
-                ),
-              ),
+              onTap: () => _openCategory(categoryName),
               child: Column(
                 children: [
                   Container(

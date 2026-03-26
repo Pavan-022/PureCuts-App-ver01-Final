@@ -120,6 +120,37 @@ class FirestoreService {
     return null;
   }
 
+  /// Update user profile in Firestore
+  Future<bool> updateUserProfile({
+    required String uid,
+    required Map<String, dynamic> data,
+  }) async {
+    final cleanUid = uid.trim();
+    if (cleanUid.isEmpty || data.isEmpty) {
+      debugPrint(
+        '[FirestoreService] updateUserProfile: invalid params (uid=${cleanUid.isEmpty ? 'empty' : 'ok'}, data=${data.isEmpty ? 'empty' : 'ok'})',
+      );
+      return false;
+    }
+
+    try {
+      final updateData = {...data, 'updatedAt': FieldValue.serverTimestamp()};
+      await _db
+          .collection(_usersCollection)
+          .doc(cleanUid)
+          .set(updateData, SetOptions(merge: true));
+      debugPrint(
+        '[FirestoreService] updateUserProfile: success for UID=$cleanUid',
+      );
+      return true;
+    } catch (e, st) {
+      debugPrint(
+        '[FirestoreService] updateUserProfile failed for UID=$cleanUid: $e\n$st',
+      );
+      return false;
+    }
+  }
+
   // ── Fetch all products ────────────────────────────────────────────────────
 
   Future<List<ProductModel>> getProducts() async {
@@ -673,6 +704,49 @@ class FirestoreService {
     return orderRef;
   }
 
+  /// Fetch user orders from Firestore
+  Future<List<Map<String, dynamic>>> getUserOrders({
+    required String uid,
+  }) async {
+    final cleanUid = uid.trim();
+    if (cleanUid.isEmpty) return const [];
+
+    try {
+      final snapshotByUid = await _db
+          .collection(_ordersCollection)
+          .where('uid', isEqualTo: cleanUid)
+          .get();
+
+      final snapshotByUserId = await _db
+          .collection(_ordersCollection)
+          .where('userId', isEqualTo: cleanUid)
+          .get();
+
+      final snapshotByCustomerId = await _db
+          .collection(_ordersCollection)
+          .where('customerId', isEqualTo: cleanUid)
+          .get();
+
+      final merged = <String, Map<String, dynamic>>{};
+      for (final doc in [
+        ...snapshotByUid.docs,
+        ...snapshotByUserId.docs,
+        ...snapshotByCustomerId.docs,
+      ]) {
+        final data = doc.data();
+        final key = (data['orderId'] ?? data['orderRef'] ?? doc.id).toString();
+        merged[key] = data;
+      }
+
+      return merged.values.toList(growable: false);
+    } catch (e, st) {
+      debugPrint(
+        '[FirestoreService] getUserOrders failed for UID=$cleanUid: $e\n$st',
+      );
+      return const [];
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getUserPurchasedProducts({
     required String uid,
   }) async {
@@ -681,6 +755,9 @@ class FirestoreService {
 
     final userDoc = await _db.collection(_usersCollection).doc(cleanUid).get();
     final data = userDoc.data() ?? const <String, dynamic>{};
+    final profileUpdatedAt = data['deliveryDetails'] is Map
+        ? (data['deliveryDetails'] as Map)['updatedAt']
+        : data['updatedAt'];
     final purchasedIds =
         (data['purchasedProductIds'] as List?)
             ?.map((e) => _baseProductId(e.toString()))
@@ -691,15 +768,55 @@ class FirestoreService {
 
     if (purchasedIds.isEmpty) {
       try {
-        final orderSnap = await _db
-            .collection(_ordersCollection)
-            .where('uid', isEqualTo: cleanUid)
-            .orderBy('createdAt', descending: true)
-            .get();
+        final orderSnaps = await Future.wait([
+          _db
+              .collection(_ordersCollection)
+              .where('uid', isEqualTo: cleanUid)
+              .get(),
+          _db
+              .collection(_ordersCollection)
+              .where('userId', isEqualTo: cleanUid)
+              .get(),
+          _db
+              .collection(_ordersCollection)
+              .where('customerId', isEqualTo: cleanUid)
+              .get(),
+        ]);
+
+        DateTime _toDate(dynamic value) {
+          if (value is Timestamp) return value.toDate();
+          if (value is DateTime) return value;
+          if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+          return DateTime.fromMillisecondsSinceEpoch(0);
+        }
+
+        final mergedOrderDocs = <Map<String, dynamic>>[];
+        final seenOrderKeys = <String>{};
+        for (final snap in orderSnaps) {
+          for (final doc in snap.docs) {
+            final data = doc.data();
+            final key = (data['orderId'] ?? data['orderRef'] ?? doc.id)
+                .toString();
+            if (seenOrderKeys.add(key)) {
+              mergedOrderDocs.add(data);
+            }
+          }
+        }
+
+        mergedOrderDocs.sort(
+          (a, b) => _toDate(b['createdAt']).compareTo(_toDate(a['createdAt'])),
+        );
 
         final fallback = <String, Map<String, dynamic>>{};
-        for (final doc in orderSnap.docs) {
-          final items = (doc.data()['items'] as List?) ?? const [];
+        for (final order in mergedOrderDocs) {
+          final createdAt = _toDate(order['createdAt']);
+          final orderId = (order['orderId'] ?? order['orderRef'] ?? '')
+              .toString();
+          final orderStatus =
+              (order['status'] ?? order['orderStatus'] ?? 'placed').toString();
+          final paymentMethod = (order['paymentMethod'] ?? '').toString();
+          final items = (order['items'] as List?) ?? const [];
+
           for (final item in items) {
             if (item is! Map) continue;
             final normalized = item.map(
@@ -711,7 +828,14 @@ class FirestoreService {
             if (productId.isEmpty || fallback.containsKey(productId)) {
               continue;
             }
-            fallback[productId] = {...normalized, 'id': productId};
+            fallback[productId] = {
+              ...normalized,
+              'id': productId,
+              'lastOrderedAt': createdAt,
+              'lastOrderId': orderId,
+              'lastOrderStatus': orderStatus,
+              'lastPaymentMethod': paymentMethod,
+            };
           }
         }
         return fallback.values.toList(growable: false);
@@ -742,10 +866,84 @@ class FirestoreService {
       }
     }
 
+    try {
+      final orderSnapshots = await Future.wait([
+        _db
+            .collection(_ordersCollection)
+            .where('uid', isEqualTo: cleanUid)
+            .get(),
+        _db
+            .collection(_ordersCollection)
+            .where('userId', isEqualTo: cleanUid)
+            .get(),
+        _db
+            .collection(_ordersCollection)
+            .where('customerId', isEqualTo: cleanUid)
+            .get(),
+      ]);
+
+      final latestMetaByProduct = <String, Map<String, dynamic>>{};
+      DateTime _toDate(dynamic value) {
+        if (value is Timestamp) return value.toDate();
+        if (value is DateTime) return value;
+        if (value is int) {
+          return DateTime.fromMillisecondsSinceEpoch(value);
+        }
+        return DateTime.fromMillisecondsSinceEpoch(0);
+      }
+
+      for (final snap in orderSnapshots) {
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          final createdAt = _toDate(data['createdAt']);
+          final orderId = (data['orderId'] ?? data['orderRef'] ?? doc.id)
+              .toString();
+          final status = (data['status'] ?? data['orderStatus'] ?? 'placed')
+              .toString();
+          final paymentMethod = (data['paymentMethod'] ?? '').toString();
+          final items = (data['items'] as List?) ?? const [];
+
+          for (final item in items) {
+            if (item is! Map) continue;
+            final normalized = item.map((k, v) => MapEntry(k.toString(), v));
+            final pid = _baseProductId(
+              (normalized['id'] ?? normalized['productId'] ?? '').toString(),
+            );
+            if (pid.isEmpty) continue;
+
+            final existing = latestMetaByProduct[pid];
+            if (existing == null ||
+                _toDate(existing['lastOrderedAt']).isBefore(createdAt)) {
+              latestMetaByProduct[pid] = {
+                'lastOrderedAt': createdAt,
+                'lastOrderId': orderId,
+                'lastOrderStatus': status,
+                'lastPaymentMethod': paymentMethod,
+              };
+            }
+          }
+        }
+      }
+
+      for (final id in productsById.keys.toList(growable: false)) {
+        final meta = latestMetaByProduct[id];
+        if (meta == null) continue;
+        productsById[id] = {...productsById[id]!, ...meta};
+      }
+    } catch (_) {
+      // Best-effort metadata enrichment only.
+    }
+
     final orderedProducts = purchasedIds
         .map((id) => productsById[id])
         .whereType<Map<String, dynamic>>()
         .toList(growable: false);
+
+    for (var i = 0; i < orderedProducts.length; i++) {
+      final product = orderedProducts[i];
+      if (product['lastOrderedAt'] != null) continue;
+      orderedProducts[i] = {...product, 'lastOrderedAt': profileUpdatedAt};
+    }
 
     if (orderedProducts.isNotEmpty) return orderedProducts;
 

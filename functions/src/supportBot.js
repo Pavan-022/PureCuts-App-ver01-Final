@@ -9,7 +9,7 @@ const db = admin.firestore();
 const STEP = {
   START: "START",
   CATEGORY: "CATEGORY",
-  QUANTITY: "QUANTITY",
+  BULK_INPUT: "BULK_INPUT",
   RESULT: "RESULT",
   HUMAN: "HUMAN",
 };
@@ -72,18 +72,65 @@ function defaultConfig() {
         text: "Select product type:",
         options: ["Skincare", "Hair", "Equipment", "Mixed"],
       },
-      QUANTITY: {
-        text: "Select quantity range:",
-        options: ["5-10", "10-25", "25-50", "50+"],
+      BULK_INPUT: {
+        text: "Please type your bulk order requirement (products, quantity, city, budget):",
+        options: [],
       },
     },
-    discounts: {
-      "5-10": "5%",
-      "10-25": "8%",
-      "25-50": "12%",
-      "50+": "15%",
+  };
+}
+
+function normalizeConfig(config) {
+  const base = config && typeof config === "object" ? config : {};
+  const steps = base.steps && typeof base.steps === "object" ? { ...base.steps } : {};
+  const legacyQuantityStep =
+    steps.QUANTITY && typeof steps.QUANTITY === "object" ? steps.QUANTITY : null;
+  const bulkInputStep =
+    steps.BULK_INPUT && typeof steps.BULK_INPUT === "object" ? steps.BULK_INPUT : null;
+
+  const fallbackBulkText =
+    "Please type your bulk order requirement (products, quantity, city, budget):";
+
+  steps.BULK_INPUT = {
+    ...(bulkInputStep || {}),
+    text:
+      String(
+        bulkInputStep?.text ||
+          legacyQuantityStep?.text ||
+          fallbackBulkText,
+      ).trim() || fallbackBulkText,
+    options: [],
+  };
+
+  if (steps.QUANTITY) {
+    delete steps.QUANTITY;
+  }
+
+  return {
+    ...defaultConfig(),
+    ...base,
+    steps: {
+      ...defaultConfig().steps,
+      ...steps,
+      BULK_INPUT: {
+        ...defaultConfig().steps.BULK_INPUT,
+        ...steps.BULK_INPUT,
+        options: [],
+      },
     },
   };
+}
+
+function normalizeFlowStep(rawStep) {
+  const step = String(rawStep || STEP.START).trim().toUpperCase();
+  if (step === "QUANTITY") return STEP.BULK_INPUT;
+  return step;
+}
+
+function isLegacyQuantityChoice(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return false;
+  return /^(\d+\s*-\s*\d+|\d+\+)$/.test(text);
 }
 
 exports.onSupportMessageCreated = onDocumentCreated(
@@ -121,7 +168,8 @@ exports.onSupportMessageCreated = onDocumentCreated(
 
       const chat = chatSnap.exists ? (chatSnap.data() || {}) : {};
       const flow = chat.supportFlow || {};
-      const cfg = configSnap.exists ? (configSnap.data() || {}) : defaultConfig();
+      const cfgRaw = configSnap.exists ? (configSnap.data() || {}) : defaultConfig();
+      const cfg = normalizeConfig(cfgRaw);
 
       // 4) If disabled, return
       if (cfg.enabled === false) {
@@ -129,7 +177,7 @@ exports.onSupportMessageCreated = onDocumentCreated(
         return;
       }
 
-      const currentStep = String(flow.step || STEP.START).trim().toUpperCase();
+      const currentStep = normalizeFlowStep(flow.step);
 
       // 5) If HUMAN, return
       if (currentStep === STEP.HUMAN) {
@@ -139,17 +187,14 @@ exports.onSupportMessageCreated = onDocumentCreated(
 
       const startCfg = cfg.steps?.START || {};
       const categoryCfg = cfg.steps?.CATEGORY || {};
-      const quantityCfg = cfg.steps?.QUANTITY || {};
-      const discounts = cfg.discounts || {};
+      const bulkInputCfg = cfg.steps?.BULK_INPUT || {};
 
       const startOptions = asArray(startCfg.options);
       const categoryOptions = asArray(categoryCfg.options);
-      const quantityOptions = asArray(quantityCfg.options);
       const resultOptions = ["Talk to Sales", "Place Order", "Start Over"];
 
       const startMap = optionMap(startOptions);
       const categoryMap = optionMap(categoryOptions);
-      const quantityMap = optionMap(quantityOptions);
 
       const inputRaw = String(messageData.text || messageData.message || "").trim();
       const input = normalize(inputRaw);
@@ -163,6 +208,7 @@ exports.onSupportMessageCreated = onDocumentCreated(
             step: STEP.CATEGORY,
             selectedCategory: "",
             selectedQuantity: "",
+            selectedRequirement: "",
             isCompleted: false,
           },
           updatedAt: nowTs(),
@@ -189,11 +235,23 @@ exports.onSupportMessageCreated = onDocumentCreated(
         const topLevelChoice = startMap.get(input);
         if (topLevelChoice) {
           if (normalize(topLevelChoice) === normalize("bulk order discount")) {
+            await chatRef.set({
+              supportFlow: {
+                ...flow,
+                step: STEP.BULK_INPUT,
+                selectedCategory: "",
+                selectedQuantity: "",
+                selectedRequirement: "",
+                isCompleted: false,
+              },
+              updatedAt: nowTs(),
+            }, { merge: true });
+
             await createBotMessage({
               chatId,
               replyTo: messageId,
-              text: categoryCfg.text || "Select product type:",
-              options: categoryOptions,
+              text: bulkInputCfg.text || "Please type your bulk order requirement (products, quantity, city, budget):",
+              options: [],
             });
           } else if (normalize(topLevelChoice) === normalize("product availability")) {
             await chatRef.set({
@@ -202,6 +260,7 @@ exports.onSupportMessageCreated = onDocumentCreated(
                 step: STEP.RESULT,
                 selectedCategory: "Product Availability",
                 selectedQuantity: "",
+                selectedRequirement: "",
                 isCompleted: false,
               },
               updatedAt: nowTs(),
@@ -220,6 +279,7 @@ exports.onSupportMessageCreated = onDocumentCreated(
                 step: STEP.RESULT,
                 selectedCategory: "Delivery Info",
                 selectedQuantity: "",
+                selectedRequirement: "",
                 isCompleted: false,
               },
               updatedAt: nowTs(),
@@ -245,9 +305,10 @@ exports.onSupportMessageCreated = onDocumentCreated(
             await chatRef.set({
               supportFlow: {
                 ...flow,
-                step: STEP.QUANTITY,
+                step: STEP.BULK_INPUT,
                 selectedCategory,
                 selectedQuantity: "",
+                selectedRequirement: "",
                 isCompleted: false,
               },
               updatedAt: nowTs(),
@@ -256,31 +317,35 @@ exports.onSupportMessageCreated = onDocumentCreated(
             await createBotMessage({
               chatId,
               replyTo: messageId,
-              text: quantityCfg.text || "Select quantity range:",
-              options: quantityOptions,
+              text: bulkInputCfg.text || "Please type your bulk order requirement (products, quantity, city, budget):",
+              options: [],
             });
           }
         }
-      } else if (currentStep === STEP.QUANTITY) {
-        const selectedQty = quantityMap.get(input);
+      } else if (currentStep === STEP.BULK_INPUT) {
+        if (looksLikeStart || input === normalize("start over") || input === normalize("restart")) {
+          await chatRef.set({
+            supportFlow: {
+              step: STEP.START,
+              selectedCategory: "",
+              selectedQuantity: "",
+              selectedRequirement: "",
+              isCompleted: false,
+            },
+            updatedAt: nowTs(),
+          }, { merge: true });
 
-        if (!selectedQty) {
           await createBotMessage({
             chatId,
             replyTo: messageId,
-            text: "Please select a valid quantity range.",
-            options: quantityOptions,
+            text: startCfg.text || "Welcome to PureCuts Bulk Support 👋",
+            options: startOptions,
           });
-        } else {
-          const discount = String(discounts[selectedQty] || "0%").trim();
-          const selectedCategory = String(flow.selectedCategory || "").trim();
-
+        } else if (input === normalize("talk to sales")) {
           await chatRef.set({
             supportFlow: {
               ...flow,
-              step: STEP.RESULT,
-              selectedCategory,
-              selectedQuantity: selectedQty,
+              step: STEP.HUMAN,
               isCompleted: true,
             },
             updatedAt: nowTs(),
@@ -289,7 +354,51 @@ exports.onSupportMessageCreated = onDocumentCreated(
           await createBotMessage({
             chatId,
             replyTo: messageId,
-            text: `You are eligible for ${discount} discount for ${selectedQty} quantity range.`,
+            text: "Perfect. A sales specialist will connect with you shortly.",
+            options: [],
+          });
+        } else {
+          if (isLegacyQuantityChoice(inputRaw)) {
+            await createBotMessage({
+              chatId,
+              replyTo: messageId,
+              text: "Please type your requirement details instead of selecting a quantity range.",
+              options: [],
+            });
+            await lockRef.set({ status: "completed", finishedAt: nowTs() }, { merge: true });
+            return;
+          }
+
+          const requirement = String(inputRaw || "").trim();
+          if (!requirement) {
+            await createBotMessage({
+              chatId,
+              replyTo: messageId,
+              text: "Please type your bulk order requirement so our sales team can help.",
+              options: [],
+            });
+            await lockRef.set({ status: "completed", finishedAt: nowTs() }, { merge: true });
+            return;
+          }
+
+          const selectedCategory = String(flow.selectedCategory || "").trim();
+
+          await chatRef.set({
+            supportFlow: {
+              ...flow,
+              step: STEP.RESULT,
+              selectedCategory,
+              selectedQuantity: "",
+              selectedRequirement: requirement,
+              isCompleted: true,
+            },
+            updatedAt: nowTs(),
+          }, { merge: true });
+
+          await createBotMessage({
+            chatId,
+            replyTo: messageId,
+            text: "Thanks! We captured your bulk order request. Our team will get back to you shortly.",
             options: resultOptions,
           });
 
@@ -297,8 +406,7 @@ exports.onSupportMessageCreated = onDocumentCreated(
             chatId,
             userId: chatUserId(chat, messageData),
             category: selectedCategory,
-            quantity: selectedQty,
-            discount,
+            requirement,
             timestamp: nowTs(),
           });
         }
@@ -333,6 +441,7 @@ exports.onSupportMessageCreated = onDocumentCreated(
               step: STEP.START,
               selectedCategory: "",
               selectedQuantity: "",
+              selectedRequirement: "",
               isCompleted: false,
             },
             updatedAt: nowTs(),

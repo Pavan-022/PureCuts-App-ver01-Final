@@ -1,5 +1,6 @@
 // lib/core/models/order_provider.dart
 import 'package:flutter/foundation.dart';
+import 'package:purecuts/core/models/order_model.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
 
 class OrderProvider extends ChangeNotifier {
@@ -13,9 +14,19 @@ class OrderProvider extends ChangeNotifier {
   bool _loading = false;
   String? _loadedUid;
 
+  // Orders list
+  final List<OrderModel> _orders = [];
+  bool _ordersLoading = false;
+  String? _ordersLoadedUid;
+  String? _ordersError;
+
   List<Map<String, dynamic>> get boughtProducts =>
       _boughtProducts.values.toList();
   bool get isLoading => _loading;
+
+  List<OrderModel> get orders => _orders;
+  bool get ordersLoading => _ordersLoading;
+  String? get ordersError => _ordersError;
 
   bool hasBought(String productId) => _boughtProducts.containsKey(productId);
 
@@ -72,17 +83,78 @@ class OrderProvider extends ChangeNotifier {
     }
   }
 
+  /// Fetch user orders from Firestore
+  Future<void> fetchUserOrders({
+    required String uid,
+    bool forceRefresh = false,
+  }) async {
+    final cleanUid = uid.trim();
+    if (cleanUid.isEmpty) {
+      _orders.clear();
+      _ordersError = null;
+      notifyListeners();
+      return;
+    }
+
+    if (_ordersLoading) return;
+    if (!forceRefresh && _ordersLoadedUid == cleanUid && _orders.isNotEmpty) {
+      return;
+    }
+
+    _ordersLoading = true;
+    _ordersError = null;
+    notifyListeners();
+
+    try {
+      final orderDocs = await _firestoreService.getUserOrders(uid: cleanUid);
+      _orders.clear();
+      for (final doc in orderDocs) {
+        _orders.add(OrderModel.fromMap(doc));
+      }
+      _orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      _ordersLoadedUid = cleanUid;
+      _ordersError = null;
+    } catch (e) {
+      debugPrint('[OrderProvider] fetchUserOrders error: $e');
+      _ordersError = 'Failed to load orders. Please try again.';
+    } finally {
+      _ordersLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Get orders filtered by status
+  List<OrderModel> getOrdersByStatus(String status) {
+    return _orders.where((o) => o.status == status.toLowerCase()).toList();
+  }
+
+  /// Search orders by ID
+  List<OrderModel> searchOrders(String query) {
+    if (query.isEmpty) return _orders;
+    final q = query.toLowerCase();
+    return _orders.where((o) => o.orderId.toLowerCase().contains(q)).toList();
+  }
+
   void clear() {
     _boughtProducts.clear();
     _loadedUid = null;
     _loading = false;
+    _orders.clear();
+    _ordersLoadedUid = null;
+    _ordersLoading = false;
+    _ordersError = null;
     notifyListeners();
   }
 
   /// Call this after a successful order confirmation
   void addOrderedItems(List<Map<String, dynamic>> items) {
+    final now = DateTime.now();
     for (final item in items) {
-      _storeItem(item);
+      _storeItem({
+        ...item,
+        'lastOrderedAt': item['lastOrderedAt'] ?? now,
+        'lastOrderStatus': item['lastOrderStatus'] ?? 'placed',
+      });
     }
     notifyListeners();
   }
