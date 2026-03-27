@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/models/cart_model.dart';
+import '../../core/theme/app_theme.dart';
 import '../../features/orders/checkout_screen.dart';
 
 class StickyCartBar extends StatefulWidget {
@@ -73,7 +74,7 @@ class _StickyCartBarState extends State<StickyCartBar>
         ),
         child: const Icon(
           Icons.shopping_bag_outlined,
-          color: Color(0xFF2A9D2A),
+          color: AppColors.primary,
           size: 17,
         ),
       );
@@ -134,7 +135,7 @@ class _StickyCartBarState extends State<StickyCartBar>
                   fit: BoxFit.cover,
                   errorBuilder: (_, error, stackTrace) => const Icon(
                     Icons.shopping_bag_outlined,
-                    color: Color(0xFF2A9D2A),
+                    color: AppColors.primary,
                     size: 17,
                   ),
                 ),
@@ -173,7 +174,7 @@ class _StickyCartBarState extends State<StickyCartBar>
             );
           },
           child: SizedBox(
-            height: 76,
+            height: 64,
             child: Center(
               child: GestureDetector(
                 onTap: () => Navigator.push(
@@ -181,17 +182,18 @@ class _StickyCartBarState extends State<StickyCartBar>
                   MaterialPageRoute(builder: (_) => const CheckoutScreen()),
                 ),
                 child: Container(
-                  padding: const EdgeInsets.fromLTRB(11, 8, 11, 8),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.fromLTRB(11, 7, 11, 7),
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
                       begin: Alignment.centerLeft,
                       end: Alignment.centerRight,
-                      colors: [Color(0xFF2A9D2A), Color(0xFF2F8F25)],
+                      colors: [Color(0xFF5C138B), Color(0xFF5C138B)],
                     ),
                     borderRadius: BorderRadius.circular(24),
                     boxShadow: [
                       BoxShadow(
-                        color: const Color(0xFF2A9D2A).withValues(alpha: 0.28),
+                        color: const Color(0xFF5C138B).withValues(alpha: 0.28),
                         blurRadius: 10,
                         offset: const Offset(0, 4),
                       ),
@@ -211,7 +213,7 @@ class _StickyCartBarState extends State<StickyCartBar>
                             style: TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w700,
-                              fontSize: 15,
+                              fontSize: 14,
                               height: 1,
                             ),
                           ),

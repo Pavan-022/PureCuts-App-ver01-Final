@@ -47,6 +47,65 @@ class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
     super.dispose();
   }
 
+  String _normalizeSearchText(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s,_-]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  List<String> _productTags(Map<String, dynamic> product) {
+    final tags = <String>{};
+
+    final singleTag = (product['tag'] ?? '').toString().trim();
+    if (singleTag.isNotEmpty) {
+      tags.add(singleTag);
+    }
+
+    final rawTags = product['tags'];
+    if (rawTags is List) {
+      for (final item in rawTags) {
+        final value = item.toString().trim();
+        if (value.isNotEmpty) tags.add(value);
+      }
+    } else if (rawTags is String) {
+      for (final item in rawTags.split(RegExp(r'[,|/&_-]+'))) {
+        final value = item.trim();
+        if (value.isNotEmpty) tags.add(value);
+      }
+    }
+
+    return tags.toList(growable: false);
+  }
+
+  bool _matchesProductSearch(Map<String, dynamic> product, String query) {
+    final normalizedQuery = _normalizeSearchText(query);
+    if (normalizedQuery.isEmpty) return true;
+
+    final searchable = _normalizeSearchText(
+      [
+        product['name'],
+        product['brand'],
+        product['category'],
+        product['subCategory'] ?? product['subcategory'],
+        product['subSubCategory'] ?? product['subsubCategory'],
+        product['description'],
+        ..._productTags(product),
+      ].join(' '),
+    );
+
+    if (searchable.isEmpty) return false;
+    if (searchable.contains(normalizedQuery)) return true;
+
+    final tokens = normalizedQuery
+        .split(' ')
+        .where((token) => token.trim().isNotEmpty)
+        .toList(growable: false);
+
+    return tokens.every(searchable.contains);
+  }
+
   String _speechErrorMessage(dynamic error) {
     final rawMsg = (error?.errorMsg ?? error?.toString() ?? '').toString();
     final msg = rawMsg.toLowerCase();
@@ -348,17 +407,7 @@ class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
 
     final products = _search.isEmpty
         ? allBought
-        : allBought
-              .where(
-                (p) =>
-                    (p['name'] as String? ?? '').toLowerCase().contains(
-                      _search.toLowerCase(),
-                    ) ||
-                    (p['brand'] as String? ?? '').toLowerCase().contains(
-                      _search.toLowerCase(),
-                    ),
-              )
-              .toList();
+        : allBought.where((p) => _matchesProductSearch(p, _search)).toList();
 
     return Scaffold(
       backgroundColor: Colors.white,

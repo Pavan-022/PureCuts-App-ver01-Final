@@ -80,6 +80,84 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
     return s;
   }
 
+  String _normalizeSearchText(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s,_-]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  List<String> _extractTags(Map<String, dynamic> source) {
+    final tags = <String>{};
+
+    final singleTag = (source['tag'] ?? '').toString().trim();
+    if (singleTag.isNotEmpty) {
+      tags.add(singleTag);
+    }
+
+    final rawTags = source['tags'];
+    if (rawTags is List) {
+      for (final item in rawTags) {
+        final value = item.toString().trim();
+        if (value.isNotEmpty) tags.add(value);
+      }
+    } else if (rawTags is String) {
+      for (final item in rawTags.split(RegExp(r'[,|/&_-]+'))) {
+        final value = item.trim();
+        if (value.isNotEmpty) tags.add(value);
+      }
+    }
+
+    return tags.toList(growable: false);
+  }
+
+  bool _matchesQuery(String query, List<dynamic> parts) {
+    final normalizedQuery = _normalizeSearchText(query);
+    if (normalizedQuery.isEmpty) return true;
+
+    final searchable = _normalizeSearchText(parts.join(' '));
+    if (searchable.isEmpty) return false;
+    if (searchable.contains(normalizedQuery)) return true;
+
+    final tokens = normalizedQuery
+        .split(' ')
+        .where((token) => token.trim().isNotEmpty)
+        .toList(growable: false);
+
+    return tokens.every(searchable.contains);
+  }
+
+  bool _matchesBoughtProductQuery(Map<String, dynamic> product, String query) {
+    return _matchesQuery(query, [
+      product['name'],
+      product['brand'],
+      product['category'],
+      product['subCategory'] ?? product['subcategory'],
+      product['subSubCategory'] ?? product['subsubCategory'],
+      product['description'],
+      product['lastOrderId'],
+      ..._extractTags(product),
+    ]);
+  }
+
+  bool _matchesOrderQuery(OrderModel order, String query) {
+    final itemParts = <dynamic>[];
+    for (final item in order.items) {
+      itemParts.addAll([
+        item['name'],
+        item['brand'],
+        item['category'],
+        item['subCategory'] ?? item['subcategory'],
+        item['subSubCategory'] ?? item['subsubCategory'],
+        item['description'],
+        ..._extractTags(item),
+      ]);
+    }
+
+    return _matchesQuery(query, [order.orderId, ...itemParts]);
+  }
+
   List<OrderModel> _getFilteredOrders(
     List<OrderModel> allOrders,
     int tabIndex,
@@ -114,8 +192,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
 
     // Search by order ID
     if (_searchQuery.isNotEmpty) {
-      final q = _searchQuery.toLowerCase();
-      list = list.where((o) => o.orderId.toLowerCase().contains(q)).toList();
+      list = list.where((o) => _matchesOrderQuery(o, _searchQuery)).toList();
     }
 
     return list;
@@ -152,13 +229,9 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
     }
 
     if (_searchQuery.isNotEmpty) {
-      final q = _searchQuery.toLowerCase();
-      list = list.where((p) {
-        final name = (p['name'] ?? '').toString().toLowerCase();
-        final brand = (p['brand'] ?? '').toString().toLowerCase();
-        final orderId = (p['lastOrderId'] ?? '').toString().toLowerCase();
-        return name.contains(q) || brand.contains(q) || orderId.contains(q);
-      }).toList();
+      list = list
+          .where((p) => _matchesBoughtProductQuery(p, _searchQuery))
+          .toList();
     }
 
     DateTime _toDate(dynamic value) {

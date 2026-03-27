@@ -55,59 +55,72 @@ class OrderDetailsScreen extends StatelessWidget {
         children: [
           // Order Header
           _buildCard([
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      order.orderId,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                      ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          order.orderId,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          order.formattedDateTime,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Payment mode: ${order.paymentMethod.toUpperCase()}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      order.formattedDateTime,
-                      style: const TextStyle(
+                  ),
+                  const SizedBox(width: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _getStatusColor(order.status).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _getStatusColor(order.status)),
+                    ),
+                    child: Text(
+                      order.statusDisplay,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
                         fontSize: 12,
-                        color: AppColors.textSecondary,
+                        fontWeight: FontWeight.w600,
+                        color: _getStatusColor(order.status),
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Payment mode: ${order.paymentMethod.toUpperCase()}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
                   ),
-                  decoration: BoxDecoration(
-                    color: _getStatusColor(order.status).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: _getStatusColor(order.status)),
-                  ),
-                  child: Text(
-                    order.statusDisplay,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: _getStatusColor(order.status),
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ]),
           const SizedBox(height: 16),
@@ -186,53 +199,68 @@ class OrderDetailsScreen extends StatelessWidget {
           const SizedBox(height: 16),
 
           // Payment & Contact
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Payment Method', style: _sectionTitleStyle()),
-                    const SizedBox(height: 8),
-                    _buildCard([
-                      Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Text(
-                          order.paymentMethod.toUpperCase(),
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.primary,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 420;
+              return Flex(
+                direction: isNarrow ? Axis.vertical : Axis.horizontal,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: isNarrow ? 0 : 1,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Payment Method', style: _sectionTitleStyle()),
+                        const SizedBox(height: 8),
+                        _buildCard([
+                          Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Text(
+                              order.paymentMethod.toUpperCase(),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.primary,
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                    ]),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Customer Email', style: _sectionTitleStyle()),
-                    const SizedBox(height: 8),
-                    _buildCard([
-                      Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Text(
-                          order.customerEmail,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textSecondary,
+                        ]),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: isNarrow ? 0 : 12, height: isNarrow ? 12 : 0),
+                  Expanded(
+                    flex: isNarrow ? 0 : 1,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Customer Email', style: _sectionTitleStyle()),
+                        const SizedBox(height: 8),
+                        _buildCard([
+                          Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: SelectableText(
+                              order.customerEmail.trim().isEmpty
+                                  ? '-'
+                                  : order.customerEmail,
+                              maxLines: 3,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textSecondary,
+                                height: 1.3,
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                    ]),
-                  ],
-                ),
-              ),
-            ],
+                        ]),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 20),
 
@@ -373,22 +401,50 @@ class OrderDetailsScreen extends StatelessWidget {
   List<Widget> _buildItemsList(BuildContext context) => order.items.map((item) {
     final qty = item['quantity'] ?? 1;
     final price = item['price'] ?? 0;
-    return InkWell(
-      onTap: () => Navigator.push(
+    final product = _toProductPayload(item);
+    final imageUrl = (product['image'] ?? '').toString();
+
+    void openProduct() {
+      Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => ProductDetailScreen(product: item)),
-      ),
+        MaterialPageRoute(
+          builder: (_) => ProductDetailScreen(product: product),
+        ),
+      );
+    }
+
+    return InkWell(
+      onTap: openProduct,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            InkWell(
+              onTap: openProduct,
+              borderRadius: BorderRadius.circular(10),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: imageUrl.isNotEmpty
+                    ? Image.network(
+                        imageUrl,
+                        width: 56,
+                        height: 56,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => _itemPlaceholder(),
+                      )
+                    : _itemPlaceholder(),
+              ),
+            ),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     item['name'] ?? 'Product',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -397,7 +453,9 @@ class OrderDetailsScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '${item['brand'] ?? ''} - Qty: $qty',
+                    '${item['brand'] ?? ''} • Qty: $qty',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 11,
                       color: AppColors.textSecondary,
@@ -420,6 +478,35 @@ class OrderDetailsScreen extends StatelessWidget {
       ),
     );
   }).toList();
+
+  Widget _itemPlaceholder() => Container(
+    width: 56,
+    height: 56,
+    color: const Color(0xFFF2F2F7),
+    child: const Icon(
+      Icons.image_outlined,
+      color: AppColors.textHint,
+      size: 22,
+    ),
+  );
+
+  Map<String, dynamic> _toProductPayload(Map<String, dynamic> item) {
+    final rawId = (item['productId'] ?? item['id'] ?? '').toString().trim();
+    final normalizedId = rawId.contains('::')
+        ? rawId.split('::').first.trim()
+        : rawId;
+
+    return {
+      ...item,
+      'id': normalizedId,
+      'productId': normalizedId,
+      'price': item['price'] ?? 0,
+      'name': (item['name'] ?? 'Product').toString(),
+      'brand': (item['brand'] ?? '').toString(),
+      'image': (item['image'] ?? '').toString(),
+      'description': (item['description'] ?? '').toString(),
+    };
+  }
 
   Widget _buildBillRow(String label, String value) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),

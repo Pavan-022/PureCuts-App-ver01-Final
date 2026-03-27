@@ -68,6 +68,69 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
 
   String _normalize(String value) => value.trim().toLowerCase();
 
+  String _normalizeToken(String value) {
+    return value
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s,_-]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  List<String> _productTags(Map<String, dynamic> product) {
+    final tags = <String>{};
+
+    final singleTag = (product['tag'] ?? '').toString().trim();
+    if (singleTag.isNotEmpty) {
+      tags.add(singleTag);
+    }
+
+    final rawTags = product['tags'];
+    if (rawTags is List) {
+      for (final item in rawTags) {
+        final value = item.toString().trim();
+        if (value.isNotEmpty) tags.add(value);
+      }
+    } else if (rawTags is String) {
+      for (final item in rawTags.split(RegExp(r'[,|/&_-]+'))) {
+        final value = item.trim();
+        if (value.isNotEmpty) tags.add(value);
+      }
+    }
+
+    return tags.toList(growable: false);
+  }
+
+  bool _matchesSearchQuery(Map<String, dynamic> product, String rawQuery) {
+    final query = _normalizeToken(rawQuery);
+    if (query.isEmpty) return true;
+
+    final searchable = _normalizeToken(
+      [
+        product['name'],
+        product['brand'],
+        product['category'],
+        product['subCategory'] ?? product['subcategory'],
+        product['subSubCategory'] ??
+            product['subsubCategory'] ??
+            product['sub_sub_category'],
+        product['description'],
+        product['shortDescription'],
+        ..._productTags(product),
+      ].join(' '),
+    );
+
+    if (searchable.isEmpty) return false;
+    if (searchable.contains(query)) return true;
+
+    final tokens = query
+        .split(' ')
+        .where((token) => token.trim().isNotEmpty)
+        .toList(growable: false);
+
+    return tokens.every(searchable.contains);
+  }
+
   String _resolveBrandLogo(HomeProvider home, String brandName) {
     final normalized = _normalize(brandName);
     if (normalized.isEmpty) return '';
@@ -178,15 +241,7 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
     if (q.isEmpty) return subProducts;
 
     return subProducts
-        .where((product) {
-          final haystack = [
-            product['name'],
-            product['brand'],
-            product['description'],
-            product['tag'],
-          ].map((v) => v?.toString().toLowerCase() ?? '').join(' ');
-          return haystack.contains(q);
-        })
+        .where((product) => _matchesSearchQuery(product, q))
         .toList(growable: false);
   }
 

@@ -1348,7 +1348,7 @@ class _HomeScreenState extends State<HomeScreen>
                                         .toUpperCase()
                                   : '?',
                               style: const TextStyle(
-                                color: AppColors.primary,
+                                color: Color.fromARGB(255, 249, 249, 249),
                                 fontSize: 15,
                                 fontWeight: FontWeight.w700,
                               ),

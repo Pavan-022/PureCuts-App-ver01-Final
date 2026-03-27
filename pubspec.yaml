@@ -94,18 +94,18 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/appIcon/app_icon3.jpeg"
+  image_path: "assets/appIcon/app_icon5.jpeg"
   adaptive_icon_background: "#FFFFFF"
-  adaptive_icon_foreground: "assets/appIcon/app_icon3.jpeg"
+  adaptive_icon_foreground: "assets/appIcon/app_icon5.jpeg"
   web:
     generate: true
-    image_path: "assets/appIcon/app_icon3.jpeg"
+    image_path: "assets/appIcon/app_icon5.jpeg"
     background_color: "#FFFFFF"
     theme_color: "#FFFFFF"
   windows:
     generate: true
-    image_path: "assets/appIcon/app_icon3.jpeg"
+    image_path: "assets/appIcon/app_icon5.jpeg"
     icon_size: 48
   macos:
     generate: true
-    image_path: "assets/appIcon/app_icon3.jpeg"
+    image_path: "assets/appIcon/app_icon5.jpeg"

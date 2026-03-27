@@ -119,6 +119,38 @@ class _ProductListScreenState extends State<ProductListScreen> {
     return merged.join(', ');
   }
 
+  bool _matchesSearchQuery(Map<String, dynamic> product, String rawQuery) {
+    final normalizedQuery = _normalizeToken(rawQuery);
+    if (normalizedQuery.isEmpty) return true;
+
+    final tokens = normalizedQuery
+        .split(' ')
+        .map(_normalizeToken)
+        .where((t) => t.isNotEmpty)
+        .toList(growable: false);
+
+    final name = _normalizeToken((product['name'] ?? '').toString());
+    final brand = _normalizeToken((product['brand'] ?? '').toString());
+    final category = _normalizeToken((product['category'] ?? '').toString());
+    final subCategory = _normalizeToken(
+      (product['subCategory'] ?? product['subcategory'] ?? '').toString(),
+    );
+    final subSubCategory = _normalizeToken(
+      (product['subSubCategory'] ?? product['subsubCategory'] ?? '').toString(),
+    );
+    final tag = _normalizeToken((product['tag'] ?? '').toString());
+    final tags = _normalizeToken(_tagSearchSource(product));
+    final description = _normalizeToken(
+      (product['description'] ?? '').toString(),
+    );
+
+    final searchable =
+        '$name $brand $category $subCategory $subSubCategory $tag $tags $description';
+
+    // Require every query token to be present somewhere in searchable text.
+    return tokens.every((token) => searchable.contains(token));
+  }
+
   Future<void> _refreshProducts() async {
     await _loadFirstPage();
   }
@@ -494,15 +526,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
     }
 
     final products = _pagedProducts
-        .where((p) {
-          if (_searchQuery.trim().isEmpty) return true;
-          final search = _normalizeToken(_searchQuery);
-          final name = _normalizeToken((p['name'] ?? '').toString());
-          final brand = _normalizeToken((p['brand'] ?? '').toString());
-          final category = _normalizeToken((p['category'] ?? '').toString());
-          final text = '$name $brand $category';
-          return text.contains(search);
-        })
+        .where((p) => _matchesSearchQuery(p, _searchQuery))
         .where((p) {
           if ((_selectedBrand ?? '').trim().isEmpty) return true;
           return (p['brand'] ?? '').toString().trim().toLowerCase() ==

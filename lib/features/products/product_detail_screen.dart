@@ -1551,7 +1551,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF2D7A22),
+                            color: const Color.fromARGB(255, 139, 32, 19),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Row(

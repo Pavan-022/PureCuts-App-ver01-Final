@@ -408,14 +408,14 @@ class _ProductCardState extends State<ProductCard> {
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(6),
                               border: Border.all(
-                                color: AppColors.success,
+                                color: AppColors.primary,
                                 width: 1.5,
                               ),
                             ),
                             child: Text(
                               'ADD',
                               style: TextStyle(
-                                color: AppColors.success,
+                                color: AppColors.primary,
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -424,7 +424,7 @@ class _ProductCardState extends State<ProductCard> {
                         )
                       : Container(
                           decoration: BoxDecoration(
-                            color: AppColors.success,
+                            color: AppColors.primary,
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Row(
