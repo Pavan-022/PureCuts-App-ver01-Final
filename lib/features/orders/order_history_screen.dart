@@ -19,6 +19,7 @@ class OrderHistoryScreen extends StatefulWidget {
 class _OrderHistoryScreenState extends State<OrderHistoryScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabs;
+  final ScrollController _scrollController = ScrollController();
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
   String? _lastHydratedUid;
@@ -27,6 +28,18 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
   void initState() {
     super.initState();
     _tabs = TabController(length: 3, vsync: this);
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final uid = context.read<AuthProvider>().user?.uid ?? '';
+    if (uid.trim().isEmpty) return;
+
+    final threshold = _scrollController.position.maxScrollExtent - 220;
+    if (_scrollController.position.pixels >= threshold) {
+      context.read<OrderProvider>().fetchMoreUserOrders(uid: uid);
+    }
   }
 
   @override
@@ -51,6 +64,8 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
   @override
   void dispose() {
     _tabs.dispose();
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -59,6 +74,9 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
     final s = (value ?? '').trim().toLowerCase();
     if (s == 'completed') return 'delivered';
     if (s == 'out_for_delivery') return 'processing';
+    if (s == 'in_transit') return 'processing';
+    if (s == 'packed') return 'processing';
+    if (s == 'dispatched') return 'processing';
     return s;
   }
 
@@ -85,7 +103,11 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
             (o) =>
                 _normalizeStatus(o.status) == 'placed' ||
                 _normalizeStatus(o.status) == 'confirmed' ||
-                _normalizeStatus(o.status) == 'processing',
+                _normalizeStatus(o.status) == 'processing' ||
+                _normalizeStatus(o.status) == 'packed' ||
+                _normalizeStatus(o.status) == 'dispatched' ||
+                _normalizeStatus(o.status) == 'out_for_delivery' ||
+                _normalizeStatus(o.status) == 'in_transit',
           )
           .toList();
     }
@@ -121,7 +143,11 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
         );
         return status == 'placed' ||
             status == 'confirmed' ||
-            status == 'processing';
+            status == 'processing' ||
+            status == 'packed' ||
+            status == 'dispatched' ||
+            status == 'out_for_delivery' ||
+            status == 'in_transit';
       }).toList();
     }
 
@@ -159,27 +185,11 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
     final allBought = orderProvider.boughtProducts;
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF7F7FB),
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        backgroundColor: Colors.white,
         elevation: 0,
         scrolledUnderElevation: 0,
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color(0xFFB69DF8),
-                Color(0xFFC4B5FD),
-                Color(0xFFDDD6FE),
-                Color(0xFFEDE9FE),
-                Colors.white,
-              ],
-              stops: [0.0, 0.18, 0.42, 0.70, 1.0],
-            ),
-          ),
-        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
           onPressed: () => Navigator.pop(context),
@@ -213,8 +223,8 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
         children: [
           // Search bar
           Container(
-            color: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            color: const Color(0xFFF7F7FB),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
             child: TextField(
               controller: _searchCtrl,
               onChanged: (v) => setState(() => _searchQuery = v),
@@ -226,12 +236,23 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
                   size: 20,
                 ),
                 filled: true,
-                fillColor: AppColors.background,
+                fillColor: Colors.white,
                 isDense: true,
-                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                contentPadding: const EdgeInsets.symmetric(vertical: 13),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: Color(0xFFE7E7F0)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: Color(0xFFE7E7F0)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(
+                    color: AppColors.primary,
+                    width: 1.2,
+                  ),
                 ),
               ),
             ),
@@ -273,19 +294,62 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
                       }
 
                       if (filteredOrders.isEmpty && filteredBought.isNotEmpty) {
+                        final showFooterLoader =
+                            orderProvider.ordersPagingLoading;
                         return ListView.builder(
+                          controller: _scrollController,
                           padding: const EdgeInsets.all(16),
-                          itemCount: filteredBought.length,
-                          itemBuilder: (_, idx) =>
-                              _BoughtOrderCard(product: filteredBought[idx]),
+                          itemCount:
+                              filteredBought.length +
+                              (showFooterLoader ? 1 : 0),
+                          itemBuilder: (_, idx) {
+                            if (idx >= filteredBought.length) {
+                              return const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.2,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }
+                            return _BoughtOrderCard(
+                              product: filteredBought[idx],
+                            );
+                          },
                         );
                       }
 
+                      final showFooterLoader =
+                          orderProvider.ordersPagingLoading &&
+                          _searchQuery.trim().isEmpty;
+
                       return ListView.builder(
+                        controller: _scrollController,
                         padding: const EdgeInsets.all(16),
-                        itemCount: filteredOrders.length,
-                        itemBuilder: (_, idx) =>
-                            _OrderCard(order: filteredOrders[idx]),
+                        itemCount:
+                            filteredOrders.length + (showFooterLoader ? 1 : 0),
+                        itemBuilder: (_, idx) {
+                          if (idx >= filteredOrders.length) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.2,
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
+                          return _OrderCard(order: filteredOrders[idx]);
+                        },
                       );
                     }).toList(),
                   ),
@@ -299,6 +363,36 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
 class _BoughtOrderCard extends StatelessWidget {
   final Map<String, dynamic> product;
   const _BoughtOrderCard({required this.product});
+
+  String _statusDisplay(String value) {
+    final clean = value.trim().toLowerCase();
+    if (clean.isEmpty) return 'Placed';
+    if (clean == 'out_for_delivery') return 'Out for delivery';
+    if (clean == 'in_transit') return 'In transit';
+    return clean[0].toUpperCase() + clean.substring(1);
+  }
+
+  Color _statusFg(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'delivered':
+        return const Color(0xFF0C9B4B);
+      case 'cancelled':
+        return const Color(0xFFC62828);
+      default:
+        return AppColors.primary;
+    }
+  }
+
+  Color _statusBg(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'delivered':
+        return const Color(0xFFE9F8EF);
+      case 'cancelled':
+        return const Color(0xFFFFEDEE);
+      default:
+        return const Color(0xFFF1ECFF);
+    }
+  }
 
   String _formatDateTime(dynamic value) {
     DateTime? dt;
@@ -334,8 +428,15 @@ class _BoughtOrderCard extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.divider),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE8E8F1)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -345,8 +446,8 @@ class _BoughtOrderCard extends StatelessWidget {
               child: image.isNotEmpty
                   ? Image.network(
                       image,
-                      width: 72,
-                      height: 72,
+                      width: 68,
+                      height: 68,
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) => _placeholder(),
                     )
@@ -366,19 +467,29 @@ class _BoughtOrderCard extends StatelessWidget {
                           style: const TextStyle(
                             color: AppColors.textPrimary,
                             fontWeight: FontWeight.w700,
-                            fontSize: 13,
+                            fontSize: 14,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Text(
-                        '₹$price',
-                        style: const TextStyle(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _statusBg(lastStatus),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          _statusDisplay(lastStatus),
+                          style: TextStyle(
+                            color: _statusFg(lastStatus),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
                     ],
@@ -396,21 +507,19 @@ class _BoughtOrderCard extends StatelessWidget {
                     _formatDateTime(lastOrderedAt),
                     style: const TextStyle(
                       color: AppColors.textHint,
-                      fontSize: 12,
+                      fontSize: 12.5,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 3),
                   Text(
-                    lastOrderId.isNotEmpty
-                        ? 'Order: $lastOrderId • $lastStatus'
-                        : lastStatus,
+                    lastOrderId.isNotEmpty ? 'Order: $lastOrderId' : '-',
                     style: const TextStyle(
                       color: AppColors.textSecondary,
                       fontSize: 12,
                     ),
                   ),
                   if (paymentMode.trim().isNotEmpty) ...[
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 3),
                     Text(
                       'Payment: ${paymentMode.toUpperCase()}',
                       style: const TextStyle(
@@ -419,6 +528,15 @@ class _BoughtOrderCard extends StatelessWidget {
                       ),
                     ),
                   ],
+                  const SizedBox(height: 7),
+                  Text(
+                    '₹$price',
+                    style: const TextStyle(
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 18,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -429,8 +547,8 @@ class _BoughtOrderCard extends StatelessWidget {
   }
 
   Widget _placeholder() => Container(
-    width: 72,
-    height: 72,
+    width: 68,
+    height: 68,
     color: AppColors.surface,
     child: const Icon(Icons.image, color: AppColors.textHint, size: 28),
   );
@@ -448,6 +566,10 @@ class _OrderCard extends StatelessWidget {
         return AppColors.error;
       case 'processing':
       case 'confirmed':
+      case 'packed':
+      case 'dispatched':
+      case 'out_for_delivery':
+      case 'in_transit':
         return AppColors.primary;
       case 'placed':
       default:
@@ -463,6 +585,10 @@ class _OrderCard extends StatelessWidget {
         return const Color(0xFFFFEEEE);
       case 'processing':
       case 'confirmed':
+      case 'packed':
+      case 'dispatched':
+      case 'out_for_delivery':
+      case 'in_transit':
       case 'placed':
         return AppColors.primary.withOpacity(0.1);
       default:
@@ -477,14 +603,44 @@ class _OrderCard extends StatelessWidget {
     final productImage = order.items.isNotEmpty
         ? (order.items.first['image'] ?? '')
         : '';
+    final actions = <Widget>[
+      _actionBtn(
+        label: 'Details',
+        outline: true,
+        minWidth: 102,
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => OrderDetailsScreen(order: order)),
+        ),
+      ),
+    ];
+
+    if (order.canReorder) {
+      actions.add(const SizedBox(height: 6));
+      actions.add(
+        _actionBtn(
+          label: 'Reorder',
+          outline: false,
+          minWidth: 102,
+          onTap: () {},
+        ),
+      );
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.divider),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE8E8F1)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -494,8 +650,8 @@ class _OrderCard extends StatelessWidget {
             child: (productImage.isNotEmpty)
                 ? Image.network(
                     productImage,
-                    width: 72,
-                    height: 72,
+                    width: 68,
+                    height: 68,
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => _buildPlaceholder(),
                   )
@@ -507,31 +663,42 @@ class _OrderCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      order.orderId,
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
+                    Expanded(
+                      child: Text(
+                        order.orderId,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
                       ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: statusBg,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        order.statusDisplay,
-                        style: TextStyle(
-                          color: statusColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: statusBg,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            order.statusDisplay,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: statusColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -548,6 +715,8 @@ class _OrderCard extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   '${order.items.length} item(s) • ${order.deliveryAddressShort}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 12,
@@ -556,6 +725,8 @@ class _OrderCard extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   'Payment: ${order.paymentMethod.toUpperCase()}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 12,
@@ -563,36 +734,24 @@ class _OrderCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text(
-                      '₹${order.totalAmount}',
-                      style: const TextStyle(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
+                    Expanded(
+                      child: Text(
+                        '₹${order.totalAmount}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                        ),
                       ),
                     ),
-                    Row(
-                      children: [
-                        _actionBtn(
-                          label: 'Details',
-                          outline: true,
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => OrderDetailsScreen(order: order),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        if (order.canReorder)
-                          _actionBtn(
-                            label: 'Reorder',
-                            outline: false,
-                            onTap: () {},
-                          ),
-                      ],
+                    const SizedBox(width: 8),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: actions,
                     ),
                   ],
                 ),
@@ -605,8 +764,8 @@ class _OrderCard extends StatelessWidget {
   }
 
   Widget _buildPlaceholder() => Container(
-    width: 72,
-    height: 72,
+    width: 68,
+    height: 68,
     color: AppColors.surface,
     child: const Icon(Icons.image, color: AppColors.textHint, size: 28),
   );
@@ -615,23 +774,25 @@ class _OrderCard extends StatelessWidget {
     required String label,
     required bool outline,
     required VoidCallback onTap,
+    double minWidth = 0,
   }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        constraints: BoxConstraints(minWidth: minWidth),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
-          color: outline ? Colors.transparent : AppColors.primary,
+          color: outline ? Colors.white : AppColors.primary,
           border: Border.all(
-            color: outline ? AppColors.border : AppColors.primary,
+            color: outline ? const Color(0xFFDADAEA) : AppColors.primary,
           ),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(10),
         ),
         child: Text(
           label,
           style: TextStyle(
             color: outline ? AppColors.textSecondary : Colors.white,
-            fontSize: 12,
+            fontSize: 12.5,
             fontWeight: FontWeight.w600,
           ),
         ),

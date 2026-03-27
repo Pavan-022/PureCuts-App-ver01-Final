@@ -134,7 +134,8 @@ service cloud.firestore {
       allow read: if signedIn() &&
         (isAdmin() ||
          request.auth.uid == resource.data.uid ||
-         request.auth.uid == resource.data.userId);
+         request.auth.uid == resource.data.userId ||
+         request.auth.uid == resource.data.customerId);
       allow update, delete: if isAdmin();
     }
 

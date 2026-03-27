@@ -1497,11 +1497,23 @@ class _HomeScreenState extends State<HomeScreen>
         .where((p) => p['isPopular'] == true)
         .toList();
 
-    final browseItems = hotDealsItems.isNotEmpty
-        ? hotDealsItems
-        : (isNewUser
-              ? _recommendedForNewUser(unassignedProducts)
-              : unassignedProducts);
+    final discountedItems = products
+        .where((p) => _resolveDiscountPercent(p) != null)
+        .toList();
+
+    final fallbackBrowseItems = isNewUser
+        ? _recommendedForNewUser(unassignedProducts)
+        : unassignedProducts;
+    final hotDealsSeed = _mergeUniqueProductLists(
+      hotDealsItems,
+      discountedItems,
+      maxItems: 24,
+    );
+    final browseItems = _mergeUniqueProductLists(
+      hotDealsSeed,
+      fallbackBrowseItems,
+      maxItems: 24,
+    );
     final recommendedDisplayItems = recommendedItems.isNotEmpty
         ? recommendedItems
         : unassignedProducts;
@@ -1685,6 +1697,39 @@ class _HomeScreenState extends State<HomeScreen>
             .toString()
             .trim();
     return value.isNotEmpty;
+  }
+
+  String _productIdentity(Map<String, dynamic> product) {
+    final rawId = (product['id'] ?? '').toString().trim();
+    final baseId = _baseProductId(rawId);
+    if (baseId.isNotEmpty) return 'id:$baseId';
+
+    final name = (product['name'] ?? '').toString().trim().toLowerCase();
+    final brand = (product['brand'] ?? '').toString().trim().toLowerCase();
+    return 'nb:$brand::$name';
+  }
+
+  List<Map<String, dynamic>> _mergeUniqueProductLists(
+    List<Map<String, dynamic>> primary,
+    List<Map<String, dynamic>> secondary, {
+    int? maxItems,
+  }) {
+    final merged = <Map<String, dynamic>>[];
+    final seen = <String>{};
+
+    void pushAll(List<Map<String, dynamic>> source) {
+      for (final item in source) {
+        if (maxItems != null && merged.length >= maxItems) return;
+        final key = _productIdentity(item);
+        if (seen.add(key)) {
+          merged.add(item);
+        }
+      }
+    }
+
+    pushAll(primary);
+    pushAll(secondary);
+    return merged;
   }
 
   List<Map<String, dynamic>> _recommendedForNewUser(
@@ -2131,7 +2176,7 @@ class _HomeScreenState extends State<HomeScreen>
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
-        itemCount: products.take(5).length,
+        itemCount: products.length,
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (_, i) {
           final p = products[i];

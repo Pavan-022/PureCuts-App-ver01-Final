@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:purecuts/core/services/firestore_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/models/cart_model.dart';
+import '../../features/auth/providers/auth_provider.dart';
 import '../../features/products/product_detail_screen.dart';
 import '../../features/products/product_list_screen.dart';
 
-class ProductCard extends StatelessWidget {
+class ProductCard extends StatefulWidget {
   final Map<String, dynamic> product;
   final ValueChanged<Map<String, dynamic>>? onAddToCart;
   final bool showHeartIcon;
@@ -19,9 +21,137 @@ class ProductCard extends StatelessWidget {
     this.showBoughtEarlierBadge = false,
   });
 
+  @override
+  State<ProductCard> createState() => _ProductCardState();
+}
+
+class _ProductCardState extends State<ProductCard> {
+  static final Map<String, bool> _favoriteCache = <String, bool>{};
+
+  final FirestoreService _firestoreService = FirestoreService();
+  bool _isWishlisted = false;
+  bool _wishlistLoading = false;
+
+  Map<String, dynamic> get product => widget.product;
+
+  String _baseProductId(String value) {
+    final id = value.trim();
+    if (id.isEmpty) return '';
+    final sep = id.indexOf('::');
+    if (sep <= 0) return id;
+    return id.substring(0, sep);
+  }
+
+  String _productId() {
+    return _baseProductId((product['id'] ?? '').toString());
+  }
+
+  String _cacheKey(String uid, String productId) => '$uid::$productId';
+
+  Map<String, dynamic> _favoriteSnapshot() {
+    return {
+      'name': (product['name'] ?? '').toString(),
+      'brand': (product['brand'] ?? '').toString(),
+      'image': (product['image'] ?? '').toString(),
+      'price': product['price'],
+      'originalPrice': product['originalPrice'],
+      'category': (product['category'] ?? '').toString(),
+      'rating': product['rating'],
+      'reviews': product['reviews'],
+      'tag': (product['tag'] ?? '').toString(),
+    };
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadWishlistState();
+  }
+
+  @override
+  void didUpdateWidget(covariant ProductCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldId = _baseProductId((oldWidget.product['id'] ?? '').toString());
+    final newId = _productId();
+    if (oldId != newId || oldWidget.showHeartIcon != widget.showHeartIcon) {
+      _loadWishlistState();
+    }
+  }
+
+  Future<void> _loadWishlistState() async {
+    if (!widget.showHeartIcon) return;
+    final uid = context.read<AuthProvider>().user?.uid ?? '';
+    final productId = _productId();
+    if (uid.isEmpty || productId.isEmpty) return;
+
+    final key = _cacheKey(uid, productId);
+    final cached = _favoriteCache[key];
+    if (cached != null) {
+      if (mounted) setState(() => _isWishlisted = cached);
+      return;
+    }
+
+    try {
+      final liked = await _firestoreService.isProductFavorited(
+        uid: uid,
+        productId: productId,
+      );
+      _favoriteCache[key] = liked;
+      if (!mounted) return;
+      setState(() => _isWishlisted = liked);
+    } catch (_) {
+      // Keep UI resilient; heart remains default state.
+    }
+  }
+
+  Future<void> _toggleWishlist(BuildContext context) async {
+    if (_wishlistLoading) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final uid = context.read<AuthProvider>().user?.uid ?? '';
+    final productId = _productId();
+
+    if (uid.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Please sign in to save favourites.')),
+      );
+      return;
+    }
+    if (productId.isEmpty) return;
+
+    final next = !_isWishlisted;
+    final key = _cacheKey(uid, productId);
+
+    setState(() {
+      _isWishlisted = next;
+      _wishlistLoading = true;
+    });
+    _favoriteCache[key] = next;
+
+    try {
+      await _firestoreService.setProductFavorited(
+        uid: uid,
+        productId: productId,
+        isFavorited: next,
+        productData: _favoriteSnapshot(),
+      );
+    } catch (_) {
+      _favoriteCache[key] = !next;
+      if (!mounted) return;
+      setState(() => _isWishlisted = !next);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not update favourite. Try again.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _wishlistLoading = false);
+      }
+    }
+  }
+
   void _handleAddToCart(BuildContext context) {
-    if (onAddToCart != null) {
-      onAddToCart!(product);
+    if (widget.onAddToCart != null) {
+      widget.onAddToCart!(product);
       return;
     }
     context.read<CartModel>().add(product);
@@ -141,20 +271,37 @@ class ProductCard extends StatelessWidget {
                 ),
 
                 // Heart
-                if (showHeartIcon)
+                if (widget.showHeartIcon)
                   Positioned(
                     top: 6,
                     right: 6,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.favorite_border,
-                        size: 16,
-                        color: AppColors.textHint,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _toggleWishlist(context),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                        child: _wishlistLoading
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 1.8,
+                                  color: AppColors.primary,
+                                ),
+                              )
+                            : Icon(
+                                _isWishlisted
+                                    ? Icons.favorite
+                                    : Icons.favorite_border,
+                                size: 16,
+                                color: _isWishlisted
+                                    ? const Color(0xFFE53935)
+                                    : AppColors.textHint,
+                              ),
                       ),
                     ),
                   ),
@@ -163,7 +310,7 @@ class ProductCard extends StatelessWidget {
                 if (hasDiscount)
                   Positioned(
                     top: 6,
-                    right: showHeartIcon ? 30 : 6,
+                    right: widget.showHeartIcon ? 30 : 6,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 5,
@@ -185,7 +332,7 @@ class ProductCard extends StatelessWidget {
                   ),
 
                 // Bought earlier badge
-                if (showBoughtEarlierBadge)
+                if (widget.showBoughtEarlierBadge)
                   Positioned(
                     top: 6,
                     left: 6,

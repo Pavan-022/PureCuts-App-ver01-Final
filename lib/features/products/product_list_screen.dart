@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
@@ -27,6 +28,7 @@ class ProductListScreen extends StatefulWidget {
 }
 
 class _ProductListScreenState extends State<ProductListScreen> {
+  static const int _pageSize = 24;
   String _selectedCategory = 'All';
   String? _selectedBrand;
   String? _selectedTag;
@@ -43,6 +45,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
   bool _pendingVoiceSearch = false;
 
   final List<Map<String, dynamic>> _pagedProducts = [];
+  DocumentSnapshot<Map<String, dynamic>>? _lastProductDoc;
+  bool _hasMoreProducts = true;
+  bool _isPageLoading = false;
   bool _isInitialLoading = false;
   String? _pagingError;
 
@@ -116,6 +121,13 @@ class _ProductListScreenState extends State<ProductListScreen> {
 
   Future<void> _refreshProducts() async {
     await _loadFirstPage();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 280) {
+      _loadNextPage();
+    }
   }
 
   Future<void> _initSpeech() async {
@@ -372,16 +384,24 @@ class _ProductListScreenState extends State<ProductListScreen> {
       _isInitialLoading = true;
       _pagingError = null;
       _pagedProducts.clear();
+      _lastProductDoc = null;
+      _hasMoreProducts = true;
     });
 
     try {
-      final products = await _firestoreService.getProducts();
+      final page = await _firestoreService.getProductsPageFiltered(
+        limit: _pageSize,
+        category: _selectedCategory == 'All' ? null : _selectedCategory,
+        brand: (_selectedBrand ?? '').trim().isEmpty ? null : _selectedBrand,
+      );
 
       if (!mounted) return;
       setState(() {
         _pagedProducts
           ..clear()
-          ..addAll(products.map((p) => p.toProductMap()));
+          ..addAll(page.products.map((p) => p.toProductMap()));
+        _lastProductDoc = page.lastDocument;
+        _hasMoreProducts = page.hasMore;
       });
     } catch (e) {
       if (!mounted) return;
@@ -389,6 +409,39 @@ class _ProductListScreenState extends State<ProductListScreen> {
     } finally {
       if (mounted) {
         setState(() => _isInitialLoading = false);
+      }
+    }
+  }
+
+  Future<void> _loadNextPage() async {
+    if (_isInitialLoading || _isPageLoading || !_hasMoreProducts) return;
+
+    setState(() {
+      _isPageLoading = true;
+    });
+
+    try {
+      final page = await _firestoreService.getProductsPageFiltered(
+        limit: _pageSize,
+        startAfterDoc: _lastProductDoc,
+        category: _selectedCategory == 'All' ? null : _selectedCategory,
+        brand: (_selectedBrand ?? '').trim().isEmpty ? null : _selectedBrand,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _pagedProducts.addAll(page.products.map((p) => p.toProductMap()));
+        _lastProductDoc = page.lastDocument;
+        _hasMoreProducts = page.hasMore;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _pagingError = e.toString());
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPageLoading = false;
+        });
       }
     }
   }
@@ -414,6 +467,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
     }
 
     _initSpeech();
+    _scrollController.addListener(_onScroll);
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadFirstPage());
   }
@@ -421,6 +475,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
   @override
   void dispose() {
     _speech.stop();
+    _scrollController.removeListener(_onScroll);
     _searchCtrl.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -439,11 +494,6 @@ class _ProductListScreenState extends State<ProductListScreen> {
     }
 
     final products = _pagedProducts
-        .where((p) {
-          if (_selectedCategory == 'All') return true;
-          return (p['category'] ?? '').toString().trim().toLowerCase() ==
-              _selectedCategory.trim().toLowerCase();
-        })
         .where((p) {
           if (_searchQuery.trim().isEmpty) return true;
           final search = _normalizeToken(_searchQuery);
@@ -474,33 +524,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
       );
     }
 
-    final legacyProducts = home
-        .filteredProducts(
-          category: _selectedCategory,
-          query: _searchQuery,
-          sort: _sort,
-        )
-        .where((p) {
-          if ((_selectedBrand ?? '').trim().isEmpty) return true;
-          return (p['brand'] ?? '').toString().trim().toLowerCase() ==
-              _selectedBrand!.trim().toLowerCase();
-        })
-        .where((p) {
-          if ((_selectedTag ?? '').trim().isEmpty) return true;
-          return _matchesSelectedTag(_tagSearchSource(p));
-        })
-        .toList();
-
-    final hasActiveFiltering =
-        _selectedCategory != 'All' ||
-        (_selectedBrand ?? '').trim().isNotEmpty ||
-        (_selectedTag ?? '').trim().isNotEmpty ||
-        _searchQuery.trim().isNotEmpty ||
-        _sort != 'popular';
-
-    final displayedProducts = hasActiveFiltering && legacyProducts.isNotEmpty
-        ? legacyProducts
-        : products;
+    final displayedProducts = products;
 
     final title = (_selectedTag ?? '').trim().isNotEmpty
         ? _selectedTag!
@@ -652,7 +676,11 @@ class _ProductListScreenState extends State<ProductListScreen> {
                 final cat = categories[i];
                 final selected = cat == _selectedCategory;
                 return GestureDetector(
-                  onTap: () => setState(() => _selectedCategory = cat),
+                  onTap: () async {
+                    if (_selectedCategory == cat) return;
+                    setState(() => _selectedCategory = cat);
+                    await _loadFirstPage();
+                  },
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
                     padding: const EdgeInsets.symmetric(
@@ -757,7 +785,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
             child: Row(
               children: [
                 Text(
-                  '${products.length} products',
+                  '${displayedProducts.length} products',
                   style: const TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 13,

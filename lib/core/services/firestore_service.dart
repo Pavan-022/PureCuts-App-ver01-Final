@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'package:purecuts/core/models/product_model.dart';
 import 'package:purecuts/core/models/user_model.dart';
+import 'package:purecuts/core/constants/feature_flags.dart';
 import 'package:purecuts/features/products/detail/product_models.dart';
 
 class FirestoreService {
@@ -19,6 +20,25 @@ class FirestoreService {
   static const String _productSharesCollection = 'productShares';
   static const String _productReviewsCollection = 'productReviews';
   static const String _bannersCollection = 'banners';
+
+  int _clampLimit({
+    required int value,
+    required int fallback,
+    required int max,
+  }) {
+    final safe = value <= 0 ? fallback : value;
+    return safe > max ? max : safe;
+  }
+
+  void _traceQuery(
+    String operation,
+    Stopwatch stopwatch, {
+    Map<String, Object?> details = const {},
+  }) {
+    if (!FeatureFlags.enablePerfTelemetry || !kDebugMode) return;
+    final payload = {'elapsedMs': stopwatch.elapsedMilliseconds, ...details};
+    debugPrint('[FirestoreService][$operation] $payload');
+  }
 
   bool _isPublishedProduct(Map<String, dynamic> data) {
     final visibility = (data['visibility'] ?? 'publish')
@@ -41,10 +61,15 @@ class FirestoreService {
     int limit = _defaultProductPageBatch,
     DocumentSnapshot<Map<String, dynamic>>? startAfterDoc,
   }) async {
-    final safeLimit = limit <= 0 ? _defaultProductPageBatch : limit;
+    final safeLimit = _clampLimit(
+      value: limit,
+      fallback: _defaultProductPageBatch,
+      max: FeatureFlags.maxProductPageSize,
+    );
     final collected = <ProductModel>[];
     var cursor = startAfterDoc;
     var hasMore = true;
+    final sw = Stopwatch()..start();
 
     while (collected.length < safeLimit && hasMore) {
       Query<Map<String, dynamic>> query = _db
@@ -74,6 +99,90 @@ class FirestoreService {
       }
     }
 
+    _traceQuery(
+      'getProductsPage',
+      sw,
+      details: {
+        'requestedLimit': limit,
+        'appliedLimit': safeLimit,
+        'returned': collected.length,
+        'hasMore': hasMore,
+      },
+    );
+    return (products: collected, lastDocument: cursor, hasMore: hasMore);
+  }
+
+  Future<
+    ({
+      List<ProductModel> products,
+      DocumentSnapshot<Map<String, dynamic>>? lastDocument,
+      bool hasMore,
+    })
+  >
+  getProductsPageFiltered({
+    int limit = _defaultProductPageBatch,
+    DocumentSnapshot<Map<String, dynamic>>? startAfterDoc,
+    String? category,
+    String? brand,
+  }) async {
+    final cleanCategory = (category ?? '').trim();
+    final cleanBrand = (brand ?? '').trim();
+    final safeLimit = _clampLimit(
+      value: limit,
+      fallback: _defaultProductPageBatch,
+      max: FeatureFlags.maxProductPageSize,
+    );
+    final collected = <ProductModel>[];
+    var cursor = startAfterDoc;
+    var hasMore = true;
+    final sw = Stopwatch()..start();
+
+    while (collected.length < safeLimit && hasMore) {
+      Query<Map<String, dynamic>> query = _db
+          .collection(_productsCollection)
+          .orderBy(FieldPath.documentId)
+          .limit(safeLimit);
+
+      if (cleanCategory.isNotEmpty) {
+        query = query.where('category', isEqualTo: cleanCategory);
+      }
+      if (cleanBrand.isNotEmpty) {
+        query = query.where('brand', isEqualTo: cleanBrand);
+      }
+      if (cursor != null) {
+        query = query.startAfterDocument(cursor);
+      }
+
+      final snap = await query.get();
+      if (snap.docs.isEmpty) {
+        hasMore = false;
+        break;
+      }
+
+      cursor = snap.docs.last;
+      for (final doc in snap.docs) {
+        if (!_isPublishedProduct(doc.data())) continue;
+        collected.add(ProductModel.fromMap(doc.data(), doc.id));
+        if (collected.length >= safeLimit) break;
+      }
+
+      if (snap.docs.length < safeLimit) {
+        hasMore = false;
+      }
+    }
+
+    _traceQuery(
+      'getProductsPageFiltered',
+      sw,
+      details: {
+        'requestedLimit': limit,
+        'appliedLimit': safeLimit,
+        'category': cleanCategory,
+        'brand': cleanBrand,
+        'returned': collected.length,
+        'hasMore': hasMore,
+      },
+    );
     return (products: collected, lastDocument: cursor, hasMore: hasMore);
   }
 
@@ -83,6 +192,62 @@ class FirestoreService {
     final sep = id.indexOf('::');
     if (sep <= 0) return id;
     return id.substring(0, sep);
+  }
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _queryOrdersByUid({
+    required String uid,
+    int maxOrders = 200,
+  }) async {
+    final safeLimit = _clampLimit(
+      value: maxOrders,
+      fallback: 200,
+      max: FeatureFlags.maxOrdersFetch,
+    );
+    try {
+      final ordered = await _db
+          .collection(_ordersCollection)
+          .where('uid', isEqualTo: uid)
+          .orderBy('createdAt', descending: true)
+          .limit(safeLimit)
+          .get();
+      return ordered.docs;
+    } catch (_) {
+      final plain = await _db
+          .collection(_ordersCollection)
+          .where('uid', isEqualTo: uid)
+          .limit(safeLimit)
+          .get();
+      return plain.docs;
+    }
+  }
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
+  _queryLegacyOrdersByUid({required String uid, int maxOrders = 200}) async {
+    final safeLimit = _clampLimit(
+      value: maxOrders,
+      fallback: 200,
+      max: FeatureFlags.maxOrdersFetch,
+    );
+    final snapshots = await Future.wait([
+      _db
+          .collection(_ordersCollection)
+          .where('userId', isEqualTo: uid)
+          .limit(safeLimit)
+          .get(),
+      _db
+          .collection(_ordersCollection)
+          .where('customerId', isEqualTo: uid)
+          .limit(safeLimit)
+          .get(),
+    ]);
+
+    final merged = <String, QueryDocumentSnapshot<Map<String, dynamic>>>{};
+    for (final snap in snapshots) {
+      for (final doc in snap.docs) {
+        merged[doc.id] = doc;
+      }
+    }
+    return merged.values.toList(growable: false);
   }
 
   // ── Create user profile (only if it doesn't already exist) ───────────────
@@ -705,41 +870,167 @@ class FirestoreService {
   }
 
   /// Fetch user orders from Firestore
-  Future<List<Map<String, dynamic>>> getUserOrders({
+  Future<
+    ({
+      List<Map<String, dynamic>> orders,
+      DocumentSnapshot<Map<String, dynamic>>? lastDocument,
+      bool hasMore,
+      bool usedLegacyFallback,
+    })
+  >
+  getUserOrdersPage({
     required String uid,
+    int limit = 20,
+    DocumentSnapshot<Map<String, dynamic>>? startAfterDoc,
   }) async {
     final cleanUid = uid.trim();
-    if (cleanUid.isEmpty) return const [];
+    if (cleanUid.isEmpty) {
+      return (
+        orders: const <Map<String, dynamic>>[],
+        lastDocument: null,
+        hasMore: false,
+        usedLegacyFallback: false,
+      );
+    }
+
+    final safeLimit = _clampLimit(
+      value: limit,
+      fallback: 20,
+      max: FeatureFlags.maxOrdersPageSize,
+    );
+    final sw = Stopwatch()..start();
+
+    Query<Map<String, dynamic>> canonicalQuery = _db
+        .collection(_ordersCollection)
+        .where('uid', isEqualTo: cleanUid)
+        .orderBy('createdAt', descending: true)
+        .limit(safeLimit);
+
+    if (startAfterDoc != null) {
+      canonicalQuery = canonicalQuery.startAfterDocument(startAfterDoc);
+    }
 
     try {
-      final snapshotByUid = await _db
-          .collection(_ordersCollection)
-          .where('uid', isEqualTo: cleanUid)
-          .get();
+      final canonicalSnap = await canonicalQuery.get();
+      if (canonicalSnap.docs.isNotEmpty || startAfterDoc != null) {
+        final orders = canonicalSnap.docs.map((doc) => doc.data()).toList();
+        final hasMore = canonicalSnap.docs.length >= safeLimit;
+        final lastDoc = canonicalSnap.docs.isNotEmpty
+            ? canonicalSnap.docs.last
+            : startAfterDoc;
 
-      final snapshotByUserId = await _db
-          .collection(_ordersCollection)
-          .where('userId', isEqualTo: cleanUid)
-          .get();
+        _traceQuery(
+          'getUserOrdersPage',
+          sw,
+          details: {
+            'uid': cleanUid,
+            'requestedLimit': limit,
+            'appliedLimit': safeLimit,
+            'returned': orders.length,
+            'hasMore': hasMore,
+            'legacyFallback': false,
+          },
+        );
+        return (
+          orders: orders,
+          lastDocument: lastDoc,
+          hasMore: hasMore,
+          usedLegacyFallback: false,
+        );
+      }
 
-      final snapshotByCustomerId = await _db
-          .collection(_ordersCollection)
-          .where('customerId', isEqualTo: cleanUid)
-          .get();
+      final legacyDocs = await _queryLegacyOrdersByUid(
+        uid: cleanUid,
+        maxOrders: safeLimit,
+      );
+
+      DateTime toDate(dynamic value) {
+        if (value is Timestamp) return value.toDate();
+        if (value is DateTime) return value;
+        if (value is num) {
+          return DateTime.fromMillisecondsSinceEpoch(value.toInt());
+        }
+        return DateTime.fromMillisecondsSinceEpoch(0);
+      }
 
       final merged = <String, Map<String, dynamic>>{};
-      for (final doc in [
-        ...snapshotByUid.docs,
-        ...snapshotByUserId.docs,
-        ...snapshotByCustomerId.docs,
-      ]) {
+      for (final doc in legacyDocs) {
         final data = doc.data();
         final key = (data['orderId'] ?? data['orderRef'] ?? doc.id).toString();
         merged[key] = data;
       }
 
-      return merged.values.toList(growable: false);
+      final rows = merged.values.toList(growable: false)
+        ..sort(
+          (a, b) => toDate(b['createdAt']).compareTo(toDate(a['createdAt'])),
+        );
+
+      _traceQuery(
+        'getUserOrdersPage',
+        sw,
+        details: {
+          'uid': cleanUid,
+          'requestedLimit': limit,
+          'appliedLimit': safeLimit,
+          'returned': rows.length,
+          'hasMore': false,
+          'legacyFallback': true,
+        },
+      );
+      return (
+        orders: rows,
+        lastDocument: null,
+        hasMore: false,
+        usedLegacyFallback: true,
+      );
+    } catch (_) {
+      final fallbackQuery = _db
+          .collection(_ordersCollection)
+          .where('uid', isEqualTo: cleanUid)
+          .limit(safeLimit);
+      final fallbackSnap = await fallbackQuery.get();
+      final orders = fallbackSnap.docs.map((doc) => doc.data()).toList();
+      final hasMore = fallbackSnap.docs.length >= safeLimit;
+      final lastDoc = fallbackSnap.docs.isNotEmpty
+          ? fallbackSnap.docs.last
+          : null;
+
+      _traceQuery(
+        'getUserOrdersPage',
+        sw,
+        details: {
+          'uid': cleanUid,
+          'requestedLimit': limit,
+          'appliedLimit': safeLimit,
+          'returned': orders.length,
+          'hasMore': hasMore,
+          'legacyFallback': false,
+          'queryFallback': true,
+        },
+      );
+      return (
+        orders: orders,
+        lastDocument: lastDoc,
+        hasMore: hasMore,
+        usedLegacyFallback: false,
+      );
+    }
+  }
+
+  /// Fetch user orders from Firestore
+  Future<List<Map<String, dynamic>>> getUserOrders({
+    required String uid,
+    int maxOrders = 200,
+  }) async {
+    try {
+      final page = await getUserOrdersPage(
+        uid: uid,
+        limit: maxOrders,
+        startAfterDoc: null,
+      );
+      return page.orders;
     } catch (e, st) {
+      final cleanUid = uid.trim();
       debugPrint(
         '[FirestoreService] getUserOrders failed for UID=$cleanUid: $e\n$st',
       );
@@ -768,20 +1059,10 @@ class FirestoreService {
 
     if (purchasedIds.isEmpty) {
       try {
-        final orderSnaps = await Future.wait([
-          _db
-              .collection(_ordersCollection)
-              .where('uid', isEqualTo: cleanUid)
-              .get(),
-          _db
-              .collection(_ordersCollection)
-              .where('userId', isEqualTo: cleanUid)
-              .get(),
-          _db
-              .collection(_ordersCollection)
-              .where('customerId', isEqualTo: cleanUid)
-              .get(),
-        ]);
+        final orderDocs = await _queryOrdersByUid(uid: cleanUid);
+        final docs = orderDocs.isNotEmpty
+            ? orderDocs
+            : await _queryLegacyOrdersByUid(uid: cleanUid);
 
         DateTime _toDate(dynamic value) {
           if (value is Timestamp) return value.toDate();
@@ -792,14 +1073,12 @@ class FirestoreService {
 
         final mergedOrderDocs = <Map<String, dynamic>>[];
         final seenOrderKeys = <String>{};
-        for (final snap in orderSnaps) {
-          for (final doc in snap.docs) {
-            final data = doc.data();
-            final key = (data['orderId'] ?? data['orderRef'] ?? doc.id)
-                .toString();
-            if (seenOrderKeys.add(key)) {
-              mergedOrderDocs.add(data);
-            }
+        for (final doc in docs) {
+          final data = doc.data();
+          final key = (data['orderId'] ?? data['orderRef'] ?? doc.id)
+              .toString();
+          if (seenOrderKeys.add(key)) {
+            mergedOrderDocs.add(data);
           }
         }
 
@@ -867,20 +1146,10 @@ class FirestoreService {
     }
 
     try {
-      final orderSnapshots = await Future.wait([
-        _db
-            .collection(_ordersCollection)
-            .where('uid', isEqualTo: cleanUid)
-            .get(),
-        _db
-            .collection(_ordersCollection)
-            .where('userId', isEqualTo: cleanUid)
-            .get(),
-        _db
-            .collection(_ordersCollection)
-            .where('customerId', isEqualTo: cleanUid)
-            .get(),
-      ]);
+      final canonical = await _queryOrdersByUid(uid: cleanUid);
+      final orderDocs = canonical.isNotEmpty
+          ? canonical
+          : await _queryLegacyOrdersByUid(uid: cleanUid);
 
       final latestMetaByProduct = <String, Map<String, dynamic>>{};
       DateTime _toDate(dynamic value) {
@@ -892,35 +1161,33 @@ class FirestoreService {
         return DateTime.fromMillisecondsSinceEpoch(0);
       }
 
-      for (final snap in orderSnapshots) {
-        for (final doc in snap.docs) {
-          final data = doc.data();
-          final createdAt = _toDate(data['createdAt']);
-          final orderId = (data['orderId'] ?? data['orderRef'] ?? doc.id)
-              .toString();
-          final status = (data['status'] ?? data['orderStatus'] ?? 'placed')
-              .toString();
-          final paymentMethod = (data['paymentMethod'] ?? '').toString();
-          final items = (data['items'] as List?) ?? const [];
+      for (final doc in orderDocs) {
+        final data = doc.data();
+        final createdAt = _toDate(data['createdAt']);
+        final orderId = (data['orderId'] ?? data['orderRef'] ?? doc.id)
+            .toString();
+        final status = (data['status'] ?? data['orderStatus'] ?? 'placed')
+            .toString();
+        final paymentMethod = (data['paymentMethod'] ?? '').toString();
+        final items = (data['items'] as List?) ?? const [];
 
-          for (final item in items) {
-            if (item is! Map) continue;
-            final normalized = item.map((k, v) => MapEntry(k.toString(), v));
-            final pid = _baseProductId(
-              (normalized['id'] ?? normalized['productId'] ?? '').toString(),
-            );
-            if (pid.isEmpty) continue;
+        for (final item in items) {
+          if (item is! Map) continue;
+          final normalized = item.map((k, v) => MapEntry(k.toString(), v));
+          final pid = _baseProductId(
+            (normalized['id'] ?? normalized['productId'] ?? '').toString(),
+          );
+          if (pid.isEmpty) continue;
 
-            final existing = latestMetaByProduct[pid];
-            if (existing == null ||
-                _toDate(existing['lastOrderedAt']).isBefore(createdAt)) {
-              latestMetaByProduct[pid] = {
-                'lastOrderedAt': createdAt,
-                'lastOrderId': orderId,
-                'lastOrderStatus': status,
-                'lastPaymentMethod': paymentMethod,
-              };
-            }
+          final existing = latestMetaByProduct[pid];
+          if (existing == null ||
+              _toDate(existing['lastOrderedAt']).isBefore(createdAt)) {
+            latestMetaByProduct[pid] = {
+              'lastOrderedAt': createdAt,
+              'lastOrderId': orderId,
+              'lastOrderStatus': status,
+              'lastPaymentMethod': paymentMethod,
+            };
           }
         }
       }
@@ -977,7 +1244,23 @@ class FirestoreService {
           .where('productIds', arrayContains: cleanProductId)
           .limit(1)
           .get();
-      return orders.docs.isNotEmpty;
+      if (orders.docs.isNotEmpty) return true;
+
+      final legacyUserIdOrders = await _db
+          .collection(_ordersCollection)
+          .where('userId', isEqualTo: cleanUid)
+          .where('productIds', arrayContains: cleanProductId)
+          .limit(1)
+          .get();
+      if (legacyUserIdOrders.docs.isNotEmpty) return true;
+
+      final legacyCustomerOrders = await _db
+          .collection(_ordersCollection)
+          .where('customerId', isEqualTo: cleanUid)
+          .where('productIds', arrayContains: cleanProductId)
+          .limit(1)
+          .get();
+      return legacyCustomerOrders.docs.isNotEmpty;
     } catch (_) {
       return false;
     }

@@ -1,9 +1,13 @@
 import 'package:flutter/foundation.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:purecuts/core/constants/app_constants.dart';
 import 'package:purecuts/core/models/product_model.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
 
 class HomeProvider extends ChangeNotifier {
+  static const int _homeInitialProductLimit = 48;
+  static const int _homeMaxProductPool = 240;
+  static const int _homeMinFeaturedPool = 24;
   static const Set<String> _hiddenCategoryNames = {
     'nail',
     'beard',
@@ -252,6 +256,25 @@ class HomeProvider extends ChangeNotifier {
     return queryTokens.every(searchableText.contains);
   }
 
+  bool _hasFeaturedPlacement(ProductModel product) {
+    final map = product.toProductMap();
+    final section =
+        (map['homeSection'] ?? map['home_section'] ?? map['section'] ?? '')
+            .toString()
+            .trim();
+    final tag = (map['tag'] ?? '').toString().trim();
+
+    if (section.isNotEmpty || tag.isNotEmpty) return true;
+
+    return map['showInStartFirstOrder'] == true ||
+        map['showInHotDeals'] == true ||
+        map['showInRecommendedSalon'] == true ||
+        map['isRecommended'] == true ||
+        map['showInMostBought'] == true ||
+        map['showInPopularProducts'] == true ||
+        map['isPopular'] == true;
+  }
+
   Map<String, dynamic> _normalizeCategory(Map<String, dynamic> category) {
     return {
       ...category,
@@ -350,20 +373,38 @@ class HomeProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final results = await Future.wait([
-        _service.getProducts(),
+      final fetched = <ProductModel>[];
+      DocumentSnapshot<Map<String, dynamic>>? cursor;
+      var hasMore = true;
+
+      while (hasMore && fetched.length < _homeMaxProductPool) {
+        final page = await _service.getProductsPage(
+          limit: _homeInitialProductLimit,
+          startAfterDoc: cursor,
+        );
+
+        fetched.addAll(page.products);
+        cursor = page.lastDocument;
+        hasMore = page.hasMore;
+
+        final featuredCount = fetched.where(_hasFeaturedPlacement).length;
+        final reachedTarget = featuredCount >= _homeMinFeaturedPool;
+        if (reachedTarget) break;
+      }
+
+      final results = await Future.wait<List<Map<String, dynamic>>>([
         _service.getBanners(),
         _service.getCategories(),
         _service.getSubCategories(),
         _service.getSubSubCategories(),
         _service.getBrands(),
       ]);
-      _products = results[0] as List<ProductModel>;
-      _banners = results[1] as List<Map<String, dynamic>>;
-      final cats = results[2] as List<Map<String, dynamic>>;
-      final subCats = results[3] as List<Map<String, dynamic>>;
-      final subSubCats = results[4] as List<Map<String, dynamic>>;
-      final brands = results[5] as List<Map<String, dynamic>>;
+      _products = fetched;
+      _banners = results[0];
+      final cats = results[1];
+      final subCats = results[2];
+      final subSubCats = results[3];
+      final brands = results[4];
       // If Firestore has categories, use them; otherwise fall back to constants
       if (cats.isNotEmpty) _categories = cats;
       if (subCats.isNotEmpty) _subCategories = subCats;

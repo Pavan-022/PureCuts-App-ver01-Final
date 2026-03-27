@@ -1,5 +1,7 @@
 // lib/core/models/order_provider.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:purecuts/core/constants/feature_flags.dart';
 import 'package:purecuts/core/models/order_model.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
 
@@ -17,6 +19,10 @@ class OrderProvider extends ChangeNotifier {
   // Orders list
   final List<OrderModel> _orders = [];
   bool _ordersLoading = false;
+  bool _ordersPagingLoading = false;
+  bool _ordersHasMore = true;
+  bool _ordersLegacyMode = false;
+  DocumentSnapshot<Map<String, dynamic>>? _ordersCursor;
   String? _ordersLoadedUid;
   String? _ordersError;
 
@@ -26,6 +32,8 @@ class OrderProvider extends ChangeNotifier {
 
   List<OrderModel> get orders => _orders;
   bool get ordersLoading => _ordersLoading;
+  bool get ordersPagingLoading => _ordersPagingLoading;
+  bool get hasMoreOrders => _ordersHasMore;
   String? get ordersError => _ordersError;
 
   bool hasBought(String productId) => _boughtProducts.containsKey(productId);
@@ -103,15 +111,41 @@ class OrderProvider extends ChangeNotifier {
 
     _ordersLoading = true;
     _ordersError = null;
+    _ordersPagingLoading = false;
     notifyListeners();
 
     try {
-      final orderDocs = await _firestoreService.getUserOrders(uid: cleanUid);
+      _ordersCursor = null;
+      _ordersHasMore = true;
+      _ordersLegacyMode = false;
+
       _orders.clear();
-      for (final doc in orderDocs) {
-        _orders.add(OrderModel.fromMap(doc));
+
+      if (!FeatureFlags.enableOrdersPaging) {
+        final orderDocs = await _firestoreService.getUserOrders(
+          uid: cleanUid,
+          maxOrders: FeatureFlags.maxOrdersFetch,
+        );
+        for (final doc in orderDocs) {
+          _orders.add(OrderModel.fromMap(doc));
+        }
+        _orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        _ordersHasMore = false;
+      } else {
+        final page = await _firestoreService.getUserOrdersPage(
+          uid: cleanUid,
+          limit: FeatureFlags.defaultOrdersPageSize,
+          startAfterDoc: null,
+        );
+        for (final row in page.orders) {
+          _orders.add(OrderModel.fromMap(row));
+        }
+        _orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        _ordersCursor = page.lastDocument;
+        _ordersHasMore = page.hasMore;
+        _ordersLegacyMode = page.usedLegacyFallback;
       }
-      _orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
       _ordersLoadedUid = cleanUid;
       _ordersError = null;
     } catch (e) {
@@ -119,6 +153,59 @@ class OrderProvider extends ChangeNotifier {
       _ordersError = 'Failed to load orders. Please try again.';
     } finally {
       _ordersLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> fetchMoreUserOrders({required String uid}) async {
+    final cleanUid = uid.trim();
+    if (cleanUid.isEmpty) return;
+    if (!FeatureFlags.enableOrdersPaging) return;
+    if (_ordersLoading || _ordersPagingLoading || !_ordersHasMore) return;
+    if (_ordersLoadedUid != cleanUid) return;
+    if (_ordersLegacyMode) {
+      _ordersHasMore = false;
+      notifyListeners();
+      return;
+    }
+
+    _ordersPagingLoading = true;
+    notifyListeners();
+
+    try {
+      final page = await _firestoreService.getUserOrdersPage(
+        uid: cleanUid,
+        limit: FeatureFlags.defaultOrdersPageSize,
+        startAfterDoc: _ordersCursor,
+      );
+
+      final existingKeys = _orders
+          .map(
+            (o) => (o.orderId.trim().isNotEmpty
+                ? o.orderId
+                : o.hashCode.toString()),
+          )
+          .toSet();
+
+      for (final row in page.orders) {
+        final model = OrderModel.fromMap(row);
+        final key = model.orderId.trim().isNotEmpty
+            ? model.orderId
+            : model.hashCode.toString();
+        if (existingKeys.add(key)) {
+          _orders.add(model);
+        }
+      }
+
+      _orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      _ordersCursor = page.lastDocument;
+      _ordersHasMore = page.hasMore;
+      _ordersLegacyMode = page.usedLegacyFallback;
+    } catch (e) {
+      debugPrint('[OrderProvider] fetchMoreUserOrders error: $e');
+      _ordersHasMore = false;
+    } finally {
+      _ordersPagingLoading = false;
       notifyListeners();
     }
   }
@@ -142,6 +229,10 @@ class OrderProvider extends ChangeNotifier {
     _orders.clear();
     _ordersLoadedUid = null;
     _ordersLoading = false;
+    _ordersPagingLoading = false;
+    _ordersHasMore = true;
+    _ordersLegacyMode = false;
+    _ordersCursor = null;
     _ordersError = null;
     notifyListeners();
   }
