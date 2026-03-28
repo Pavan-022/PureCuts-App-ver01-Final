@@ -49,9 +49,85 @@ class _ProductListScreenState extends State<ProductListScreen> {
   bool _hasMoreProducts = true;
   bool _isPageLoading = false;
   bool _isInitialLoading = false;
+  bool _isSearchHydrating = false;
   String? _pagingError;
 
   String _searchQuery = '';
+
+  String _scopeKey() {
+    final category = _selectedCategory.trim().toLowerCase();
+    final brand = (_selectedBrand ?? '').trim().toLowerCase();
+    return '$category|$brand';
+  }
+
+  bool get _needsFullScopeForSearch {
+    final hasQuery = _searchQuery.trim().isNotEmpty;
+    final hasTagFilter = (_selectedTag ?? '').trim().isNotEmpty;
+    return hasQuery || hasTagFilter;
+  }
+
+  Future<void> _hydrateScopeForSearchIfNeeded() async {
+    if (!_needsFullScopeForSearch) return;
+    if (_isInitialLoading || _isPageLoading || _isSearchHydrating) return;
+
+    final initialScope = _scopeKey();
+    setState(() {
+      _isSearchHydrating = true;
+      _pagingError = null;
+    });
+
+    try {
+      DocumentSnapshot<Map<String, dynamic>>? cursor;
+      var hasMore = true;
+      final fetched = <Map<String, dynamic>>[];
+      var guard = 0;
+
+      while (hasMore && guard < 200) {
+        guard += 1;
+
+        if (!mounted || _scopeKey() != initialScope) break;
+
+        final page = await _firestoreService.getProductsPageFiltered(
+          limit: 120,
+          startAfterDoc: cursor,
+          category: _selectedCategory == 'All' ? null : _selectedCategory,
+          brand: (_selectedBrand ?? '').trim().isEmpty ? null : _selectedBrand,
+        );
+
+        fetched.addAll(page.products.map((p) => p.toProductMap()));
+        cursor = page.lastDocument;
+        hasMore = page.hasMore && cursor != null;
+
+        if (!hasMore) break;
+      }
+
+      if (!mounted || _scopeKey() != initialScope) return;
+
+      setState(() {
+        final map = <String, Map<String, dynamic>>{};
+        for (final p in _pagedProducts) {
+          final id = (p['id'] ?? '').toString();
+          if (id.isNotEmpty) map[id] = p;
+        }
+        for (final p in fetched) {
+          final id = (p['id'] ?? '').toString();
+          if (id.isNotEmpty) map[id] = p;
+        }
+        _pagedProducts
+          ..clear()
+          ..addAll(map.values);
+        _lastProductDoc = cursor ?? _lastProductDoc;
+        _hasMoreProducts = hasMore;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _pagingError = e.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isSearchHydrating = false);
+      }
+    }
+  }
 
   String _speechErrorMessage(dynamic error) {
     final rawMsg = (error?.errorMsg ?? error?.toString() ?? '').toString();
@@ -80,15 +156,30 @@ class _ProductListScreenState extends State<ProductListScreen> {
         .replaceAll(RegExp(r'\s+'), ' ');
   }
 
+  String _compactToken(String value) {
+    return _normalizeToken(value).replaceAll(RegExp(r'[^a-z0-9]+'), '');
+  }
+
   bool _matchesSelectedTag(String rawTag) {
     final selected = _normalizeToken(_selectedTag ?? '');
     if (selected.isEmpty) return true;
 
+    final compactSelected = _compactToken(selected);
+
     final normalizedTag = _normalizeToken(rawTag);
     if (normalizedTag.isEmpty) return false;
 
+    final compactTag = _compactToken(normalizedTag);
+
     if (normalizedTag.contains(selected) || selected.contains(normalizedTag)) {
       return true;
+    }
+
+    if (compactSelected.isNotEmpty && compactTag.isNotEmpty) {
+      if (compactTag.contains(compactSelected) ||
+          compactSelected.contains(compactTag)) {
+        return true;
+      }
     }
 
     final tokens = normalizedTag
@@ -97,7 +188,13 @@ class _ProductListScreenState extends State<ProductListScreen> {
         .where((t) => t.isNotEmpty);
 
     return tokens.any(
-      (token) => token.contains(selected) || selected.contains(token),
+      (token) =>
+          token.contains(selected) ||
+          selected.contains(token) ||
+          (_compactToken(token).isNotEmpty &&
+              compactSelected.isNotEmpty &&
+              (_compactToken(token).contains(compactSelected) ||
+                  compactSelected.contains(_compactToken(token)))),
     );
   }
 
@@ -108,6 +205,12 @@ class _ProductListScreenState extends State<ProductListScreen> {
     final multiTags = rawTags is List
         ? rawTags
               .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toList()
+        : rawTags is String
+        ? rawTags
+              .split(RegExp(r'[,|/&;]+'))
+              .map((e) => e.trim())
               .where((e) => e.isNotEmpty)
               .toList()
         : <String>[];
@@ -129,9 +232,20 @@ class _ProductListScreenState extends State<ProductListScreen> {
         .where((t) => t.isNotEmpty)
         .toList(growable: false);
 
-    final name = _normalizeToken((product['name'] ?? '').toString());
-    final brand = _normalizeToken((product['brand'] ?? '').toString());
-    final category = _normalizeToken((product['category'] ?? '').toString());
+    final name = _normalizeToken(
+      (product['name'] ?? product['title'] ?? product['productName'] ?? '')
+          .toString(),
+    );
+    final brand = _normalizeToken(
+      (product['brand'] ??
+              product['brandName'] ??
+              product['manufacturer'] ??
+              '')
+          .toString(),
+    );
+    final category = _normalizeToken(
+      (product['category'] ?? product['categoryName'] ?? '').toString(),
+    );
     final subCategory = _normalizeToken(
       (product['subCategory'] ?? product['subcategory'] ?? '').toString(),
     );
@@ -141,14 +255,28 @@ class _ProductListScreenState extends State<ProductListScreen> {
     final tag = _normalizeToken((product['tag'] ?? '').toString());
     final tags = _normalizeToken(_tagSearchSource(product));
     final description = _normalizeToken(
-      (product['description'] ?? '').toString(),
+      (product['description'] ??
+              product['shortDescription'] ??
+              product['highlights'] ??
+              '')
+          .toString(),
     );
+    final productType = _normalizeToken(
+      (product['productType'] ?? product['type'] ?? '').toString(),
+    );
+    final sku = _normalizeToken((product['sku'] ?? '').toString());
 
     final searchable =
-        '$name $brand $category $subCategory $subSubCategory $tag $tags $description';
+        '$name $brand $category $subCategory $subSubCategory $tag $tags $description $productType $sku';
+    final compactSearchable = _compactToken(searchable);
 
     // Require every query token to be present somewhere in searchable text.
-    return tokens.every((token) => searchable.contains(token));
+    return tokens.every((token) {
+      if (searchable.contains(token)) return true;
+      final compactToken = _compactToken(token);
+      if (compactToken.isEmpty) return false;
+      return compactSearchable.contains(compactToken);
+    });
   }
 
   Future<void> _refreshProducts() async {
@@ -350,7 +478,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
           title: Text(title),
           content: ValueListenableBuilder<String>(
             valueListenable: transcript,
-            builder: (_, text, __) {
+            builder: (_, text, _) {
               return Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -441,12 +569,20 @@ class _ProductListScreenState extends State<ProductListScreen> {
     } finally {
       if (mounted) {
         setState(() => _isInitialLoading = false);
+        // Trigger a second-phase hydration AFTER initial loading flips false,
+        // otherwise _hydrateScopeForSearchIfNeeded exits early.
+        _hydrateScopeForSearchIfNeeded();
       }
     }
   }
 
   Future<void> _loadNextPage() async {
-    if (_isInitialLoading || _isPageLoading || !_hasMoreProducts) return;
+    if (_isInitialLoading ||
+        _isPageLoading ||
+        _isSearchHydrating ||
+        !_hasMoreProducts) {
+      return;
+    }
 
     setState(() {
       _isPageLoading = true;
@@ -632,7 +768,10 @@ class _ProductListScreenState extends State<ProductListScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: TextField(
               controller: _searchCtrl,
-              onChanged: (v) => setState(() => _searchQuery = v),
+              onChanged: (v) {
+                setState(() => _searchQuery = v);
+                _hydrateScopeForSearchIfNeeded();
+              },
               decoration: InputDecoration(
                 hintText: 'Search products...',
                 hintStyle: const TextStyle(
@@ -809,7 +948,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
             child: Row(
               children: [
                 Text(
-                  '${displayedProducts.length} products',
+                  _isSearchHydrating
+                      ? '${displayedProducts.length} products • searching full catalog...'
+                      : '${displayedProducts.length} products',
                   style: const TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 13,

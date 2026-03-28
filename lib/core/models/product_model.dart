@@ -2,6 +2,7 @@ class ProductModel {
   final String id;
   final String name;
   final String brand;
+  final String productType;
   final String category;
   final String subCategory;
   final String subSubCategory;
@@ -17,6 +18,7 @@ class ProductModel {
   final String size;
   final String deliveryTime;
   final String highlights;
+  final String description;
   final String howToUse;
   final String homeSection;
   final bool isPopular;
@@ -30,6 +32,7 @@ class ProductModel {
     required this.id,
     required this.name,
     required this.brand,
+    this.productType = '',
     required this.category,
     this.subCategory = '',
     this.subSubCategory = '',
@@ -45,6 +48,7 @@ class ProductModel {
     this.size = '',
     this.deliveryTime = '',
     this.highlights = '',
+    this.description = '',
     this.howToUse = '',
     this.homeSection = '',
     this.isPopular = false,
@@ -56,6 +60,11 @@ class ProductModel {
   });
 
   factory ProductModel.fromMap(Map<String, dynamic> map, String id) {
+    String stringValue(dynamic value, {String fallback = ''}) {
+      final text = (value ?? fallback).toString().trim();
+      return text;
+    }
+
     List<String> toStringList(dynamic raw) {
       if (raw is! Iterable) return <String>[];
       try {
@@ -69,10 +78,33 @@ class ProductModel {
       }
     }
 
+    List<String> parseTagValues(dynamic raw) {
+      if (raw == null) return <String>[];
+
+      if (raw is String) {
+        return raw
+            .split(RegExp(r'[,|/&;]+'))
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList(growable: false);
+      }
+
+      if (raw is Iterable) {
+        return raw
+            .where((e) => e != null)
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList(growable: false);
+      }
+
+      final single = raw.toString().trim();
+      return single.isEmpty ? <String>[] : <String>[single];
+    }
+
     final additionalImages = toStringList(map['additionalImages']);
     final images = toStringList(map['images']);
-    final parsedTags = toStringList(map['tags']);
-    final singleTag = (map['tag'] ?? '').toString().trim();
+    final parsedTags = parseTagValues(map['tags']);
+    final singleTag = stringValue(map['tag']);
     final tags = <String>{...parsedTags};
     if (singleTag.isNotEmpty) tags.add(singleTag);
 
@@ -85,16 +117,20 @@ class ProductModel {
 
     return ProductModel(
       id: id,
-      name: map['name'] ?? '',
-      brand: map['brand'] ?? '',
-      category: map['category'] ?? '',
-      subCategory:
-          map['subCategory'] ?? map['subcategory'] ?? map['sub_category'] ?? '',
-        subSubCategory:
-          map['subSubCategory'] ??
-          map['subsubCategory'] ??
-          map['sub_sub_category'] ??
-          '',
+      name: stringValue(map['name'] ?? map['title'] ?? map['productName']),
+      brand: stringValue(
+        map['brand'] ?? map['brandName'] ?? map['manufacturer'],
+      ),
+      productType: stringValue(map['productType'] ?? map['type']),
+      category: stringValue(map['category'] ?? map['categoryName']),
+      subCategory: stringValue(
+        map['subCategory'] ?? map['subcategory'] ?? map['sub_category'],
+      ),
+      subSubCategory: stringValue(
+        map['subSubCategory'] ??
+            map['subsubCategory'] ??
+            map['sub_sub_category'],
+      ),
       price: (map['price'] as num?)?.toInt() ?? 0,
       originalPrice: (map['originalPrice'] as num?)?.toInt() ?? 0,
       rating: (map['rating'] as num?)?.toDouble() ?? 0.0,
@@ -104,12 +140,18 @@ class ProductModel {
       images: images,
       tag: singleTag,
       tags: tags.toList(growable: false),
-      size: map['size'] ?? '',
-      deliveryTime: map['deliveryTime'] ?? '',
-      highlights: map['highlights'] ?? map['shortDescription'] ?? '',
-      howToUse: map['howToUse'] ?? map['how_to_use'] ?? map['usage'] ?? '',
-      homeSection:
-          map['homeSection'] ?? map['home_section'] ?? map['section'] ?? '',
+      size: stringValue(map['size']),
+      deliveryTime: stringValue(map['deliveryTime']),
+      highlights: stringValue(map['highlights'] ?? map['shortDescription']),
+      description: stringValue(
+        map['description'] ?? map['shortDescription'] ?? map['highlights'],
+      ),
+      howToUse: stringValue(
+        map['howToUse'] ?? map['how_to_use'] ?? map['usage'],
+      ),
+      homeSection: stringValue(
+        map['homeSection'] ?? map['home_section'] ?? map['section'],
+      ),
       isPopular: map['isPopular'] ?? false,
       isRecommended: map['isRecommended'] ?? false,
       showInStartFirstOrder: map['showInStartFirstOrder'] ?? false,
@@ -123,6 +165,7 @@ class ProductModel {
     return {
       'name': name,
       'brand': brand,
+      'productType': productType,
       'category': category,
       'subCategory': subCategory,
       'subSubCategory': subSubCategory,
@@ -140,6 +183,7 @@ class ProductModel {
       'size': size,
       'deliveryTime': deliveryTime,
       'highlights': highlights,
+      'description': description,
       'howToUse': howToUse,
       'how_to_use': howToUse,
       'usage': howToUse,
@@ -159,6 +203,7 @@ class ProductModel {
       'id': id,
       'name': name,
       'brand': brand,
+      'productType': productType,
       'category': category,
       'subCategory': subCategory,
       'subSubCategory': subSubCategory,
@@ -177,6 +222,7 @@ class ProductModel {
       'size': size,
       'deliveryTime': deliveryTime,
       'highlights': highlights,
+      'description': description,
       'howToUse': howToUse,
       'how_to_use': howToUse,
       'usage': howToUse,

@@ -26,6 +26,11 @@ class HomeProvider extends ChangeNotifier {
   bool _loading = false;
   String? _error;
 
+  String _safeString(dynamic value, {String fallback = ''}) {
+    final text = (value ?? fallback).toString().trim();
+    return text;
+  }
+
   List<ProductModel> get products => _products;
   List<Map<String, dynamic>> get banners => _banners;
 
@@ -36,14 +41,14 @@ class HomeProvider extends ChangeNotifier {
 
     for (final category in source) {
       final normalized = _normalizeCategory(category);
-      final key = _normalizedKey(normalized['name'] as String?);
+      final key = _normalizedKey(_safeString(normalized['name']));
       if (_hiddenCategoryNames.contains(key)) continue;
       merged[key] = normalized;
     }
 
     for (final category in AppConstants.categories) {
       final normalized = _normalizeCategory(category);
-      final key = _normalizedKey(normalized['name'] as String?);
+      final key = _normalizedKey(_safeString(normalized['name']));
       if (_hiddenCategoryNames.contains(key)) continue;
 
       if (!hasRemoteCategories) {
@@ -77,19 +82,23 @@ class HomeProvider extends ChangeNotifier {
 
     for (final subCategory in source) {
       final normalized = _normalizeSubCategory(subCategory);
-      final parentKey = _normalizedKey(normalized['parentCategory'] as String?);
+      final parentKey = _normalizedKey(
+        _safeString(normalized['parentCategory']),
+      );
       if (_hiddenCategoryNames.contains(parentKey)) continue;
       final key =
-          '$parentKey::${_normalizedKey(normalized['name'] as String?)}';
+          '$parentKey::${_normalizedKey(_safeString(normalized['name']))}';
       merged[key] = normalized;
     }
 
     for (final subCategory in AppConstants.subCategories) {
       final normalized = _normalizeSubCategory(subCategory);
-      final parentKey = _normalizedKey(normalized['parentCategory'] as String?);
+      final parentKey = _normalizedKey(
+        _safeString(normalized['parentCategory']),
+      );
       if (_hiddenCategoryNames.contains(parentKey)) continue;
       final key =
-          '$parentKey::${_normalizedKey(normalized['name'] as String?)}';
+          '$parentKey::${_normalizedKey(_safeString(normalized['name']))}';
 
       if (!hasRemoteSubCategories) {
         merged.putIfAbsent(key, () => normalized);
@@ -110,7 +119,11 @@ class HomeProvider extends ChangeNotifier {
     }
 
     final items = merged.values.toList();
-    items.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+    items.sort(
+      (a, b) => _safeString(
+        a['name'],
+      ).toLowerCase().compareTo(_safeString(b['name']).toLowerCase()),
+    );
     return items;
   }
 
@@ -124,7 +137,7 @@ class HomeProvider extends ChangeNotifier {
               'image': (brand['image'] ?? brand['logo'] ?? '').toString(),
             },
           )
-          .where((brand) => (brand['name'] as String).trim().isNotEmpty)
+          .where((brand) => _safeString(brand['name']).isNotEmpty)
           .toList();
     }
 
@@ -136,7 +149,11 @@ class HomeProvider extends ChangeNotifier {
       merged.putIfAbsent(key, () => {'id': key, 'name': name, 'image': ''});
     }
     final items = merged.values.toList();
-    items.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+    items.sort(
+      (a, b) => _safeString(
+        a['name'],
+      ).toLowerCase().compareTo(_safeString(b['name']).toLowerCase()),
+    );
     return items;
   }
 
@@ -150,23 +167,23 @@ class HomeProvider extends ChangeNotifier {
     for (final subSubCategory in source) {
       final normalized = _normalizeSubSubCategory(subSubCategory);
       final parentCategoryKey = _normalizedKey(
-        normalized['parentCategory'] as String?,
+        _safeString(normalized['parentCategory']),
       );
       if (_hiddenCategoryNames.contains(parentCategoryKey)) continue;
 
       final key =
-          '$parentCategoryKey::${_normalizedKey(normalized['parentSubCategory'] as String?)}::${_normalizedKey(normalized['name'] as String?)}';
+          '$parentCategoryKey::${_normalizedKey(_safeString(normalized['parentSubCategory']))}::${_normalizedKey(_safeString(normalized['name']))}';
       merged[key] = normalized;
     }
 
     for (final subSubCategory in AppConstants.subSubCategories) {
       final normalized = _normalizeSubSubCategory(subSubCategory);
       final parentCategoryKey = _normalizedKey(
-        normalized['parentCategory'] as String?,
+        _safeString(normalized['parentCategory']),
       );
       if (_hiddenCategoryNames.contains(parentCategoryKey)) continue;
       final key =
-          '$parentCategoryKey::${_normalizedKey(normalized['parentSubCategory'] as String?)}::${_normalizedKey(normalized['name'] as String?)}';
+          '$parentCategoryKey::${_normalizedKey(_safeString(normalized['parentSubCategory']))}::${_normalizedKey(_safeString(normalized['name']))}';
 
       if (!hasRemoteSubSubCategories) {
         merged.putIfAbsent(key, () => normalized);
@@ -187,7 +204,11 @@ class HomeProvider extends ChangeNotifier {
     }
 
     final items = merged.values.toList();
-    items.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+    items.sort(
+      (a, b) => _safeString(
+        a['name'],
+      ).toLowerCase().compareTo(_safeString(b['name']).toLowerCase()),
+    );
     return items;
   }
 
@@ -322,7 +343,7 @@ class HomeProvider extends ChangeNotifier {
     return subCategories
         .where(
           (subCategory) =>
-              _normalizedKey(subCategory['parentCategory'] as String?) ==
+              _normalizedKey(_safeString(subCategory['parentCategory'])) ==
               categoryKey,
         )
         .toList();
@@ -337,9 +358,11 @@ class HomeProvider extends ChangeNotifier {
     return subSubCategories
         .where(
           (subSubCategory) =>
-              _normalizedKey(subSubCategory['parentCategory'] as String?) ==
+              _normalizedKey(_safeString(subSubCategory['parentCategory'])) ==
                   categoryKey &&
-              _normalizedKey(subSubCategory['parentSubCategory'] as String?) ==
+              _normalizedKey(
+                    _safeString(subSubCategory['parentSubCategory']),
+                  ) ==
                   subCategoryKey,
         )
         .toList();
@@ -431,7 +454,7 @@ class HomeProvider extends ChangeNotifier {
       list = list
           .where(
             (p) =>
-                _normalizedKey(p['category'] as String?) ==
+                _normalizedKey(_safeString(p['category'])) ==
                 _normalizedKey(category),
           )
           .toList();

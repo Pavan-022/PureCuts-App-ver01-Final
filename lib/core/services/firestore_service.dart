@@ -41,11 +41,53 @@ class FirestoreService {
   }
 
   bool _isPublishedProduct(Map<String, dynamic> data) {
-    final visibility = (data['visibility'] ?? 'publish')
-        .toString()
-        .trim()
-        .toLowerCase();
-    return visibility == 'publish';
+    String normalize(dynamic value) {
+      return (value ?? '').toString().trim().toLowerCase();
+    }
+
+    final visibility = normalize(data['visibility']);
+    final status = normalize(data['status']);
+    final publishState = normalize(
+      data['publishStatus'] ?? data['productStatus'] ?? data['state'],
+    );
+    final isPublishedFlag = data['isPublished'];
+    final isActiveFlag = data['isActive'];
+
+    const positiveStates = {
+      'publish',
+      'published',
+      'public',
+      'active',
+      'visible',
+      'live',
+    };
+
+    if (isPublishedFlag is bool) return isPublishedFlag;
+    if (isActiveFlag is bool && isActiveFlag == false) return false;
+
+    if (positiveStates.contains(visibility)) return true;
+    if (positiveStates.contains(status)) return true;
+    if (positiveStates.contains(publishState)) return true;
+
+    const negativeStates = {
+      'draft',
+      'hidden',
+      'inactive',
+      'archived',
+      'private',
+      'unpublished',
+      'deleted',
+      'trash',
+    };
+
+    if (negativeStates.contains(visibility) ||
+        negativeStates.contains(status) ||
+        negativeStates.contains(publishState)) {
+      return false;
+    }
+
+    // Default to visible for legacy docs missing explicit publish flags.
+    return true;
   }
 
   static const int _defaultProductPageBatch = 24;
@@ -1064,7 +1106,7 @@ class FirestoreService {
             ? orderDocs
             : await _queryLegacyOrdersByUid(uid: cleanUid);
 
-        DateTime _toDate(dynamic value) {
+        DateTime toDate(dynamic value) {
           if (value is Timestamp) return value.toDate();
           if (value is DateTime) return value;
           if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
@@ -1083,12 +1125,12 @@ class FirestoreService {
         }
 
         mergedOrderDocs.sort(
-          (a, b) => _toDate(b['createdAt']).compareTo(_toDate(a['createdAt'])),
+          (a, b) => toDate(b['createdAt']).compareTo(toDate(a['createdAt'])),
         );
 
         final fallback = <String, Map<String, dynamic>>{};
         for (final order in mergedOrderDocs) {
-          final createdAt = _toDate(order['createdAt']);
+          final createdAt = toDate(order['createdAt']);
           final orderId = (order['orderId'] ?? order['orderRef'] ?? '')
               .toString();
           final orderStatus =
@@ -1152,7 +1194,7 @@ class FirestoreService {
           : await _queryLegacyOrdersByUid(uid: cleanUid);
 
       final latestMetaByProduct = <String, Map<String, dynamic>>{};
-      DateTime _toDate(dynamic value) {
+      DateTime toDate(dynamic value) {
         if (value is Timestamp) return value.toDate();
         if (value is DateTime) return value;
         if (value is int) {
@@ -1163,7 +1205,7 @@ class FirestoreService {
 
       for (final doc in orderDocs) {
         final data = doc.data();
-        final createdAt = _toDate(data['createdAt']);
+        final createdAt = toDate(data['createdAt']);
         final orderId = (data['orderId'] ?? data['orderRef'] ?? doc.id)
             .toString();
         final status = (data['status'] ?? data['orderStatus'] ?? 'placed')
@@ -1181,7 +1223,7 @@ class FirestoreService {
 
           final existing = latestMetaByProduct[pid];
           if (existing == null ||
-              _toDate(existing['lastOrderedAt']).isBefore(createdAt)) {
+              toDate(existing['lastOrderedAt']).isBefore(createdAt)) {
             latestMetaByProduct[pid] = {
               'lastOrderedAt': createdAt,
               'lastOrderId': orderId,
