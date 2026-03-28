@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:purecuts/features/auth/pending_approval_screen.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/features/auth/profile_setup_screen.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
@@ -17,8 +18,10 @@ class OtpScreen extends StatefulWidget {
 }
 
 class _OtpScreenState extends State<OtpScreen> {
-  final List<TextEditingController> _controllers =
-      List.generate(6, (_) => TextEditingController());
+  final List<TextEditingController> _controllers = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
   final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
 
   bool _loading = false;
@@ -62,8 +65,7 @@ class _OtpScreenState extends State<OtpScreen> {
     });
   }
 
-  String get _otpCode =>
-      _controllers.map((c) => c.text).join();
+  String get _otpCode => _controllers.map((c) => c.text).join();
 
   Future<void> _verifyWithOtp(String otp) async {
     if (_loading) return;
@@ -83,14 +85,24 @@ class _OtpScreenState extends State<OtpScreen> {
       return;
     }
 
-    // success: navigate based on whether profile exists
+    // success: navigate based on profile + approval state
     if (authProvider.user != null) {
-      // Returning user
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (_) => const MainNavScreen()),
-        (_) => false,
-      );
+      final gate = await authProvider.getCurrentUserAccessState();
+      if (!mounted) return;
+
+      if (gate.isApproved) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const MainNavScreen()),
+          (_) => false,
+        );
+      } else {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const PendingApprovalScreen()),
+          (_) => false,
+        );
+      }
     } else {
       // New user — fill in profile
       Navigator.pushReplacement(
@@ -146,8 +158,11 @@ class _OtpScreenState extends State<OtpScreen> {
         elevation: 0,
         surfaceTintColor: Colors.transparent,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded,
-              color: AppColors.textPrimary, size: 20),
+          icon: const Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: AppColors.textPrimary,
+            size: 20,
+          ),
           onPressed: () => Navigator.pop(context),
         ),
       ),
@@ -229,8 +244,7 @@ class _OtpScreenState extends State<OtpScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
-                  disabledBackgroundColor:
-                      AppColors.primary.withOpacity(0.6),
+                  disabledBackgroundColor: AppColors.primary.withOpacity(0.6),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
@@ -248,7 +262,9 @@ class _OtpScreenState extends State<OtpScreen> {
                     : const Text(
                         'Verify & Continue',
                         style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w700),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
               ),
             ),
@@ -260,7 +276,9 @@ class _OtpScreenState extends State<OtpScreen> {
                   ? Text(
                       'Resend OTP in $_resendSeconds s',
                       style: const TextStyle(
-                          color: AppColors.textHint, fontSize: 14),
+                        color: AppColors.textHint,
+                        fontSize: 14,
+                      ),
                     )
                   : GestureDetector(
                       onTap: _resend,
@@ -307,16 +325,14 @@ class _OtpBox extends StatelessWidget {
           duration: const Duration(milliseconds: 150),
           height: 56,
           decoration: BoxDecoration(
-            color: filled
-                ? AppColors.primary.withOpacity(0.10)
-                : Colors.white,
+            color: filled ? AppColors.primary.withOpacity(0.10) : Colors.white,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: filled
                   ? AppColors.primary
                   : focused
-                      ? AppColors.primary.withOpacity(0.5)
-                      : const Color(0xFFDEDEDE),
+                  ? AppColors.primary.withOpacity(0.5)
+                  : const Color(0xFFDEDEDE),
               width: filled || focused ? 2 : 1.5,
             ),
             boxShadow: [

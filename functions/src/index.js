@@ -3,6 +3,7 @@ const { setAdminClaims, listAdminsFromAuth } = require("./adminClaims");
 const { sendNotification } = require("./notifications/notificationService");
 const { registerFcmToken } = require("./notifications/tokenService");
 const { onOrderPlacedNotification } = require("./notifications/orderPlacedTrigger");
+const { onVerificationRequestCreated } = require("./verificationRequestsTrigger");
 const {
 	onOrderMetricsWrite,
 	getDashboardMetricsSnapshot,
@@ -15,6 +16,7 @@ exports.listAdminsFromAuth = listAdminsFromAuth;
 exports.sendNotification = sendNotification;
 exports.registerFcmToken = registerFcmToken;
 exports.onOrderPlacedNotification = onOrderPlacedNotification;
+exports.onVerificationRequestCreated = onVerificationRequestCreated;
 exports.onOrderMetricsWrite = onOrderMetricsWrite;
 exports.getDashboardMetricsSnapshot = getDashboardMetricsSnapshot;
 exports.rebuildOrderCounters = rebuildOrderCounters;

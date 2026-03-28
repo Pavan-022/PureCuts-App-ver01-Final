@@ -133,6 +133,7 @@ class AuthService {
       salonName: registrationData['salonName'],
       ownerName: registrationData['ownerName'],
       gst: registrationData['gst'],
+      udyamNumber: registrationData['udyamNumber'] ?? registrationData['udyam'],
       country: registrationData['country'],
       state: registrationData['state'],
       pincode: registrationData['pincode'],
@@ -141,9 +142,21 @@ class AuthService {
       createdAt: DateTime.now(),
     );
 
-    await _firestoreService.setUserProfile(userModel);
+    await _firestoreService.saveUserProfileWithPendingApproval(
+      user: userModel,
+      registrationData: registrationData,
+    );
     debugPrint('[AuthService] Firestore profile saved for UID=${user.uid}');
     return userModel;
+  }
+
+  Future<({bool exists, bool isApproved, String verificationStatus})>
+  getCurrentUserAccessState() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      return (exists: false, isApproved: false, verificationStatus: 'missing');
+    }
+    return _firestoreService.getUserAccessState(user.uid);
   }
 
   // ── Login: Email + Password ───────────────────────────────────────────────

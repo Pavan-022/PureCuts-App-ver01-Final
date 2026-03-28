@@ -161,10 +161,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
   }
 
   String _normalizeCategoryKey(String value) {
-    return value
-        .trim()
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9]+'), '');
+    return value.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
   }
 
   bool _matchesSelectedCategory(Map<String, dynamic> product) {
@@ -350,15 +347,26 @@ class _ProductListScreenState extends State<ProductListScreen> {
 
     String norm(dynamic v) => _normalizeToken((v ?? '').toString());
 
-    final name = norm(product['name'] ?? product['title'] ?? product['productName']);
-    final brand = norm(product['brand'] ?? product['brandName'] ?? product['manufacturer']);
+    final name = norm(
+      product['name'] ?? product['title'] ?? product['productName'],
+    );
+    final brand = norm(
+      product['brand'] ?? product['brandName'] ?? product['manufacturer'],
+    );
     final tags = norm(_tagSearchSource(product));
     final category = norm(product['category'] ?? product['categoryName']);
     final description = norm(
-      product['description'] ?? product['shortDescription'] ?? product['highlights'],
+      product['description'] ??
+          product['shortDescription'] ??
+          product['highlights'],
     );
 
-    int scoreField(String field, {required int exact, required int prefix, required int contains}) {
+    int scoreField(
+      String field, {
+      required int exact,
+      required int prefix,
+      required int contains,
+    }) {
       if (field.isEmpty) return 0;
       var s = 0;
       if (field == query) s += exact;
@@ -366,9 +374,12 @@ class _ProductListScreenState extends State<ProductListScreen> {
       if (field.contains(query)) s += contains;
 
       final fieldCompact = _compactToken(field);
-      if (queryCompact.isNotEmpty && fieldCompact == queryCompact) s += exact ~/ 2;
-      if (queryCompact.isNotEmpty && fieldCompact.startsWith(queryCompact)) s += prefix ~/ 2;
-      if (queryCompact.isNotEmpty && fieldCompact.contains(queryCompact)) s += contains ~/ 2;
+      if (queryCompact.isNotEmpty && fieldCompact == queryCompact)
+        s += exact ~/ 2;
+      if (queryCompact.isNotEmpty && fieldCompact.startsWith(queryCompact))
+        s += prefix ~/ 2;
+      if (queryCompact.isNotEmpty && fieldCompact.contains(queryCompact))
+        s += contains ~/ 2;
 
       for (final token in queryTokens) {
         if (field.contains(token)) s += 8;
@@ -447,9 +458,10 @@ class _ProductListScreenState extends State<ProductListScreen> {
   }) {
     if (hasQuery) {
       products.sort((a, b) {
-        final scoreCmp = _searchScore(b, _searchQuery).compareTo(
-          _searchScore(a, _searchQuery),
-        );
+        final scoreCmp = _searchScore(
+          b,
+          _searchQuery,
+        ).compareTo(_searchScore(a, _searchQuery));
         if (scoreCmp != 0) return scoreCmp;
         final aName = (a['name'] ?? '').toString().toLowerCase();
         final bName = (b['name'] ?? '').toString().toLowerCase();
@@ -463,7 +475,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
     } else if (_sort == 'high') {
       products.sort((a, b) => (b['price'] as num).compareTo(a['price'] as num));
     } else if (_sort == 'rating') {
-      products.sort((a, b) => (b['rating'] as num).compareTo(a['rating'] as num));
+      products.sort(
+        (a, b) => (b['rating'] as num).compareTo(a['rating'] as num),
+      );
     }
   }
 

@@ -20,6 +20,15 @@ class FirestoreService {
   static const String _productSharesCollection = 'productShares';
   static const String _productReviewsCollection = 'productReviews';
   static const String _bannersCollection = 'banners';
+  static const String _verificationRequestsCollection = 'verificationRequests';
+
+  String _firstNonEmpty(List<dynamic> values) {
+    for (final value in values) {
+      final resolved = (value ?? '').toString().trim();
+      if (resolved.isNotEmpty) return resolved;
+    }
+    return '';
+  }
 
   int _clampLimit({
     required int value,
@@ -306,6 +315,107 @@ class FirestoreService {
 
   Future<void> setUserProfile(UserModel user) async {
     await _db.collection('users').doc(user.uid).set(user.toMap());
+  }
+
+  Future<void> saveUserProfileWithPendingApproval({
+    required UserModel user,
+    required Map<String, dynamic> registrationData,
+  }) async {
+    final uid = user.uid.trim();
+    if (uid.isEmpty) {
+      throw Exception('User UID is required');
+    }
+
+    final userRef = _db.collection(_usersCollection).doc(uid);
+    final userSnap = await userRef.get();
+    const accessApproved = false;
+    const isVerified = false;
+    const verificationStatus = 'pending';
+
+    final payload = {
+      ...user.toMap(),
+      'verificationStatus': verificationStatus,
+      'accessApproved': accessApproved,
+      'isVerified': isVerified,
+      'verificationUpdatedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      if (!accessApproved) 'verifiedAt': null,
+      if (verificationStatus != 'rejected') 'rejectedAt': null,
+    };
+
+    if (userSnap.exists) {
+      payload.remove('createdAt');
+    }
+
+    await userRef.set(payload, SetOptions(merge: true));
+
+    final gstNumber = _firstNonEmpty([
+      registrationData['gstNumber'],
+      registrationData['gst'],
+      user.gst,
+    ]);
+
+    final udyamNumber = _firstNonEmpty([
+      registrationData['udyamNumber'],
+      registrationData['udyam'],
+      registrationData['msmeNumber'],
+      user.udyamNumber,
+    ]);
+
+    await _db.collection(_verificationRequestsCollection).add({
+      'userId': uid,
+      'uid': uid,
+      'createdBy': uid,
+      'email': user.email,
+      'phone': user.phone,
+      'ownerName': _firstNonEmpty([
+        registrationData['ownerName'],
+        user.ownerName,
+        user.name,
+      ]),
+      'salonName': _firstNonEmpty([
+        registrationData['salonName'],
+        user.salonName,
+      ]),
+      'state': _firstNonEmpty([registrationData['state'], user.state]),
+      'pincode': _firstNonEmpty([registrationData['pincode'], user.pincode]),
+      if (gstNumber.isNotEmpty) 'gstNumber': gstNumber,
+      if (udyamNumber.isNotEmpty) 'udyamNumber': udyamNumber,
+      'status': 'pending',
+      'approved': false,
+      'rejected': false,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<({bool exists, bool isApproved, String verificationStatus})>
+  getUserAccessState(String uid) async {
+    final cleanUid = uid.trim();
+    if (cleanUid.isEmpty) {
+      return (exists: false, isApproved: false, verificationStatus: 'missing');
+    }
+
+    final snap = await _db.collection(_usersCollection).doc(cleanUid).get();
+    if (!snap.exists) {
+      return (exists: false, isApproved: false, verificationStatus: 'missing');
+    }
+
+    final data = snap.data() ?? const <String, dynamic>{};
+    final statusRaw = (data['verificationStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final approved =
+        data['accessApproved'] == true ||
+        data['isVerified'] == true ||
+        statusRaw == 'approved';
+
+    final status = statusRaw.isNotEmpty
+        ? statusRaw
+        : (approved ? 'approved' : 'pending');
+
+    return (exists: true, isApproved: approved, verificationStatus: status);
   }
 
   // ── Update a single field in user profile ────────────────────────────────

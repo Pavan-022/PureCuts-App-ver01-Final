@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/features/auth/pending_approval_screen.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
-import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 
 class PhoneVerificationScreen extends StatefulWidget {
   final String phoneNumber;
@@ -22,8 +22,10 @@ class PhoneVerificationScreen extends StatefulWidget {
 }
 
 class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
-  final List<TextEditingController> _otpControllers =
-      List.generate(6, (_) => TextEditingController());
+  final List<TextEditingController> _otpControllers = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
   final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
 
   bool _loading = false;
@@ -72,9 +74,7 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
     }
   }
 
-  Future<void> _autoCompleteRegistration(
-    dynamic phoneCredential,
-  ) async {
+  Future<void> _autoCompleteRegistration(dynamic phoneCredential) async {
     if (_loading) return;
     setState(() => _loading = true);
     final authProvider = context.read<AuthProvider>();
@@ -184,7 +184,7 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
   void _navigateToHome() {
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (_) => const MainNavScreen()),
+      MaterialPageRoute(builder: (_) => const PendingApprovalScreen()),
       (_) => false,
     );
   }
@@ -199,10 +199,7 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Verify Phone'),
-        elevation: 0,
-      ),
+      appBar: AppBar(title: const Text('Verify Phone'), elevation: 0),
       body: Stack(
         children: [
           // Background
@@ -372,12 +369,14 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
                                       color: Colors.white,
                                       borderRadius: BorderRadius.circular(12),
                                       border: Border.all(
-                                        color: _otpControllers[index]
+                                        color:
+                                            _otpControllers[index]
                                                 .text
                                                 .isNotEmpty
                                             ? AppColors.primary
                                             : AppColors.border,
-                                        width: _otpControllers[index]
+                                        width:
+                                            _otpControllers[index]
                                                 .text
                                                 .isNotEmpty
                                             ? 2

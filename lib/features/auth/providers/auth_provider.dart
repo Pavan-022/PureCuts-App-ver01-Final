@@ -344,6 +344,16 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  Future<({bool exists, bool isApproved, String verificationStatus})>
+  getCurrentUserAccessState() async {
+    try {
+      return await _service.getCurrentUserAccessState();
+    } catch (e, st) {
+      debugPrint('[AuthProvider] getCurrentUserAccessState failed: $e\n$st');
+      return (exists: false, isApproved: false, verificationStatus: 'missing');
+    }
+  }
+
   // ── New User Profile Setup (after phone OTP verified) ────────────────────
 
   Future<bool> saveNewUserProfile(Map<String, dynamic> data) async {

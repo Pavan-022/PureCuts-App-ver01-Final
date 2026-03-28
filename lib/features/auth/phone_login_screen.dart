@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
+import 'package:purecuts/features/auth/pending_approval_screen.dart';
 import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 
 /// Phone-number-based login screen for returning users.
@@ -18,8 +19,10 @@ class PhoneLoginScreen extends StatefulWidget {
 
 class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   final _phoneController = TextEditingController();
-  final List<TextEditingController> _otpControllers =
-      List.generate(6, (_) => TextEditingController());
+  final List<TextEditingController> _otpControllers = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
   final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
 
   bool _otpSent = false;
@@ -64,7 +67,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     if (!mounted) return;
     setState(() => _loading = false);
     if (success) {
-      _goHome();
+      await _goHome(authProvider);
     } else {
       _showError(authProvider.error ?? 'Auto-verification failed.');
     }
@@ -116,7 +119,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     if (!mounted) return;
     setState(() => _loading = false);
     if (success) {
-      _goHome();
+      await _goHome(authProvider);
     } else {
       _showError(authProvider.error ?? 'Verification failed.');
     }
@@ -126,15 +129,18 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     if (_secondsRemaining > 0) return;
     setState(() => _resending = true);
     final authProvider = context.read<AuthProvider>();
-    final sent =
-        await authProvider.resendOtp('+91${_phoneController.text.trim()}');
+    final sent = await authProvider.resendOtp(
+      '+91${_phoneController.text.trim()}',
+    );
     if (!mounted) return;
     setState(() => _resending = false);
     if (sent) {
       _startTimer();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('OTP resent'), backgroundColor: AppColors.success),
+          content: Text('OTP resent'),
+          backgroundColor: AppColors.success,
+        ),
       );
     } else {
       _showError(authProvider.error ?? 'Failed to resend OTP.');
@@ -153,10 +159,17 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     setState(() {});
   }
 
-  void _goHome() {
+  Future<void> _goHome(AuthProvider authProvider) async {
+    final gate = await authProvider.getCurrentUserAccessState();
+    if (!mounted) return;
+
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (_) => const MainNavScreen()),
+      MaterialPageRoute(
+        builder: (_) => gate.isApproved
+            ? const MainNavScreen()
+            : const PendingApprovalScreen(),
+      ),
       (_) => false,
     );
   }
@@ -172,9 +185,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: Text(_otpSent ? 'Verify OTP' : 'Login with Phone'),
-      ),
+      appBar: AppBar(title: Text(_otpSent ? 'Verify OTP' : 'Login with Phone')),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
@@ -198,8 +209,11 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
               color: AppColors.primary.withOpacity(0.1),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.phone_android,
-                size: 40, color: AppColors.primary),
+            child: const Icon(
+              Icons.phone_android,
+              size: 40,
+              color: AppColors.primary,
+            ),
           ),
         ),
         const SizedBox(height: 28),
@@ -224,12 +238,14 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           ),
         ),
         const SizedBox(height: 36),
-        const Text('Phone Number',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textSecondary,
-            )),
+        const Text(
+          'Phone Number',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textSecondary,
+          ),
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: _phoneController,
@@ -241,8 +257,11 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           ],
           decoration: const InputDecoration(
             hintText: '10-digit mobile number',
-            prefixIcon:
-                Icon(Icons.phone_outlined, size: 20, color: AppColors.textHint),
+            prefixIcon: Icon(
+              Icons.phone_outlined,
+              size: 20,
+              color: AppColors.textHint,
+            ),
             prefixText: '+91 ',
             prefixStyle: TextStyle(
               color: AppColors.textPrimary,
@@ -262,7 +281,8 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
+                borderRadius: BorderRadius.circular(14),
+              ),
               elevation: 0,
             ),
             child: _loading
@@ -270,11 +290,14 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                     height: 24,
                     width: 24,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2.5, color: Colors.white),
+                      strokeWidth: 2.5,
+                      color: Colors.white,
+                    ),
                   )
-                : const Text('Send OTP',
-                    style:
-                        TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                : const Text(
+                    'Send OTP',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
           ),
         ),
       ],
@@ -294,8 +317,11 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
             color: AppColors.primary.withOpacity(0.1),
             shape: BoxShape.circle,
           ),
-          child: const Icon(Icons.lock_clock_outlined,
-              size: 40, color: AppColors.primary),
+          child: const Icon(
+            Icons.lock_clock_outlined,
+            size: 40,
+            color: AppColors.primary,
+          ),
         ),
         const SizedBox(height: 28),
         const Text(
@@ -312,14 +338,18 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           textAlign: TextAlign.center,
           text: TextSpan(
             style: const TextStyle(
-                fontSize: 14, color: AppColors.textSecondary, height: 1.5),
+              fontSize: 14,
+              color: AppColors.textSecondary,
+              height: 1.5,
+            ),
             children: [
               const TextSpan(text: 'Code sent to '),
               TextSpan(
                 text: '+91 ${_phoneController.text.trim()}',
                 style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary),
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
               ),
             ],
           ),
@@ -340,8 +370,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                     color: _otpControllers[index].text.isNotEmpty
                         ? AppColors.primary
                         : AppColors.border,
-                    width:
-                        _otpControllers[index].text.isNotEmpty ? 2 : 1,
+                    width: _otpControllers[index].text.isNotEmpty ? 2 : 1,
                   ),
                 ),
                 child: TextField(
@@ -378,7 +407,9 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           Text(
             'Resend code in ${_secondsRemaining}s',
             style: const TextStyle(
-                color: AppColors.textSecondary, fontSize: 14),
+              color: AppColors.textSecondary,
+              fontSize: 14,
+            ),
           )
         else
           GestureDetector(
@@ -386,8 +417,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
             child: Text(
               _resending ? 'Sending...' : 'Resend Code',
               style: TextStyle(
-                color:
-                    _resending ? AppColors.textHint : AppColors.primary,
+                color: _resending ? AppColors.textHint : AppColors.primary,
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
               ),
@@ -405,7 +435,8 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
+                borderRadius: BorderRadius.circular(14),
+              ),
               elevation: 0,
             ),
             child: _loading
@@ -413,11 +444,14 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                     height: 24,
                     width: 24,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2.5, color: Colors.white),
+                      strokeWidth: 2.5,
+                      color: Colors.white,
+                    ),
                   )
-                : const Text('Verify & Sign In',
-                    style: TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w600)),
+                : const Text(
+                    'Verify & Sign In',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
           ),
         ),
         const SizedBox(height: 20),
@@ -432,9 +466,10 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
           child: const Text(
             'Change phone number',
             style: TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 14,
-                fontWeight: FontWeight.w500),
+              color: AppColors.textSecondary,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ),
       ],

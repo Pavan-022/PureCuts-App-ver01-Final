@@ -8,6 +8,7 @@ class UserModel {
   final String? salonName;
   final String? ownerName;
   final String? gst;
+  final String? udyamNumber;
   final String? address;
   final String? country;
   final String? state;
@@ -26,6 +27,7 @@ class UserModel {
     this.salonName,
     this.ownerName,
     this.gst,
+    this.udyamNumber,
     this.address,
     this.country,
     this.state,
@@ -46,6 +48,7 @@ class UserModel {
       salonName: map['salonName'],
       ownerName: map['ownerName'],
       gst: map['gst'],
+      udyamNumber: map['udyamNumber'] ?? map['udyam'],
       address: map['address'],
       country: map['country'],
       state: map['state'],
@@ -74,6 +77,7 @@ class UserModel {
       'salonName': salonName,
       'ownerName': ownerName,
       'gst': gst,
+      'udyamNumber': udyamNumber,
       'address': address,
       'country': country,
       'state': state,
@@ -96,6 +100,7 @@ class UserModel {
     String? salonName,
     String? ownerName,
     String? gst,
+    String? udyamNumber,
     Object? address = _sentinel,
     String? country,
     String? state,
@@ -114,6 +119,7 @@ class UserModel {
       salonName: salonName ?? this.salonName,
       ownerName: ownerName ?? this.ownerName,
       gst: gst ?? this.gst,
+      udyamNumber: udyamNumber ?? this.udyamNumber,
       address: address == _sentinel ? this.address : address as String?,
       country: country ?? this.country,
       state: state ?? this.state,

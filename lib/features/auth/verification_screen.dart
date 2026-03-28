@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/features/auth/pending_approval_screen.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
-import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 
 /// Unified two-step verification: Email → Phone OTP.
 class VerificationScreen extends StatefulWidget {
@@ -32,8 +32,10 @@ class _VerificationScreenState extends State<VerificationScreen> {
   bool _resendingEmail = false;
 
   // Phone state
-  final List<TextEditingController> _otpControllers =
-      List.generate(6, (_) => TextEditingController());
+  final List<TextEditingController> _otpControllers = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
   final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
   bool _otpLoading = false;
   bool _sendingOtp = false;
@@ -81,8 +83,10 @@ class _VerificationScreenState extends State<VerificationScreen> {
       });
       _sendOtp();
     } else {
-      _showSnack('Email not yet verified. Please check your inbox.',
-          AppColors.warning);
+      _showSnack(
+        'Email not yet verified. Please check your inbox.',
+        AppColors.warning,
+      );
     }
   }
 
@@ -150,7 +154,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
     if (success) {
       Navigator.pushAndRemoveUntil(
         context,
-        MaterialPageRoute(builder: (_) => const MainNavScreen()),
+        MaterialPageRoute(builder: (_) => const PendingApprovalScreen()),
         (_) => false,
       );
     } else {
@@ -191,8 +195,9 @@ class _VerificationScreenState extends State<VerificationScreen> {
 
   void _showSnack(String msg, Color color) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
   }
 
   // ── UI ──────────────────────────────────────────────────────────────────
@@ -286,8 +291,11 @@ class _VerificationScreenState extends State<VerificationScreen> {
             color: AppColors.primary.withOpacity(0.1),
             shape: BoxShape.circle,
           ),
-          child: const Icon(Icons.mark_email_unread_outlined,
-              size: 44, color: AppColors.primary),
+          child: const Icon(
+            Icons.mark_email_unread_outlined,
+            size: 44,
+            color: AppColors.primary,
+          ),
         ),
         const SizedBox(height: 24),
         const Text(
@@ -333,7 +341,8 @@ class _VerificationScreenState extends State<VerificationScreen> {
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
+                borderRadius: BorderRadius.circular(14),
+              ),
               elevation: 0,
             ),
             child: _checkingEmail
@@ -341,12 +350,13 @@ class _VerificationScreenState extends State<VerificationScreen> {
                     height: 22,
                     width: 22,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2.5, color: Colors.white),
+                      strokeWidth: 2.5,
+                      color: Colors.white,
+                    ),
                   )
                 : const Text(
                     "I've verified my email →",
-                    style:
-                        TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                   ),
           ),
         ),
@@ -377,13 +387,17 @@ class _VerificationScreenState extends State<VerificationScreen> {
             height: 28,
             width: 28,
             child: CircularProgressIndicator(
-                strokeWidth: 2.5, color: AppColors.primary),
+              strokeWidth: 2.5,
+              color: AppColors.primary,
+            ),
           ),
           const SizedBox(height: 16),
           Text(
             'Sending OTP to +91 ${widget.phoneNumber}...',
             style: const TextStyle(
-                fontSize: 14, color: AppColors.textSecondary),
+              fontSize: 14,
+              color: AppColors.textSecondary,
+            ),
           ),
         ],
       );
@@ -398,8 +412,11 @@ class _VerificationScreenState extends State<VerificationScreen> {
             color: AppColors.primary.withOpacity(0.1),
             shape: BoxShape.circle,
           ),
-          child: const Icon(Icons.phone_android,
-              size: 44, color: AppColors.primary),
+          child: const Icon(
+            Icons.phone_android,
+            size: 44,
+            color: AppColors.primary,
+          ),
         ),
         const SizedBox(height: 24),
         const Text(
@@ -466,8 +483,10 @@ class _VerificationScreenState extends State<VerificationScreen> {
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
-                    borderSide:
-                        const BorderSide(color: AppColors.primary, width: 2),
+                    borderSide: const BorderSide(
+                      color: AppColors.primary,
+                      width: 2,
+                    ),
                   ),
                 ),
                 onChanged: (v) => _onOtpChanged(v, i),
@@ -487,7 +506,8 @@ class _VerificationScreenState extends State<VerificationScreen> {
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
+                borderRadius: BorderRadius.circular(14),
+              ),
               elevation: 0,
             ),
             child: _otpLoading
@@ -495,12 +515,13 @@ class _VerificationScreenState extends State<VerificationScreen> {
                     height: 22,
                     width: 22,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2.5, color: Colors.white),
+                      strokeWidth: 2.5,
+                      color: Colors.white,
+                    ),
                   )
                 : const Text(
                     'Verify & Complete',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                   ),
           ),
         ),
@@ -508,14 +529,15 @@ class _VerificationScreenState extends State<VerificationScreen> {
 
         // Resend OTP
         TextButton(
-          onPressed:
-              (_secondsRemaining > 0 || _resendingOtp) ? null : _resendOtp,
+          onPressed: (_secondsRemaining > 0 || _resendingOtp)
+              ? null
+              : _resendOtp,
           child: Text(
             _resendingOtp
                 ? 'Sending...'
                 : _secondsRemaining > 0
-                    ? 'Resend OTP in ${_secondsRemaining}s'
-                    : 'Resend OTP',
+                ? 'Resend OTP in ${_secondsRemaining}s'
+                : 'Resend OTP',
             style: TextStyle(
               color: (_secondsRemaining > 0 || _resendingOtp)
                   ? AppColors.textHint

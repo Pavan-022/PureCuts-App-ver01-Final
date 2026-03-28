@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:purecuts/core/constants/app_constants.dart';
 import 'package:purecuts/features/auth/login/login_screen.dart';
+import 'package:purecuts/features/auth/pending_approval_screen.dart';
 import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -56,6 +57,7 @@ class _SplashScreenState extends State<SplashScreen>
       if (!mounted) return;
       final user = FirebaseAuth.instance.currentUser;
       bool isLoggedIn = false;
+      bool isApproved = false;
       if (user != null) {
         try {
           final doc = await FirebaseFirestore.instance
@@ -64,6 +66,15 @@ class _SplashScreenState extends State<SplashScreen>
               .get();
           if (doc.exists) {
             isLoggedIn = true;
+            final data = doc.data() ?? const <String, dynamic>{};
+            final status = (data['verificationStatus'] ?? '')
+                .toString()
+                .trim()
+                .toLowerCase();
+            isApproved =
+                data['accessApproved'] == true ||
+                data['isVerified'] == true ||
+                status == 'approved';
           } else {
             await FirebaseAuth.instance.signOut();
           }
@@ -73,9 +84,11 @@ class _SplashScreenState extends State<SplashScreen>
         }
       }
       if (!mounted) return;
-      final Widget destination = isLoggedIn
-          ? const MainNavScreen()
-          : const LoginScreen();
+      final Widget destination = !isLoggedIn
+          ? const LoginScreen()
+          : (isApproved
+                ? const MainNavScreen()
+                : const PendingApprovalScreen());
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(

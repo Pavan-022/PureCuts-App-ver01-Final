@@ -128,6 +128,17 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Verification requests (new user access approvals)
+    match /verificationRequests/{requestId} {
+      allow create: if signedIn();
+      allow read: if isAdmin() || (signedIn() && (
+        request.auth.uid == resource.data.userId ||
+        request.auth.uid == resource.data.uid ||
+        request.auth.uid == resource.data.customerId
+      ));
+      allow update, delete: if isAdmin();
+    }
+
     // Orders
     match /orders/{orderId} {
       allow create: if signedIn();

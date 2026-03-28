@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/features/auth/pending_approval_screen.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
-import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 
 class ProfileSetupScreen extends StatefulWidget {
   final String phoneNumber;
@@ -19,6 +19,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   final _salonNameController = TextEditingController();
   final _ownerNameController = TextEditingController();
   final _gstController = TextEditingController();
+  final _udyamController = TextEditingController();
   final _stateController = TextEditingController();
   final _pincodeController = TextEditingController();
   final _emailController = TextEditingController();
@@ -30,6 +31,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     _salonNameController.dispose();
     _ownerNameController.dispose();
     _gstController.dispose();
+    _udyamController.dispose();
     _stateController.dispose();
     _pincodeController.dispose();
     _emailController.dispose();
@@ -44,6 +46,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
       'salonName': _salonNameController.text.trim(),
       'ownerName': _ownerNameController.text.trim(),
       'gst': _gstController.text.trim(),
+      'udyamNumber': _udyamController.text.trim(),
       'country': 'India',
       'state': _stateController.text.trim(),
       'pincode': _pincodeController.text.trim(),
@@ -60,7 +63,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     if (success) {
       Navigator.pushAndRemoveUntil(
         context,
-        MaterialPageRoute(builder: (_) => const MainNavScreen()),
+        MaterialPageRoute(builder: (_) => const PendingApprovalScreen()),
         (_) => false,
       );
     } else {
@@ -164,14 +167,27 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
             ),
             const SizedBox(height: 16),
 
-            // ── GST (optional) ────────────────────────────────────────
-            _buildLabel('GST Number', optional: true),
+            // ── GST (required) ────────────────────────────────────────
+            _buildLabel('GST Number'),
             const SizedBox(height: 6),
             _buildField(
               controller: _gstController,
               hint: '22AAAAA0000A1Z5',
               icon: Icons.receipt_long_outlined,
               caps: TextCapitalization.characters,
+              validator: _required('GST Number'),
+            ),
+            const SizedBox(height: 16),
+
+            // ── Udyam (required) ──────────────────────────────────────
+            _buildLabel('Udyam Number'),
+            const SizedBox(height: 6),
+            _buildField(
+              controller: _udyamController,
+              hint: 'UDYAM-XX-00-0000000',
+              icon: Icons.verified_user_outlined,
+              caps: TextCapitalization.characters,
+              validator: _required('Udyam Number'),
             ),
             const SizedBox(height: 16),
 
@@ -230,8 +246,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
-                  disabledBackgroundColor:
-                      AppColors.primary.withOpacity(0.6),
+                  disabledBackgroundColor: AppColors.primary.withOpacity(0.6),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
@@ -247,7 +262,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                         ),
                       )
                     : const Text(
-                        'Complete Setup',
+                        'Request Access',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
@@ -279,10 +294,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
           const SizedBox(width: 6),
           const Text(
             'optional',
-            style: TextStyle(
-              fontSize: 11,
-              color: AppColors.textHint,
-            ),
+            style: TextStyle(fontSize: 11, color: AppColors.textHint),
           ),
         ],
       ],
