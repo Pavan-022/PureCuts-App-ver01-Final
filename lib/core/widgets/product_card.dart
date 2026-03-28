@@ -150,11 +150,60 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   void _handleAddToCart(BuildContext context) {
+    if (_isOutOfStock) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This product is currently out of stock.'),
+        ),
+      );
+      return;
+    }
     if (widget.onAddToCart != null) {
       widget.onAddToCart!(product);
       return;
     }
     context.read<CartModel>().add(product);
+  }
+
+  bool _boolFromDynamic(dynamic raw, {required bool fallback}) {
+    if (raw is bool) return raw;
+    final text = (raw ?? '').toString().trim().toLowerCase();
+    if (text.isEmpty) return fallback;
+    if (text == 'true' || text == '1' || text == 'yes' || text == 'on') {
+      return true;
+    }
+    if (text == 'false' || text == '0' || text == 'no' || text == 'off') {
+      return false;
+    }
+    return fallback;
+  }
+
+  int? _intFromDynamic(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is num) return raw.toInt();
+    final text = raw.toString().trim();
+    if (text.isEmpty) return null;
+    return int.tryParse(text);
+  }
+
+  bool get _isOutOfStock {
+    final manageStock = _boolFromDynamic(
+      product['manageStock'],
+      fallback: true,
+    );
+    if (!manageStock) return false;
+
+    final stock = _intFromDynamic(
+      product['stock'] ??
+          product['quantity'] ??
+          product['qty'] ??
+          product['inventory'] ??
+          product['stockCount'],
+    );
+
+    // If stock is missing, treat as available (legacy docs).
+    if (stock == null) return false;
+    return stock <= 0;
   }
 
   void _openProductDetail(BuildContext context) {
@@ -331,10 +380,34 @@ class _ProductCardState extends State<ProductCard> {
                     ),
                   ),
 
+                if (_isOutOfStock)
+                  Positioned(
+                    top: 6,
+                    left: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE53935),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'Out of stock',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+
                 // Bought earlier badge
                 if (widget.showBoughtEarlierBadge)
                   Positioned(
-                    top: 6,
+                    top: _isOutOfStock ? 30 : 6,
                     left: 6,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -396,7 +469,30 @@ class _ProductCardState extends State<ProductCard> {
                 Positioned(
                   bottom: 6,
                   right: 6,
-                  child: qty == 0
+                  child: _isOutOfStock
+                      ? Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE0E0E0),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: const Color(0xFFBDBDBD),
+                              width: 1.2,
+                            ),
+                          ),
+                          child: const Text(
+                            'OUT',
+                            style: TextStyle(
+                              color: Color(0xFF757575),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        )
+                      : qty == 0
                       ? GestureDetector(
                           onTap: () => _handleAddToCart(context),
                           child: Container(

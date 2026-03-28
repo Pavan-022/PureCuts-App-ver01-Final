@@ -90,7 +90,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
         final page = await _firestoreService.getProductsPageFiltered(
           limit: 120,
           startAfterDoc: cursor,
-          category: _selectedCategory == 'All' ? null : _selectedCategory,
+          category: null,
           brand: (_selectedBrand ?? '').trim().isEmpty ? null : _selectedBrand,
         );
 
@@ -158,6 +158,41 @@ class _ProductListScreenState extends State<ProductListScreen> {
 
   String _compactToken(String value) {
     return _normalizeToken(value).replaceAll(RegExp(r'[^a-z0-9]+'), '');
+  }
+
+  String _normalizeCategoryKey(String value) {
+    return value
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '');
+  }
+
+  bool _matchesSelectedCategory(Map<String, dynamic> product) {
+    if (_selectedCategory == 'All') return true;
+
+    final selectedKey = _normalizeCategoryKey(_selectedCategory);
+    if (selectedKey.isEmpty) return true;
+
+    final categoryCandidates = <String>{
+      (product['category'] ?? '').toString(),
+      (product['categoryName'] ?? '').toString(),
+    };
+
+    final rawSelectedCategories = product['selectedCategories'];
+    if (rawSelectedCategories is List) {
+      for (final item in rawSelectedCategories) {
+        final value = item.toString().trim();
+        if (value.isNotEmpty) categoryCandidates.add(value);
+      }
+    }
+
+    for (final candidate in categoryCandidates) {
+      final key = _normalizeCategoryKey(candidate);
+      if (key.isEmpty) continue;
+      if (key == selectedKey) return true;
+    }
+
+    return false;
   }
 
   bool _matchesSelectedTag(String rawTag) {
@@ -261,13 +296,36 @@ class _ProductListScreenState extends State<ProductListScreen> {
               '')
           .toString(),
     );
+    final subtitle = _normalizeToken(
+      (product['subtitle'] ??
+              product['subTitle'] ??
+              product['short_name'] ??
+              '')
+          .toString(),
+    );
     final productType = _normalizeToken(
       (product['productType'] ?? product['type'] ?? '').toString(),
     );
-    final sku = _normalizeToken((product['sku'] ?? '').toString());
+    final sku = _normalizeToken(
+      (product['sku'] ?? product['itemCode'] ?? product['code'] ?? '')
+          .toString(),
+    );
+
+    String allValues(dynamic node) {
+      if (node == null) return '';
+      if (node is Map) {
+        return node.values.map(allValues).join(' ');
+      }
+      if (node is Iterable) {
+        return node.map(allValues).join(' ');
+      }
+      return node.toString();
+    }
+
+    final fallbackAllFields = _normalizeToken(allValues(product));
 
     final searchable =
-        '$name $brand $category $subCategory $subSubCategory $tag $tags $description $productType $sku';
+        '$name $brand $category $subCategory $subSubCategory $tag $tags $description $subtitle $productType $sku $fallbackAllFields';
     final compactSearchable = _compactToken(searchable);
 
     // Require every query token to be present somewhere in searchable text.
@@ -277,6 +335,136 @@ class _ProductListScreenState extends State<ProductListScreen> {
       if (compactToken.isEmpty) return false;
       return compactSearchable.contains(compactToken);
     });
+  }
+
+  int _searchScore(Map<String, dynamic> product, String rawQuery) {
+    final query = _normalizeToken(rawQuery);
+    if (query.isEmpty) return 0;
+
+    final queryCompact = _compactToken(query);
+    final queryTokens = query
+        .split(' ')
+        .map(_normalizeToken)
+        .where((t) => t.isNotEmpty)
+        .toList(growable: false);
+
+    String norm(dynamic v) => _normalizeToken((v ?? '').toString());
+
+    final name = norm(product['name'] ?? product['title'] ?? product['productName']);
+    final brand = norm(product['brand'] ?? product['brandName'] ?? product['manufacturer']);
+    final tags = norm(_tagSearchSource(product));
+    final category = norm(product['category'] ?? product['categoryName']);
+    final description = norm(
+      product['description'] ?? product['shortDescription'] ?? product['highlights'],
+    );
+
+    int scoreField(String field, {required int exact, required int prefix, required int contains}) {
+      if (field.isEmpty) return 0;
+      var s = 0;
+      if (field == query) s += exact;
+      if (field.startsWith(query)) s += prefix;
+      if (field.contains(query)) s += contains;
+
+      final fieldCompact = _compactToken(field);
+      if (queryCompact.isNotEmpty && fieldCompact == queryCompact) s += exact ~/ 2;
+      if (queryCompact.isNotEmpty && fieldCompact.startsWith(queryCompact)) s += prefix ~/ 2;
+      if (queryCompact.isNotEmpty && fieldCompact.contains(queryCompact)) s += contains ~/ 2;
+
+      for (final token in queryTokens) {
+        if (field.contains(token)) s += 8;
+      }
+      return s;
+    }
+
+    var score = 0;
+    score += scoreField(name, exact: 220, prefix: 170, contains: 110);
+    score += scoreField(brand, exact: 150, prefix: 120, contains: 80);
+    score += scoreField(tags, exact: 120, prefix: 100, contains: 70);
+    score += scoreField(category, exact: 90, prefix: 70, contains: 45);
+    score += scoreField(description, exact: 40, prefix: 25, contains: 12);
+
+    return score;
+  }
+
+  List<Map<String, dynamic>> _buildSourceProducts(
+    HomeProvider home, {
+    required bool shouldUseExpandedPool,
+  }) {
+    final sourceProducts = <Map<String, dynamic>>[]..addAll(_pagedProducts);
+    if (!shouldUseExpandedPool) return sourceProducts;
+
+    final byId = <String, Map<String, dynamic>>{};
+
+    for (final product in sourceProducts) {
+      final id = (product['id'] ?? '').toString().trim();
+      if (id.isNotEmpty) byId[id] = product;
+    }
+
+    for (final product in home.productMaps) {
+      final id = (product['id'] ?? '').toString().trim();
+      if (id.isEmpty) continue;
+      byId.putIfAbsent(id, () => product);
+    }
+
+    return byId.values.toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _applyScopedFilters(
+    List<Map<String, dynamic>> source,
+  ) {
+    return source
+        .where((product) => _matchesSelectedCategory(product))
+        .where((product) => _matchesSearchQuery(product, _searchQuery))
+        .where((product) {
+          if ((_selectedBrand ?? '').trim().isEmpty) return true;
+          return (product['brand'] ?? '').toString().trim().toLowerCase() ==
+              _selectedBrand!.trim().toLowerCase();
+        })
+        .where((product) {
+          if ((_selectedTag ?? '').trim().isEmpty) return true;
+          return _matchesSelectedTag(_tagSearchSource(product));
+        })
+        .toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _applyQueryFallbackIfNeeded(
+    List<Map<String, dynamic>> source,
+    List<Map<String, dynamic>> scopedProducts, {
+    required bool hasQuery,
+  }) {
+    if (!(hasQuery && scopedProducts.isEmpty)) {
+      return List<Map<String, dynamic>>.from(scopedProducts);
+    }
+
+    return source
+        .where((product) => _matchesSearchQuery(product, _searchQuery))
+        .toList(growable: false);
+  }
+
+  void _sortProductsForDisplay(
+    List<Map<String, dynamic>> products, {
+    required bool hasQuery,
+  }) {
+    if (hasQuery) {
+      products.sort((a, b) {
+        final scoreCmp = _searchScore(b, _searchQuery).compareTo(
+          _searchScore(a, _searchQuery),
+        );
+        if (scoreCmp != 0) return scoreCmp;
+        final aName = (a['name'] ?? '').toString().toLowerCase();
+        final bName = (b['name'] ?? '').toString().toLowerCase();
+        return aName.compareTo(bName);
+      });
+      return;
+    }
+
+    if (_sort == 'low') {
+      products.sort((a, b) => (a['price'] as num).compareTo(b['price'] as num));
+    } else if (_sort == 'high') {
+      products.sort((a, b) => (b['price'] as num).compareTo(a['price'] as num));
+    } else if (_sort == 'rating') {
+      products.sort((a, b) => (b['rating'] as num).compareTo(a['rating'] as num));
+    }
   }
 
   Future<void> _refreshProducts() async {
@@ -551,7 +739,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
     try {
       final page = await _firestoreService.getProductsPageFiltered(
         limit: _pageSize,
-        category: _selectedCategory == 'All' ? null : _selectedCategory,
+        category: null,
         brand: (_selectedBrand ?? '').trim().isEmpty ? null : _selectedBrand,
       );
 
@@ -592,7 +780,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
       final page = await _firestoreService.getProductsPageFiltered(
         limit: _pageSize,
         startAfterDoc: _lastProductDoc,
-        category: _selectedCategory == 'All' ? null : _selectedCategory,
+        category: null,
         brand: (_selectedBrand ?? '').trim().isEmpty ? null : _selectedBrand,
       );
 
@@ -661,28 +849,24 @@ class _ProductListScreenState extends State<ProductListScreen> {
       _selectedCategory = 'All';
     }
 
-    final products = _pagedProducts
-        .where((p) => _matchesSearchQuery(p, _searchQuery))
-        .where((p) {
-          if ((_selectedBrand ?? '').trim().isEmpty) return true;
-          return (p['brand'] ?? '').toString().trim().toLowerCase() ==
-              _selectedBrand!.trim().toLowerCase();
-        })
-        .where((p) {
-          if ((_selectedTag ?? '').trim().isEmpty) return true;
-          return _matchesSelectedTag(_tagSearchSource(p));
-        })
-        .toList();
+    final hasQuery = _searchQuery.trim().isNotEmpty;
+    final shouldUseExpandedPool =
+        hasQuery ||
+        (_selectedTag ?? '').trim().isNotEmpty ||
+        (_selectedBrand ?? '').trim().isNotEmpty;
 
-    if (_sort == 'low') {
-      products.sort((a, b) => (a['price'] as num).compareTo(b['price'] as num));
-    } else if (_sort == 'high') {
-      products.sort((a, b) => (b['price'] as num).compareTo(a['price'] as num));
-    } else if (_sort == 'rating') {
-      products.sort(
-        (a, b) => (b['rating'] as num).compareTo(a['rating'] as num),
-      );
-    }
+    final sourceProducts = _buildSourceProducts(
+      home,
+      shouldUseExpandedPool: shouldUseExpandedPool,
+    );
+    final scopedProducts = _applyScopedFilters(sourceProducts);
+    final products = _applyQueryFallbackIfNeeded(
+      sourceProducts,
+      scopedProducts,
+      hasQuery: hasQuery,
+    );
+
+    _sortProductsForDisplay(products, hasQuery: hasQuery);
 
     final displayedProducts = products;
 

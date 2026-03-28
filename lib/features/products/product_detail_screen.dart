@@ -60,8 +60,28 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     super.dispose();
   }
 
+  void _syncCarouselToSelectedImage() {
+    final targetIndex = _productState?.selectedImageIndex ?? 0;
+    if (!_pageController.hasClients) return;
+
+    final currentPage = _pageController.page;
+    final roundedCurrent = currentPage == null ? 0 : currentPage.round();
+    if (roundedCurrent == targetIndex) return;
+
+    _pageController.animateToPage(
+      targetIndex,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
+
   void _onProductStateChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _syncCarouselToSelectedImage();
+    });
   }
 
   Product _fallbackProduct(Map<String, dynamic> raw) {
@@ -373,7 +393,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     color: isSelected
                         ? AppColors.primary
                         : AppColors.textSecondary,
-                    fontSize: compactMode ? 11 : 10,
+                    fontSize: compactMode ? 12 : 11,
                     fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                   ),
                 ),
@@ -413,7 +433,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           textAlign: TextAlign.center,
           style: TextStyle(
             color: isSelected ? AppColors.primary : AppColors.textSecondary,
-            fontSize: compactMode ? 11 : 10,
+            fontSize: compactMode ? 12 : 11,
             fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
           ),
         ),
@@ -1319,10 +1339,96 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     return scored.take(6).toList();
   }
 
+  int _compareVariantAscending(ProductVariant a, ProductVariant b) {
+    String normalizeVariantText(ProductVariant v) {
+      final shade = v.shadeName.trim();
+      if (shade.isNotEmpty) return shade;
+      final value = v.value.trim();
+      if (value.isNotEmpty) return value;
+      return v.attribute.trim();
+    }
+
+    final aText = normalizeVariantText(a);
+    final bText = normalizeVariantText(b);
+
+    double? parseLeadingNumber(String text) {
+      final match = RegExp(r'^\s*([0-9]+(?:\.[0-9]+)?)').firstMatch(text);
+      final raw = match?.group(1);
+      if (raw == null) return null;
+      return double.tryParse(raw);
+    }
+
+    final aNum = parseLeadingNumber(aText);
+    final bNum = parseLeadingNumber(bText);
+
+    if (aNum != null && bNum != null) {
+      final numCmp = aNum.compareTo(bNum);
+      if (numCmp != 0) return numCmp;
+      return aText.toLowerCase().compareTo(bText.toLowerCase());
+    }
+
+    if (aNum != null && bNum == null) return -1;
+    if (aNum == null && bNum != null) return 1;
+
+    return aText.toLowerCase().compareTo(bText.toLowerCase());
+  }
+
   int get _currentPrice {
     final v = _selectedVariant?.price ?? 0;
     if (v > 0) return v;
     return ((widget.product['price'] as num?) ?? 0).toInt();
+  }
+
+  bool get _manageStockEnabled {
+    final raw = widget.product['manageStock'];
+    if (raw is bool) return raw;
+
+    final text = (raw ?? '').toString().trim().toLowerCase();
+    if (text.isEmpty) return true;
+    if (text == 'false' || text == '0' || text == 'no' || text == 'off') {
+      return false;
+    }
+    return true;
+  }
+
+  int? _parseStockValue(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is num) return raw.toInt();
+    final text = raw.toString().trim();
+    if (text.isEmpty) return null;
+    return int.tryParse(text);
+  }
+
+  int? get _currentStock {
+    if (!_manageStockEnabled) return null;
+
+    if (_selectedVariant != null) {
+      final variant = _selectedVariant!;
+      if (variant.hasExplicitStock) return variant.stock;
+
+      // Legacy fallback: variable products may keep stock only on product doc.
+      return _parseStockValue(
+        widget.product['stock'] ??
+            widget.product['quantity'] ??
+            widget.product['qty'] ??
+            widget.product['inventory'] ??
+            widget.product['stockCount'],
+      );
+    }
+
+    return _parseStockValue(
+      widget.product['stock'] ??
+          widget.product['quantity'] ??
+          widget.product['qty'] ??
+          widget.product['inventory'] ??
+          widget.product['stockCount'],
+    );
+  }
+
+  bool get _isOutOfStock {
+    final stock = _currentStock;
+    if (stock == null) return false;
+    return stock <= 0;
   }
 
   String get _cartItemId {
@@ -1406,7 +1512,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     final discountPct = hasDiscount
         ? (((originalPrice - price) / originalPrice) * 100).round()
         : 0;
-    final variants = _product.variants;
+    final variants = List<ProductVariant>.from(_product.variants)
+      ..sort(_compareVariantAscending);
 
     final imageList = _productState?.displayImages ?? const <String>[];
     final selectedImageIndex = _productState?.selectedImageIndex ?? 0;
@@ -1466,6 +1573,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         cartItem: _cartPayload,
         displaySize: _displaySize,
         displayPrice: price,
+        isOutOfStock: _isOutOfStock,
       ),
       floatingActionButton: const SupportChatFab(),
       body: SingleChildScrollView(
@@ -1648,6 +1756,32 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       style: TextStyle(color: AppColors.textHint, fontSize: 12),
                     ),
                   ),
+                  if (_isOutOfStock)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                      child: Text(
+                        'Out of stock',
+                        style: TextStyle(
+                          color: Color(0xFFE53935),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    )
+                  else
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                      child: Text(
+                        _currentStock == null
+                            ? 'In stock'
+                            : 'In stock (${_currentStock! < 0 ? 0 : _currentStock!})',
+                        style: const TextStyle(
+                          color: Color(0xFF2D7A22),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
 
                   if (variants.isNotEmpty) ...[
                     const Padding(
@@ -2819,11 +2953,13 @@ class _BottomCartBar extends StatelessWidget {
   final Map<String, dynamic> cartItem;
   final String displaySize;
   final int displayPrice;
+  final bool isOutOfStock;
 
   const _BottomCartBar({
     required this.cartItem,
     required this.displaySize,
     required this.displayPrice,
+    required this.isOutOfStock,
   });
 
   @override
@@ -2890,7 +3026,26 @@ class _BottomCartBar extends StatelessWidget {
                 SizedBox(
                   width: qty == 0 ? 170 : 225,
                   height: 50,
-                  child: qty == 0
+                  child: isOutOfStock
+                      ? ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFBDBDBD),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          onPressed: null,
+                          child: const Text(
+                            'Out of stock',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        )
+                      : qty == 0
                       ? ElevatedButton(
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primary,

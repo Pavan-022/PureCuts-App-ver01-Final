@@ -3,6 +3,8 @@ class ProductModel {
   final String name;
   final String brand;
   final String productType;
+  final int stock;
+  final bool manageStock;
   final String category;
   final String subCategory;
   final String subSubCategory;
@@ -33,6 +35,8 @@ class ProductModel {
     required this.name,
     required this.brand,
     this.productType = '',
+    this.stock = 0,
+    this.manageStock = true,
     required this.category,
     this.subCategory = '',
     this.subSubCategory = '',
@@ -76,6 +80,26 @@ class ProductModel {
       } catch (_) {
         return <String>[];
       }
+    }
+
+    bool boolValue(dynamic value, {bool fallback = false}) {
+      if (value is bool) return value;
+      final text = (value ?? '').toString().trim().toLowerCase();
+      if (text.isEmpty) return fallback;
+      if (text == 'true' || text == '1' || text == 'yes' || text == 'on') {
+        return true;
+      }
+      if (text == 'false' || text == '0' || text == 'no' || text == 'off') {
+        return false;
+      }
+      return fallback;
+    }
+
+    int intValue(dynamic value, {int fallback = 0}) {
+      if (value is num) return value.toInt();
+      final text = (value ?? '').toString().trim();
+      if (text.isEmpty) return fallback;
+      return int.tryParse(text) ?? fallback;
     }
 
     List<String> parseTagValues(dynamic raw) {
@@ -122,6 +146,14 @@ class ProductModel {
         map['brand'] ?? map['brandName'] ?? map['manufacturer'],
       ),
       productType: stringValue(map['productType'] ?? map['type']),
+      stock: intValue(
+        map['stock'] ??
+            map['quantity'] ??
+            map['qty'] ??
+            map['inventory'] ??
+            map['stockCount'],
+      ),
+      manageStock: boolValue(map['manageStock'], fallback: true),
       category: stringValue(map['category'] ?? map['categoryName']),
       subCategory: stringValue(
         map['subCategory'] ?? map['subcategory'] ?? map['sub_category'],
@@ -166,6 +198,8 @@ class ProductModel {
       'name': name,
       'brand': brand,
       'productType': productType,
+      'stock': stock,
+      'manageStock': manageStock,
       'category': category,
       'subCategory': subCategory,
       'subSubCategory': subSubCategory,
@@ -204,6 +238,8 @@ class ProductModel {
       'name': name,
       'brand': brand,
       'productType': productType,
+      'stock': stock,
+      'manageStock': manageStock,
       'category': category,
       'subCategory': subCategory,
       'subSubCategory': subSubCategory,

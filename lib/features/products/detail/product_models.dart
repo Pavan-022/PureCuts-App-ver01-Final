@@ -13,6 +13,7 @@ class ProductVariant {
   final int salePrice;
   final String image;
   final int stock;
+  final bool hasExplicitStock;
 
   const ProductVariant({
     required this.id,
@@ -27,11 +28,34 @@ class ProductVariant {
     this.salePrice = 0,
     required this.image,
     this.stock = 0,
+    this.hasExplicitStock = false,
   });
 
   bool get inStock => stock > 0;
 
   factory ProductVariant.fromMap(String id, Map<String, dynamic> map) {
+    int? parseStock(dynamic raw) {
+      if (raw == null) return null;
+      if (raw is num) return raw.toInt();
+      final text = raw.toString().trim();
+      if (text.isEmpty) return null;
+      return int.tryParse(text);
+    }
+
+    final rawStock =
+        map['stock'] ??
+        map['quantity'] ??
+        map['qty'] ??
+        map['inventory'] ??
+        map['stockCount'];
+    final parsedStock = parseStock(rawStock);
+    final hasExplicitStockField =
+        map.containsKey('stock') ||
+        map.containsKey('quantity') ||
+        map.containsKey('qty') ||
+        map.containsKey('inventory') ||
+        map.containsKey('stockCount');
+
     final rawColorCode = (map['colorCode'] ?? '').toString().trim();
     return ProductVariant(
       id: id,
@@ -46,7 +70,8 @@ class ProductVariant {
       regularPrice: (map['regularPrice'] as num?)?.toInt() ?? 0,
       salePrice: (map['salePrice'] as num?)?.toInt() ?? 0,
       image: (map['image'] ?? '').toString(),
-      stock: (map['stock'] as num?)?.toInt() ?? 0,
+      stock: parsedStock ?? 0,
+      hasExplicitStock: hasExplicitStockField && parsedStock != null,
     );
   }
 
@@ -286,9 +311,26 @@ class ProductState extends ChangeNotifier {
     }
   }
 
+  int _resolveImageIndexForVariant(ProductVariant? variant) {
+    final images = displayImages;
+    if (images.isEmpty) return 0;
+
+    final variantImage = (variant?.image ?? '').trim();
+    if (variantImage.isNotEmpty) {
+      final exact = images.indexOf(variantImage);
+      if (exact >= 0) return exact;
+    }
+
+    if (_selectedImageIndex >= 0 && _selectedImageIndex < images.length) {
+      return _selectedImageIndex;
+    }
+
+    return 0;
+  }
+
   void selectVariant(ProductVariant variant) {
     _selectedVariant = variant;
-    _selectedImageIndex = 0;
+    _selectedImageIndex = _resolveImageIndexForVariant(variant);
     notifyListeners();
   }
 
@@ -303,7 +345,7 @@ class ProductState extends ChangeNotifier {
     _selectedVariant = product.variants.isNotEmpty
         ? product.variants.first
         : null;
-    _selectedImageIndex = 0;
+    _selectedImageIndex = _resolveImageIndexForVariant(_selectedVariant);
     notifyListeners();
   }
 }
