@@ -85,7 +85,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     '412207',
   };
 
-  String _selectedPaymentMethod = 'Google Pay UPI';
+  String _selectedPaymentMethod = 'Cash on Delivery';
 
   final TextEditingController _line1Controller = TextEditingController();
   final TextEditingController _line2Controller = TextEditingController();
@@ -1380,11 +1380,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   children: [
                     GestureDetector(
                       onTap: () async {
-                        final methods = [
-                          'Google Pay UPI',
-                          'PhonePe UPI',
-                          'Cash on Delivery',
-                        ];
+                        final methods = ['Cash on Delivery'];
                         final selected = await showModalBottomSheet<String>(
                           context: context,
                           builder: (_) => SafeArea(
