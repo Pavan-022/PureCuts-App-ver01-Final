@@ -1,6 +1,9 @@
 // lib/features/orders/order_confirm_screen.dart
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:confetti/confetti.dart';
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
@@ -37,15 +40,9 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
     with SingleTickerProviderStateMixin {
   final FirestoreService _firestoreService = FirestoreService();
   late AnimationController _controller;
+  late ConfettiController _confettiController;
   late Animation<double> _scaleAnim;
-  String _status = 'Placed';
   String? _orderRef;
-  final List<String> _steps = [
-    'Placed',
-    'Confirmed',
-    'Processing',
-    'Delivered',
-  ];
 
   @override
   void initState() {
@@ -55,8 +52,15 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
       vsync: this,
       duration: const Duration(milliseconds: 600),
     );
+    _confettiController = ConfettiController(
+      duration: const Duration(milliseconds: 2200),
+    );
     _scaleAnim = CurvedAnimation(parent: _controller, curve: Curves.elasticOut);
     _controller.forward();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _confettiController.play();
+    });
 
     // ✅ Save cart items to OrderProvider BEFORE clearing the cart
     final cart = context.read<CartModel>();
@@ -110,175 +114,174 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
 
     // ✅ Clear cart AFTER saving
     cart.clear();
-
-    _simulateProgress();
-  }
-
-  void _simulateProgress() async {
-    for (final step in ['Confirmed', 'Processing']) {
-      await Future.delayed(const Duration(seconds: 2));
-      if (mounted) setState(() => _status = step);
-    }
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _confettiController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.xxl),
-          child: Column(
-            children: [
-              const SizedBox(height: 36),
-              ScaleTransition(
-                scale: _scaleAnim,
-                child: Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [AppColors.primary, AppColors.primaryLight],
-                    ),
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.primary.withOpacity(0.4),
-                        blurRadius: 30,
-                        offset: const Offset(0, 10),
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.check_rounded,
-                    color: Colors.white,
-                    size: 52,
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xxl),
-              const Text(
-                'Order Placed! 🎉',
-                style: TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                '₹${widget.total} • ${_orderRef ?? 'Generating Order ID...'}',
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 14,
-                ),
-              ),
-              const SizedBox(height: 36),
-              // Status stepper
-              Container(
-                padding: const EdgeInsets.all(AppSpacing.xl),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(AppRadius.xxl),
-                  border: Border.all(color: AppColors.divider),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Order Status',
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.lg),
-                    ...List.generate(_steps.length, (i) {
-                      final stepIndex = _steps.indexOf(_status);
-                      final isDone = i <= stepIndex;
-                      final isActive = i == stepIndex;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: AppSpacing.md),
-                        child: Row(
-                          children: [
-                            AnimatedContainer(
-                              duration: const Duration(milliseconds: 300),
-                              width: 28,
-                              height: 28,
+      body: Stack(
+        children: [
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.xxl),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ScaleTransition(
+                            scale: _scaleAnim,
+                            child: Container(
+                              width: 112,
+                              height: 112,
                               decoration: BoxDecoration(
-                                color: isDone
-                                    ? AppColors.primary
-                                    : AppColors.surface,
+                                gradient: const LinearGradient(
+                                  colors: [
+                                    AppColors.primary,
+                                    AppColors.primaryLight,
+                                  ],
+                                ),
                                 shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: isDone
-                                      ? AppColors.primary
-                                      : AppColors.divider,
-                                  width: 2,
-                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppColors.primary.withOpacity(0.4),
+                                    blurRadius: 30,
+                                    offset: const Offset(0, 10),
+                                  ),
+                                ],
                               ),
-                              child: isDone
-                                  ? const Icon(
-                                      Icons.check,
-                                      color: Colors.white,
-                                      size: 14,
-                                    )
-                                  : null,
-                            ),
-                            const SizedBox(width: AppSpacing.md),
-                            Text(
-                              _steps[i],
-                              style: TextStyle(
-                                color: isActive
-                                    ? AppColors.accent
-                                    : isDone
-                                    ? AppColors.textPrimary
-                                    : AppColors.textHint,
-                                fontWeight: isActive
-                                    ? FontWeight.w700
-                                    : FontWeight.w500,
-                                fontSize: 14,
+                              child: const Icon(
+                                Icons.check_rounded,
+                                color: Colors.white,
+                                size: 58,
                               ),
                             ),
-                            if (isActive) ...[
-                              const SizedBox(width: 8),
-                              const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  color: AppColors.accent,
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      );
-                    }),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (_) => const MainNavScreen()),
-                    (_) => false,
+                          ),
+                          const SizedBox(height: AppSpacing.xxl),
+                          const Text(
+                            'Order Placed! 🎉',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 31,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          Text(
+                            '₹${widget.total} • ${_orderRef ?? 'Generating Order ID...'}',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                  child: const Text('Continue Shopping'),
-                ),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pushAndRemoveUntil(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const MainNavScreen(),
+                        ),
+                        (_) => false,
+                      ),
+                      child: const Text('Continue Shopping'),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
+          IgnorePointer(
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConfettiWidget(
+                confettiController: _confettiController,
+                blastDirectionality: BlastDirectionality.explosive,
+                shouldLoop: false,
+                emissionFrequency: 0.085,
+                numberOfParticles: 32,
+                minBlastForce: 6,
+                maxBlastForce: 16,
+                gravity: 0.32,
+                minimumSize: const Size(3, 3),
+                maximumSize: const Size(7, 7),
+                particleDrag: 0.05,
+                colors: const [
+                  AppColors.primary,
+                  AppColors.primaryLight,
+                  Color(0xFFFFD166),
+                  Color(0xFF4ADE80),
+                  Color(0xFF60A5FA),
+                ],
+              ),
+            ),
+          ),
+          IgnorePointer(
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: ConfettiWidget(
+                confettiController: _confettiController,
+                blastDirectionality: BlastDirectionality.directional,
+                blastDirection: math.pi / 4,
+                shouldLoop: false,
+                emissionFrequency: 0.06,
+                numberOfParticles: 18,
+                minBlastForce: 5,
+                maxBlastForce: 14,
+                gravity: 0.34,
+                minimumSize: const Size(2.5, 2.5),
+                maximumSize: const Size(6, 6),
+                colors: const [
+                  AppColors.primary,
+                  AppColors.primaryLight,
+                  Color(0xFFFFD166),
+                  Color(0xFF4ADE80),
+                  Color(0xFF60A5FA),
+                ],
+              ),
+            ),
+          ),
+          IgnorePointer(
+            child: Align(
+              alignment: Alignment.topRight,
+              child: ConfettiWidget(
+                confettiController: _confettiController,
+                blastDirectionality: BlastDirectionality.directional,
+                blastDirection: (math.pi * 3) / 4,
+                shouldLoop: false,
+                emissionFrequency: 0.06,
+                numberOfParticles: 18,
+                minBlastForce: 5,
+                maxBlastForce: 14,
+                gravity: 0.34,
+                minimumSize: const Size(2.5, 2.5),
+                maximumSize: const Size(6, 6),
+                colors: const [
+                  AppColors.primary,
+                  AppColors.primaryLight,
+                  Color(0xFFFFD166),
+                  Color(0xFF4ADE80),
+                  Color(0xFF60A5FA),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

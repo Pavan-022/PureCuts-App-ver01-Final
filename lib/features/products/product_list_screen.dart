@@ -66,6 +66,21 @@ class _ProductListScreenState extends State<ProductListScreen> {
     return hasQuery || hasTagFilter;
   }
 
+  String? _serverCategoryFilter({required bool forSearchHydration}) {
+    final category = _selectedCategory.trim();
+    if (category.isEmpty || category.toLowerCase() == 'all') return null;
+
+    // Keep full-catalog hydration path for search/tag discovery to avoid
+    // restricting searchable results.
+    if (forSearchHydration) return null;
+
+    final hasQuery = _searchQuery.trim().isNotEmpty;
+    final hasTagFilter = (_selectedTag ?? '').trim().isNotEmpty;
+    if (hasQuery || hasTagFilter) return null;
+
+    return category;
+  }
+
   Future<void> _hydrateScopeForSearchIfNeeded() async {
     if (!_needsFullScopeForSearch) return;
     if (_isInitialLoading || _isPageLoading || _isSearchHydrating) return;
@@ -80,23 +95,28 @@ class _ProductListScreenState extends State<ProductListScreen> {
       DocumentSnapshot<Map<String, dynamic>>? cursor;
       var hasMore = true;
       final fetched = <Map<String, dynamic>>[];
-      var guard = 0;
+      String? lastCursorId;
 
-      while (hasMore && guard < 200) {
-        guard += 1;
-
+      while (hasMore) {
         if (!mounted || _scopeKey() != initialScope) break;
 
         final page = await _firestoreService.getProductsPageFiltered(
           limit: 120,
           startAfterDoc: cursor,
-          category: null,
+          category: _serverCategoryFilter(forSearchHydration: true),
           brand: (_selectedBrand ?? '').trim().isEmpty ? null : _selectedBrand,
         );
 
         fetched.addAll(page.products.map((p) => p.toProductMap()));
-        cursor = page.lastDocument;
-        hasMore = page.hasMore && cursor != null;
+
+        final nextCursor = page.lastDocument;
+        final nextCursorId = nextCursor?.id;
+        final cursorStalled =
+            nextCursorId != null && nextCursorId == lastCursorId;
+
+        cursor = nextCursor;
+        hasMore = page.hasMore && cursor != null && !cursorStalled;
+        lastCursorId = nextCursorId;
 
         if (!hasMore) break;
       }
@@ -753,7 +773,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
     try {
       final page = await _firestoreService.getProductsPageFiltered(
         limit: _pageSize,
-        category: null,
+        category: _serverCategoryFilter(forSearchHydration: false),
         brand: (_selectedBrand ?? '').trim().isEmpty ? null : _selectedBrand,
       );
 
@@ -794,7 +814,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
       final page = await _firestoreService.getProductsPageFiltered(
         limit: _pageSize,
         startAfterDoc: _lastProductDoc,
-        category: null,
+        category: _serverCategoryFilter(forSearchHydration: false),
         brand: (_selectedBrand ?? '').trim().isEmpty ? null : _selectedBrand,
       );
 

@@ -24,6 +24,12 @@ From `c:\Users\manep\purecuts\functions` configure:
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_ADMIN_CHAT_IDS` (comma-separated, e.g. `12345,67890`)
 
+Important:
+
+- Production notifications read these from **Firebase Functions Secret Manager**.
+- Updating only local `.env` will not change deployed Cloud Functions behavior.
+- After rotating token/chat IDs, update secrets and redeploy functions.
+
 ### 3) Deploy functions
 
 Deploy Cloud Functions after setting secrets.
@@ -48,3 +54,13 @@ In local/emulator mode, the function can fall back to these environment values w
 Production should use Firebase Functions secrets.
 
 Do not store real production secrets in `.env`.
+
+### 6) Quick troubleshooting when no Telegram message arrives
+
+- Confirm the new bot token is valid (`getMe`) and bot username is expected.
+- Ensure each target chat/user has sent at least one message to the bot (or bot was added to group/channel with permission).
+- Verify `TELEGRAM_ADMIN_CHAT_IDS` values are correct numeric chat IDs.
+- Check Cloud Function logs for `[VerificationTelegram]` entries:
+	- `tokenSource` and `chatIdSource`
+	- `botUsername`
+	- Telegram API error payload (`telegramError`)

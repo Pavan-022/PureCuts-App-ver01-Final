@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
@@ -14,12 +15,21 @@ class BrandsScreen extends StatefulWidget {
 }
 
 class _BrandsScreenState extends State<BrandsScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<HomeProvider>().loadData();
     });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   String _normalizeImagePath(String raw) {
@@ -98,119 +108,205 @@ class _BrandsScreenState extends State<BrandsScreen> {
   Widget build(BuildContext context) {
     final home = context.watch<HomeProvider>();
     final brands = home.brands;
+    final query = _searchQuery.trim().toLowerCase();
+    final filteredBrands = query.isEmpty
+        ? brands
+        : brands
+              .where((brand) {
+                final name = (brand['name'] ?? '')
+                    .toString()
+                    .trim()
+                    .toLowerCase();
+                return name.contains(query);
+              })
+              .toList(growable: false);
 
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: Stack(
-        children: [
-          // Lavender gradient covering the top area
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              height: 200,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Color(0xFFB69DF8),
-                    Color(0xFFC4B5FD),
-                    Color(0xFFDDD6FE),
-                    Color(0xFFEDE9FE),
-                    Colors.white,
-                  ],
-                  stops: [0.0, 0.18, 0.42, 0.70, 1.0],
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        shadowColor: Colors.transparent,
+        systemOverlayStyle: const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+          systemStatusBarContrastEnforced: false,
+        ),
+        centerTitle: true,
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xFFB69DF8),
+                Color(0xFFC4B5FD),
+                Color(0xFFDDD6FE),
+                Color(0xFFEDE9FE),
+                AppColors.background,
+              ],
+              stops: [0.0, 0.18, 0.42, 0.70, 1.0],
+            ),
+          ),
+        ),
+        title: const Text(
+          'Brands',
+          style: TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w700,
+            fontSize: 16,
+          ),
+        ),
+      ),
+      body: SafeArea(
+        top: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEDE9FE),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: const Color(0xFFD7CCFF)),
+                    ),
+                    child: Text(
+                      '${filteredBrands.length} available',
+                      style: const TextStyle(
+                        color: AppColors.primary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Discover products by trusted brands',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+              child: Container(
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFDCD0FF)),
+                ),
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: (value) => setState(() => _searchQuery = value),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.textPrimary,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'Search brands',
+                    hintStyle: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textHint,
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.search_rounded,
+                      size: 18,
+                      color: AppColors.textHint,
+                    ),
+                    suffixIcon: _searchQuery.trim().isEmpty
+                        ? null
+                        : IconButton(
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _searchQuery = '');
+                            },
+                            icon: const Icon(
+                              Icons.close_rounded,
+                              size: 18,
+                              color: AppColors.textHint,
+                            ),
+                          ),
+                    border: InputBorder.none,
+                    isCollapsed: true,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
                 ),
               ),
             ),
-          ),
-          SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-                  child: Text(
-                    'Brands',
-                    style: TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    '${brands.length} available',
-                    style: const TextStyle(
-                      color: AppColors.textHint,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Expanded(
-                  child: home.loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : brands.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No brands available',
-                            style: TextStyle(
-                              color: AppColors.textHint,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
+            Expanded(
+              child: home.loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : filteredBrands.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'No brands available',
+                        style: TextStyle(
+                          color: AppColors.textHint,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    )
+                  : GridView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            mainAxisSpacing: 12,
+                            crossAxisSpacing: 12,
+                            childAspectRatio: 1.22,
+                          ),
+                      itemCount: filteredBrands.length,
+                      itemBuilder: (_, i) {
+                        final brand = filteredBrands[i];
+                        final name = (brand['name'] ?? '').toString();
+                        final image = (brand['image'] ?? brand['logo'] ?? '')
+                            .toString();
+
+                        return Material(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(14),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      ProductListScreen(initialBrand: name),
+                                ),
+                              );
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: _buildBrandLogo(image, name),
                             ),
                           ),
-                        )
-                      : GridView.builder(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                mainAxisSpacing: 12,
-                                crossAxisSpacing: 12,
-                                childAspectRatio: 1.22,
-                              ),
-                          itemCount: brands.length,
-                          itemBuilder: (_, i) {
-                            final brand = brands[i];
-                            final name = (brand['name'] ?? '').toString();
-                            final image =
-                                (brand['image'] ?? brand['logo'] ?? '')
-                                    .toString();
-
-                            return Material(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(14),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(14),
-                                onTap: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          ProductListScreen(initialBrand: name),
-                                    ),
-                                  );
-                                },
-                                child: Padding(
-                                  padding: const EdgeInsets.all(10),
-                                  child: _buildBrandLogo(image, name),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ],
+                        );
+                      },
+                    ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
       bottomNavigationBar: Consumer<CartModel>(
         builder: (context, cart, _) {
