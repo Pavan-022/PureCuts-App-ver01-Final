@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
 class OrderModel {
+  final String orderDocumentId;
   final String orderId;
   final String uid;
   final String customerName;
@@ -19,6 +20,7 @@ class OrderModel {
   final DateTime? updatedAt;
 
   const OrderModel({
+    required this.orderDocumentId,
     required this.orderId,
     required this.uid,
     required this.customerName,
@@ -57,6 +59,7 @@ class OrderModel {
         .toLowerCase();
 
     return OrderModel(
+      orderDocumentId: (map['id'] ?? map['docId'] ?? '').toString().trim(),
       orderId: map['orderId'] ?? map['orderRef'] ?? map['orderNumber'] ?? '',
       uid: map['uid'] ?? map['userId'] ?? map['customerId'] ?? '',
       customerName: map['customerName'] ?? '',

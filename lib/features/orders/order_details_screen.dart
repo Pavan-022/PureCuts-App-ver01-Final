@@ -1,11 +1,25 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import 'package:purecuts/core/models/order_model.dart';
+import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/features/auth/providers/auth_provider.dart';
+import 'package:purecuts/features/orders/order_provider.dart';
 import 'package:purecuts/features/products/product_detail_screen.dart';
 
 class OrderDetailsScreen extends StatelessWidget {
   final OrderModel order;
+
+  static const List<String> _cancelReasonOptions = [
+    'Changed my mind',
+    'Ordered by mistake',
+    'Found better price elsewhere',
+    'Delivery taking too long',
+    'Need to change address or contact details',
+    'Payment issue',
+    'Other',
+  ];
 
   const OrderDetailsScreen({super.key, required this.order});
 
@@ -567,28 +581,117 @@ class OrderDetailsScreen extends StatelessWidget {
   }
 
   void _showCancelConfirmation(BuildContext context) {
+    String selectedReason = _cancelReasonOptions.first;
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Cancel Order'),
-        content: const Text('Are you sure you want to cancel this order?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('No'),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateDialog) => AlertDialog(
+          title: const Text('Cancel Order'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Please choose a reason for cancellation:'),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: selectedReason,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                items: _cancelReasonOptions
+                    .map(
+                      (reason) => DropdownMenuItem<String>(
+                        value: reason,
+                        child: Text(
+                          reason,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+                onChanged: (value) {
+                  if (value == null) return;
+                  setStateDialog(() => selectedReason = value);
+                },
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Order cancellation initiated')),
-              );
-            },
-            child: const Text('Yes, Cancel'),
-          ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('No'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await _cancelOrder(context, selectedReason: selectedReason);
+              },
+              child: const Text('Yes, Cancel'),
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  Future<void> _cancelOrder(
+    BuildContext context, {
+    required String selectedReason,
+  }) async {
+    final auth = context.read<AuthProvider>();
+    final uid = (auth.user?.uid ?? order.uid).trim();
+
+    if (uid.isEmpty || order.orderId.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to cancel order right now')),
+      );
+      return;
+    }
+
+    bool success = false;
+    try {
+      final service = FirestoreService();
+      success = await service.cancelOrderByUser(
+        uid: uid,
+        orderRef: order.orderId,
+        orderDocumentId: order.orderDocumentId,
+        reason: selectedReason,
+      );
+    } catch (_) {
+      success = false;
+    }
+
+    if (!context.mounted) return;
+
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Order cancellation failed. Please try again.'),
+        ),
+      );
+      return;
+    }
+
+    await context.read<OrderProvider>().fetchUserOrders(
+      uid: uid,
+      forceRefresh: true,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    await context.read<OrderProvider>().loadPurchasedProducts(
+      uid: uid,
+      forceRefresh: true,
+    );
+
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Order cancelled successfully')),
+    );
+    Navigator.pop(context);
   }
 
   void _showReorderConfirmation(BuildContext context) {

@@ -26,6 +26,36 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    function isOrderOwnerFromResource() {
+      return signedIn() && (
+        request.auth.uid == resource.data.uid ||
+        request.auth.uid == resource.data.userId ||
+        request.auth.uid == resource.data.customerId
+      );
+    }
+
+    function isSafeOwnerCancellationUpdate() {
+      return isOrderOwnerFromResource() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'orderStatus',
+          'cancelledBy',
+          'cancelledByUid',
+          'cancellationSource',
+          'cancellationReason',
+          'cancelledAt',
+          'updatedAt'
+        ]) &&
+        request.resource.data.status == 'cancelled' &&
+        request.resource.data.orderStatus == 'cancelled' &&
+        request.resource.data.cancelledBy == 'user' &&
+        request.resource.data.cancelledByUid == request.auth.uid &&
+        request.resource.data.cancellationSource == 'app_user' &&
+        request.resource.data.cancellationReason is string &&
+        request.resource.data.cancellationReason.size() > 0 &&
+        request.resource.data.cancellationReason.size() <= 200;
+    }
+
     function hasPurchasedProduct(productId) {
       return signedIn() &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.purchasedProductIds.hasAny([productId]);
@@ -147,7 +177,8 @@ service cloud.firestore {
          request.auth.uid == resource.data.uid ||
          request.auth.uid == resource.data.userId ||
          request.auth.uid == resource.data.customerId);
-      allow update, delete: if isAdmin();
+      allow update: if isAdmin() || isSafeOwnerCancellationUpdate();
+      allow delete: if isAdmin();
     }
 
     // Optional product share analytics

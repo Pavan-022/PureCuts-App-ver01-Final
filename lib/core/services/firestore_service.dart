@@ -1065,7 +1065,9 @@ class FirestoreService {
     try {
       final canonicalSnap = await canonicalQuery.get();
       if (canonicalSnap.docs.isNotEmpty || startAfterDoc != null) {
-        final orders = canonicalSnap.docs.map((doc) => doc.data()).toList();
+        final orders = canonicalSnap.docs
+            .map((doc) => {'id': doc.id, ...doc.data()})
+            .toList();
         final hasMore = canonicalSnap.docs.length >= safeLimit;
         final lastDoc = canonicalSnap.docs.isNotEmpty
             ? canonicalSnap.docs.last
@@ -1107,7 +1109,7 @@ class FirestoreService {
 
       final merged = <String, Map<String, dynamic>>{};
       for (final doc in legacyDocs) {
-        final data = doc.data();
+        final data = {'id': doc.id, ...doc.data()};
         final key = (data['orderId'] ?? data['orderRef'] ?? doc.id).toString();
         merged[key] = data;
       }
@@ -1141,7 +1143,9 @@ class FirestoreService {
           .where('uid', isEqualTo: cleanUid)
           .limit(safeLimit);
       final fallbackSnap = await fallbackQuery.get();
-      final orders = fallbackSnap.docs.map((doc) => doc.data()).toList();
+      final orders = fallbackSnap.docs
+          .map((doc) => {'id': doc.id, ...doc.data()})
+          .toList();
       final hasMore = fallbackSnap.docs.length >= safeLimit;
       final lastDoc = fallbackSnap.docs.isNotEmpty
           ? fallbackSnap.docs.last
@@ -1187,6 +1191,109 @@ class FirestoreService {
         '[FirestoreService] getUserOrders failed for UID=$cleanUid: $e\n$st',
       );
       return const [];
+    }
+  }
+
+  Future<bool> cancelOrderByUser({
+    required String uid,
+    required String orderRef,
+    String orderDocumentId = '',
+    String reason = 'Cancelled by user',
+  }) async {
+    final cleanUid = uid.trim();
+    final cleanOrderRef = orderRef.trim();
+    final cleanOrderDocumentId = orderDocumentId.trim();
+    if (cleanUid.isEmpty ||
+        (cleanOrderRef.isEmpty && cleanOrderDocumentId.isEmpty)) {
+      return false;
+    }
+
+    Future<QuerySnapshot<Map<String, dynamic>>> _lookup({
+      required String ownerField,
+      required String refField,
+      required String refValue,
+    }) {
+      return _db
+          .collection(_ordersCollection)
+          .where(ownerField, isEqualTo: cleanUid)
+          .where(refField, isEqualTo: refValue)
+          .limit(1)
+          .get();
+    }
+
+    DocumentReference<Map<String, dynamic>>? targetRef;
+
+    try {
+      if (cleanOrderDocumentId.isNotEmpty) {
+        final directRef = _db
+            .collection(_ordersCollection)
+            .doc(cleanOrderDocumentId);
+        final directSnap = await directRef.get();
+        if (directSnap.exists) {
+          final data = directSnap.data() ?? const <String, dynamic>{};
+          final owner = _firstNonEmpty([
+            data['uid'],
+            data['userId'],
+            data['customerId'],
+          ]);
+          if (owner == cleanUid || owner.isEmpty) {
+            targetRef = directRef;
+          }
+        }
+      }
+
+      final ownerFields = ['uid', 'userId', 'customerId'];
+      final refFields = ['orderId', 'orderRef', 'orderNumber'];
+      final refVariants = <String>{};
+      if (cleanOrderRef.isNotEmpty) {
+        refVariants.add(cleanOrderRef);
+        if (cleanOrderRef.startsWith('#')) {
+          refVariants.add(cleanOrderRef.replaceFirst('#', ''));
+        } else {
+          refVariants.add('#$cleanOrderRef');
+        }
+      }
+
+      if (targetRef == null && refVariants.isNotEmpty) {
+        for (final ownerField in ownerFields) {
+          for (final refField in refFields) {
+            for (final refValue in refVariants) {
+              final snap = await _lookup(
+                ownerField: ownerField,
+                refField: refField,
+                refValue: refValue,
+              );
+              if (snap.docs.isNotEmpty) {
+                targetRef = snap.docs.first.reference;
+                break;
+              }
+            }
+            if (targetRef != null) break;
+          }
+          if (targetRef != null) break;
+        }
+      }
+
+      if (targetRef == null) {
+        return false;
+      }
+
+      await targetRef.update({
+        'status': 'cancelled',
+        'orderStatus': 'cancelled',
+        'cancelledBy': 'user',
+        'cancelledByUid': cleanUid,
+        'cancellationSource': 'app_user',
+        'cancellationReason': reason.trim().isEmpty
+            ? 'Cancelled by user'
+            : reason.trim(),
+        'cancelledAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
