@@ -16,10 +16,11 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _fadeAnim;
-  late Animation<double> _scaleAnim;
-  late Animation<double> _progress;
+  late final AnimationController _revealController;
+
+  late final Animation<double> _fadeAnim;
+  late final Animation<double> _logoScaleAnim;
+  late final Animation<double> _taglineSlideAnim;
 
   @override
   void initState() {
@@ -27,33 +28,41 @@ class _SplashScreenState extends State<SplashScreen>
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.light,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+        systemStatusBarContrastEnforced: false,
       ),
     );
-    _controller = AnimationController(
+
+    _revealController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2000),
+      duration: const Duration(milliseconds: 1300),
     );
+
     _fadeAnim = Tween<double>(begin: 0, end: 1).animate(
       CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0, 0.5, curve: Curves.easeOut),
+        parent: _revealController,
+        curve: const Interval(0.0, 0.55, curve: Curves.easeOutCubic),
       ),
     );
-    _scaleAnim = Tween<double>(begin: 0.7, end: 1).animate(
+
+    _logoScaleAnim = Tween<double>(begin: 0.86, end: 1.0).animate(
       CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0, 0.5, curve: Curves.elasticOut),
+        parent: _revealController,
+        curve: const Interval(0.05, 0.62, curve: Curves.easeOutBack),
       ),
     );
-    _progress = Tween<double>(begin: 0, end: 0.55).animate(
+
+    _taglineSlideAnim = Tween<double>(begin: 14, end: 0).animate(
       CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.4, 1.0, curve: Curves.easeInOut),
+        parent: _revealController,
+        curve: const Interval(0.25, 0.85, curve: Curves.easeOutCubic),
       ),
     );
-    _controller.forward();
-    Future.delayed(const Duration(seconds: 3), () async {
+
+    _revealController.forward();
+
+    Future.delayed(const Duration(milliseconds: 1700), () async {
       if (!mounted) return;
       final user = FirebaseAuth.instance.currentUser;
       bool isLoggedIn = false;
@@ -103,155 +112,96 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   void dispose() {
-    _controller.dispose();
+    _revealController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFFa855f7), Color(0xFFc084fc)],
-          ),
-        ),
-        child: Stack(
-          children: [
-            // Decorative blur circles
-            Positioned(
-              top: -80,
-              left: -80,
-              child: Container(
-                width: 300,
-                height: 300,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withOpacity(0.10),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+        systemStatusBarContrastEnforced: false,
+      ),
+      child: Scaffold(
+        body: AnimatedBuilder(
+          animation: _revealController,
+          builder: (_, __) {
+            return Container(
+              width: double.infinity,
+              height: double.infinity,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0xFFA99DE7),
+                    Color(0xFFB6ACEA),
+                    Color(0xFFC5BDF0),
+                  ],
                 ),
               ),
-            ),
-            Positioned(
-              bottom: -80,
-              right: -80,
-              child: Container(
-                width: 300,
-                height: 300,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withOpacity(0.10),
-                ),
-              ),
-            ),
-            // Main content
-            Center(
-              child: AnimatedBuilder(
-                animation: _controller,
-                builder: (_, __) => Opacity(
-                  opacity: _fadeAnim.value,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Logo box
-                        ScaleTransition(
-                          scale: _scaleAnim,
-                          child: Image.asset(
-                            AppConstants.logoPath,
-                            width: 200,
-                            height: 200,
-                            fit: BoxFit.contain,
-                          ),
-                        ),
-
-                        const SizedBox(height: 8),
-                        Text(
-                          'PREMIUM PROFESSIONAL GROOMING',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.90),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 2,
-                          ),
-                        ),
-                        const SizedBox(height: 48),
-                        // Loading text
-                        SizedBox(
-                          width: 240,
+              child: Stack(
+                children: [
+                  Center(
+                    child: Opacity(
+                      opacity: _fadeAnim.value,
+                      child: Transform.translate(
+                        offset: Offset(0, _taglineSlideAnim.value),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 28),
                           child: Column(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    'Initializing experience',
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.80),
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
+                              Transform.scale(
+                                scale: _logoScaleAnim.value,
+                                child: Image.asset(
+                                  AppConstants.logoPath,
+                                  width: 300,
+                                  fit: BoxFit.contain,
+                                ),
                               ),
-                              const SizedBox(height: 12),
-                              // Progress bar
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: Container(
-                                  height: 6,
-                                  width: double.infinity,
-                                  color: Colors.white.withOpacity(0.20),
-                                  child: FractionallySizedBox(
-                                    widthFactor: _progress.value,
-                                    alignment: Alignment.centerLeft,
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        borderRadius: BorderRadius.circular(8),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: Colors.white.withOpacity(
-                                              0.5,
-                                            ),
-                                            blurRadius: 12,
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
+                              const SizedBox(height: 2),
+                              const Text(
+                                'ONE-STOP PLATFORM FOR SALONS',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Color(0xFF1A1230),
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1.0,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                      ],
+                      ),
                     ),
                   ),
-                ),
+                  Positioned(
+                    bottom: 38,
+                    left: 0,
+                    right: 0,
+                    child: Opacity(
+                      opacity: 0.75,
+                      child: const Text(
+                        'Loading your professional experience...',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFF5C138B),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
-            // Version tag
-            Positioned(
-              bottom: 40,
-              left: 0,
-              right: 0,
-              child: Text(
-                'Version 2.4.0',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.60),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 2,
-                ),
-              ),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
