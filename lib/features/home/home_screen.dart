@@ -1,6 +1,7 @@
 ﻿import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
@@ -30,6 +31,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
+  static const double _bannerHeight = 132;
+  static const Duration _bannerInitialSlideDelay = Duration(seconds: 7);
   final ScrollController _recommendedScrollController = ScrollController();
   final PageController _bannerPageController = PageController();
   final GlobalKey _headerSearchBarKey = GlobalKey();
@@ -115,7 +118,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _refreshHomeData() async {
     await Future.wait([
-      context.read<HomeProvider>().loadData(),
+      context.read<HomeProvider>().loadData(forceRefresh: true),
       _resolveOrderHistory(force: true),
     ]);
 
@@ -793,7 +796,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     if (bannerCount <= 1) return;
 
-    _setAutoSlideTimer(banners, 0);
+    _setAutoSlideTimer(banners, 0, useInitialDelay: true);
   }
 
   bool _isBannerVideo(Map<String, dynamic> banner) {
@@ -812,15 +815,16 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _setAutoSlideTimer(
     List<Map<String, dynamic>> banners,
-    int currentIndex,
-  ) {
+    int currentIndex, {
+    bool useInitialDelay = false,
+  }) {
     _bannerAutoSlideTimer?.cancel();
 
     final currentBanner = banners[currentIndex];
     final isVideo = _isBannerVideo(currentBanner);
-    final duration = isVideo
-        ? const Duration(seconds: 10)
-        : const Duration(seconds: 4);
+    final duration = useInitialDelay
+        ? _bannerInitialSlideDelay
+        : (isVideo ? const Duration(seconds: 10) : const Duration(seconds: 4));
 
     _bannerAutoSlideTimer = Timer(duration, () {
       if (!_bannerPageController.hasClients) return;
@@ -832,6 +836,57 @@ class _HomeScreenState extends State<HomeScreen>
         curve: Curves.easeInOut,
       );
     });
+  }
+
+  Widget _buildBannerImage(String imageUrl) {
+    final normalized = _normalizeImagePath(imageUrl);
+
+    if (normalized.isEmpty) {
+      return Container(
+        color: AppColors.surface,
+        child: const Icon(Icons.image, color: AppColors.textHint, size: 30),
+      );
+    }
+
+    if (normalized.startsWith('assets/')) {
+      return Image.asset(
+        normalized,
+        width: double.infinity,
+        height: _bannerHeight,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(
+          color: AppColors.surface,
+          child: const Icon(Icons.image, color: AppColors.textHint, size: 30),
+        ),
+      );
+    }
+
+    final targetWidth = (MediaQuery.of(context).size.width * 2).round();
+
+    return CachedNetworkImage(
+      imageUrl: normalized,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: _bannerHeight,
+      fadeInDuration: Duration.zero,
+      fadeOutDuration: Duration.zero,
+      memCacheWidth: targetWidth,
+      maxWidthDiskCache: targetWidth,
+      placeholder: (_, __) => Container(
+        color: AppColors.surface,
+        child: const Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      ),
+      errorWidget: (_, __, ___) => Container(
+        color: AppColors.surface,
+        child: const Icon(Icons.image, color: AppColors.textHint, size: 30),
+      ),
+    );
   }
 
   @override
@@ -1936,7 +1991,7 @@ class _HomeScreenState extends State<HomeScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            height: 150,
+            height: _bannerHeight,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(18),
               child: PageView.builder(
@@ -1986,12 +2041,7 @@ class _HomeScreenState extends State<HomeScreen>
                             ? _BannerVideo(url: mediaUrl)
                             : AnimatedBuilder(
                                 animation: _bannerImageZoomAnimation,
-                                child: _buildProductImage(
-                                  mediaUrl,
-                                  width: double.infinity,
-                                  height: 150,
-                                  fit: BoxFit.cover,
-                                ),
+                                child: _buildBannerImage(mediaUrl),
                                 builder: (_, child) => Transform.scale(
                                   scale: _bannerImageZoomAnimation.value,
                                   alignment: Alignment.center,

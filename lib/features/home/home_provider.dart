@@ -24,6 +24,7 @@ class HomeProvider extends ChangeNotifier {
   List<Map<String, dynamic>> _brands = [];
   bool _loading = false;
   String? _error;
+  bool _hasLoadedOnce = false;
 
   String _safeString(dynamic value, {String fallback = ''}) {
     final text = (value ?? fallback).toString().trim();
@@ -369,8 +370,10 @@ class HomeProvider extends ChangeNotifier {
     return _products.map((p) => p.toProductMap()).toList();
   }
 
-  Future<void> loadData() async {
+  Future<void> loadData({bool forceRefresh = false}) async {
     if (_loading) return;
+    if (!forceRefresh && _hasLoadedOnce) return;
+
     _loading = true;
     _error = null;
     notifyListeners();
@@ -392,7 +395,7 @@ class HomeProvider extends ChangeNotifier {
       }
 
       final results = await Future.wait<List<Map<String, dynamic>>>([
-        _service.getBanners(),
+        _service.getBanners(forceRefresh: forceRefresh),
         _service.getCategories(),
         _service.getSubCategories(),
         _service.getSubSubCategories(),
@@ -409,6 +412,7 @@ class HomeProvider extends ChangeNotifier {
       if (subCats.isNotEmpty) _subCategories = subCats;
       if (subSubCats.isNotEmpty) _subSubCategories = subSubCats;
       if (brands.isNotEmpty) _brands = brands;
+      _hasLoadedOnce = true;
     } catch (e) {
       _error = e.toString();
     }

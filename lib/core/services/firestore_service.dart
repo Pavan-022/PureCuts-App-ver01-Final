@@ -21,6 +21,15 @@ class FirestoreService {
   static const String _productReviewsCollection = 'productReviews';
   static const String _bannersCollection = 'banners';
   static const String _verificationRequestsCollection = 'verificationRequests';
+  static const Duration _bannerCacheTtl = Duration(minutes: 10);
+  static List<Map<String, dynamic>>? _bannerCache;
+  static DateTime? _bannerCacheAt;
+
+  List<Map<String, dynamic>> _cloneMapList(List<Map<String, dynamic>> source) {
+    return source
+        .map((row) => <String, dynamic>{...row})
+        .toList(growable: false);
+  }
 
   String _firstNonEmpty(List<dynamic> values) {
     for (final value in values) {
@@ -575,7 +584,23 @@ class FirestoreService {
     return _isVideoLike(source) ? 'video' : 'image';
   }
 
-  Future<List<Map<String, dynamic>>> getBanners() async {
+  Future<List<Map<String, dynamic>>> getBanners({
+    bool forceRefresh = false,
+  }) async {
+    final now = DateTime.now();
+    final cacheAge = _bannerCacheAt == null
+        ? null
+        : now.difference(_bannerCacheAt!);
+    final hasFreshCache =
+        !forceRefresh &&
+        _bannerCache != null &&
+        cacheAge != null &&
+        cacheAge <= _bannerCacheTtl;
+
+    if (hasFreshCache) {
+      return _cloneMapList(_bannerCache!);
+    }
+
     final rows = <Map<String, dynamic>>[];
 
     try {
@@ -631,7 +656,10 @@ class FirestoreService {
       return bUpdated.compareTo(aUpdated);
     });
 
-    return normalized;
+    _bannerCache = _cloneMapList(normalized);
+    _bannerCacheAt = now;
+
+    return _cloneMapList(normalized);
   }
 
   // ── Fetch categories ──────────────────────────────────────────────────────
