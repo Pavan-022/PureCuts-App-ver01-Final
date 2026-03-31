@@ -11,7 +11,7 @@ enum AuthStatus { initial, loading, authenticated, unauthenticated }
 
 class AuthProvider extends ChangeNotifier {
   final AuthService _service = AuthService();
-  static const String _userHeaderCacheKey = 'purecuts_user_header_cache_v1';
+  static const String _userHeaderCacheKey = 'purecuts_user_header_cache_v2';
 
   UserModel? _user;
   AuthStatus _status = AuthStatus.initial;
@@ -46,7 +46,10 @@ class AuthProvider extends ChangeNotifier {
           if (cachedUid.isNotEmpty && cachedUid != firebaseUser.uid) {
             _user = null;
           }
-          _user ??= await _service.getCurrentUserData();
+          final freshUser = await _service.getCurrentUserData();
+          if (freshUser != null) {
+            _user = freshUser;
+          }
           if (_user != null) {
             unawaited(_cacheHeaderUser(_user!));
           }
@@ -105,6 +108,9 @@ class AuthProvider extends ChangeNotifier {
         'country': user.country,
         'state': user.state,
         'pincode': user.pincode,
+        'deliveryAddressDetails': user.deliveryAddressDetails,
+        'contactDetails': user.contactDetails,
+        'deliveryDetails': user.deliveryDetails,
       };
 
       final prefs = await SharedPreferences.getInstance();
