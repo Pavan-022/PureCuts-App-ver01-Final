@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -882,6 +884,8 @@ class FirestoreService {
     Map<String, dynamic>? contactDetails,
     String? paymentMethod,
     Map<String, dynamic>? billDetails,
+    String? orderRefOverride,
+    Map<String, dynamic>? userProfile,
   }) async {
     final cleanUid = uid.trim();
     if (cleanUid.isEmpty || items.isEmpty) return null;
@@ -895,21 +899,28 @@ class FirestoreService {
     if (productIds.isEmpty) return null;
 
     final orderDoc = _db.collection(_ordersCollection).doc();
-    final now = DateTime.now();
-    final ymd =
-        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
-    final orderRef = 'PC-$ymd-${orderDoc.id.substring(0, 6).toUpperCase()}';
+    final orderRef = (orderRefOverride ?? '').trim().isNotEmpty
+        ? orderRefOverride!.trim()
+        : generateOrderRef(entropy: orderDoc.id.substring(0, 6));
 
-    final userDoc = await _db.collection(_usersCollection).doc(cleanUid).get();
-    final userData = userDoc.data() ?? const <String, dynamic>{};
+    final userData = userProfile ?? const <String, dynamic>{};
+    final authUser = _auth.currentUser;
 
-    final customerName = (userData['name'] ?? userData['ownerName'] ?? '')
+    final customerName =
+        (userData['name'] ??
+                userData['ownerName'] ??
+                authUser?.displayName ??
+                contactDetails?['receiverName'] ??
+                '')
+            .toString()
+            .trim();
+    final customerEmail = (userData['email'] ?? authUser?.email ?? '')
         .toString()
         .trim();
-    final customerEmail = (userData['email'] ?? '').toString().trim();
-    final customerPhone = (userData['phone'] ?? userData['mobile'] ?? '')
-        .toString()
-        .trim();
+    final customerPhone =
+        (userData['phone'] ?? userData['mobile'] ?? authUser?.phoneNumber ?? '')
+            .toString()
+            .trim();
 
     final normalizedDeliveryAddress = {
       ...?deliveryAddress,
@@ -1034,19 +1045,42 @@ class FirestoreService {
       'updatedAt': FieldValue.serverTimestamp(),
     });
 
-    await _db.collection(_usersCollection).doc(cleanUid).set({
-      'purchasedProductIds': FieldValue.arrayUnion(productIds),
-      'deliveryAddressDetails': normalizedDeliveryAddress,
-      'contactDetails': normalizedContactDetails,
-      'deliveryDetails': {
-        ...normalizedDeliveryDetails,
-        'updatedAt': FieldValue.serverTimestamp(),
-      },
-      'deliveryPlaced': true,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    unawaited(
+      _db
+          .collection(_usersCollection)
+          .doc(cleanUid)
+          .set({
+            'purchasedProductIds': FieldValue.arrayUnion(productIds),
+            'deliveryAddressDetails': normalizedDeliveryAddress,
+            'contactDetails': normalizedContactDetails,
+            'deliveryDetails': {
+              ...normalizedDeliveryDetails,
+              'updatedAt': FieldValue.serverTimestamp(),
+            },
+            'deliveryPlaced': true,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true))
+          .catchError((error, stackTrace) {
+            debugPrint(
+              '[FirestoreService] registerUserPurchase post-write user update failed for UID=$cleanUid: $error',
+            );
+          }),
+    );
 
     return orderRef;
+  }
+
+  String generateOrderRef({DateTime? now, String? entropy}) {
+    final when = now ?? DateTime.now();
+    final ymd =
+        '${when.year}${when.month.toString().padLeft(2, '0')}${when.day.toString().padLeft(2, '0')}';
+    final source = (entropy ?? when.microsecondsSinceEpoch.toString())
+        .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
+        .toUpperCase();
+    final suffix = source.isEmpty
+        ? '000000'
+        : source.padRight(6, '0').substring(0, 6);
+    return 'PC-$ymd-$suffix';
   }
 
   /// Fetch user orders from Firestore

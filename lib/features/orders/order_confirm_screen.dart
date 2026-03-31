@@ -67,6 +67,8 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
     final orders = context.read<OrderProvider>();
     final auth = context.read<AuthProvider>();
     final uid = auth.user?.uid ?? FirebaseAuth.instance.currentUser?.uid ?? '';
+    final provisionalOrderRef = _firestoreService.generateOrderRef();
+    _orderRef = provisionalOrderRef;
 
     final orderedItems = widget.orderedItems?.isNotEmpty == true
         ? widget.orderedItems!
@@ -98,6 +100,8 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
             contactDetails: widget.contactDetails,
             paymentMethod: widget.paymentMethod,
             billDetails: widget.billDetails,
+            orderRefOverride: provisionalOrderRef,
+            userProfile: auth.user?.toMap(),
           )
           .then((ref) {
             if (!mounted) return;

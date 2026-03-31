@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/models/cart_model.dart';
@@ -101,6 +103,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   final List<Map<String, dynamic>> _savedAddresses = [];
   int _selectedAddressIndex = 0;
   bool _initialAddressPromptShown = false;
+  bool _isPlacingOrder = false;
 
   void _applyAddressEntry(Map<String, dynamic> entry) {
     final address = (entry['deliveryAddress'] is Map)
@@ -647,118 +650,174 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     required CartModel cart,
     required HomeProvider home,
   }) async {
-    if (_isDeliveryOrContactMissing()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Please add delivery/contact details before placing order.',
-          ),
-        ),
-      );
-      return;
-    }
+    if (_isPlacingOrder) return;
 
-    final itemTotal = _itemTotal(cart);
-    final deliveryCharge = _calculateDeliveryCharge(itemTotal);
-    final grandTotal = _grandTotal(cart);
-    final smallCartCharge = _smallCartChargeAmount(itemTotal);
+    setState(() {
+      _isPlacingOrder = true;
+    });
 
-    // ── Confirmation dialog ──────────────────────────────────────────────────
-    if (!mounted) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.xl),
-        ),
-        title: const Text(
-          'Confirm order',
-          style: TextStyle(
-            color: AppColors.textPrimary,
-            fontWeight: FontWeight.w800,
-            fontSize: 18,
-          ),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Please review your order before placing it.',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+    try {
+      if (_isDeliveryOrContactMissing()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Please add delivery/contact details before placing order.',
             ),
-            const SizedBox(height: AppSpacing.md),
-            // Summary box
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(AppSpacing.md),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8F2FF),
-                borderRadius: BorderRadius.circular(AppRadius.lg),
-                border: Border.all(color: const Color(0xFFE3D4F4)),
+          ),
+        );
+        return;
+      }
+
+      final itemTotal = _itemTotal(cart);
+      final deliveryCharge = _calculateDeliveryCharge(itemTotal);
+      final grandTotal = _grandTotal(cart);
+      final smallCartCharge = _smallCartChargeAmount(itemTotal);
+
+      // ── Confirmation dialog ──────────────────────────────────────────────────
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.xl),
+          ),
+          title: const Text(
+            'Confirm order',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w800,
+              fontSize: 18,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Please review your order before placing it.',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Item count
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Items',
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 13,
-                        ),
-                      ),
-                      Text(
-                        '${cart.items.length} item${cart.items.length == 1 ? '' : 's'}',
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  // Delivery charge row
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Delivery',
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 13,
-                        ),
-                      ),
-                      Text(
-                        deliveryCharge == 0 ? 'FREE' : '₹$deliveryCharge',
-                        style: TextStyle(
-                          color: deliveryCharge == 0
-                              ? Colors.green
-                              : AppColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (smallCartCharge > 0) ...[
-                    const SizedBox(height: 6),
+              const SizedBox(height: AppSpacing.md),
+              // Summary box
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(AppSpacing.md),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F2FF),
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
+                  border: Border.all(color: const Color(0xFFE3D4F4)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Item count
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text(
-                          'Small cart charge',
+                          'Items',
                           style: TextStyle(
                             color: AppColors.textSecondary,
                             fontSize: 13,
                           ),
                         ),
                         Text(
-                          '₹$smallCartCharge',
+                          '${cart.items.length} item${cart.items.length == 1 ? '' : 's'}',
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    // Delivery charge row
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Delivery',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                        Text(
+                          deliveryCharge == 0 ? 'FREE' : '₹$deliveryCharge',
+                          style: TextStyle(
+                            color: deliveryCharge == 0
+                                ? Colors.green
+                                : AppColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (smallCartCharge > 0) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Small cart charge',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 13,
+                            ),
+                          ),
+                          Text(
+                            '₹$smallCartCharge',
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                      child: Divider(height: 1),
+                    ),
+                    // Grand total
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Total',
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                        ),
+                        Text(
+                          '₹$grandTotal',
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    // Payment method
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Payment',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                        Text(
+                          _selectedPaymentMethod,
                           style: const TextStyle(
                             color: AppColors.textPrimary,
                             fontWeight: FontWeight.w600,
@@ -768,184 +827,142 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       ],
                     ),
                   ],
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
-                    child: Divider(height: 1),
-                  ),
-                  // Grand total
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Total',
-                        style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                        ),
-                      ),
-                      Text(
-                        '₹$grandTotal',
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  // Payment method
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Payment',
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 13,
-                        ),
-                      ),
-                      Text(
-                        _selectedPaymentMethod,
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actionsPadding: const EdgeInsets.fromLTRB(
-          AppSpacing.md,
-          0,
-          AppSpacing.md,
-          AppSpacing.md,
-        ),
-        actions: [
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    side: const BorderSide(color: AppColors.primary),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(AppRadius.xl),
-                    ),
-                  ),
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: const Text(
-                    'Go back',
-                    style: TextStyle(
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(AppRadius.xl),
-                    ),
-                  ),
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: const Text(
-                    'Confirm',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
                 ),
               ),
             ],
           ),
-        ],
-      ),
-    );
-
-    // User cancelled — do nothing
-    if (confirmed != true || !mounted) return;
-    // ── End confirmation dialog ──────────────────────────────────────────────
-
-    final auth = context.read<AuthProvider>();
-    final deliveryAddress = _deliveryAddressMap();
-    final contactDetails = _contactDetailsMap();
-
-    final saved = await auth.updateCheckoutDeliveryDetails(
-      deliveryAddress: deliveryAddress,
-      contactDetails: contactDetails,
-    );
-    if (!saved) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Unable to save delivery details. Please try again.'),
+          actionsPadding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            0,
+            AppSpacing.md,
+            AppSpacing.md,
           ),
-        );
-      }
-      return;
-    }
-
-    final allProducts = home.productMaps;
-    final productById = <String, Map<String, dynamic>>{
-      for (final p in allProducts)
-        _baseProductId((p['id'] ?? '').toString()): p,
-    };
-
-    final orderedItems = cart.items
-        .map((item) {
-          final product =
-              productById[_baseProductId(item.id)] ?? const <String, dynamic>{};
-          return {
-            'id': item.id,
-            'name': item.name,
-            'brand': item.brand,
-            'image': item.image,
-            'price': item.price,
-            'originalPrice': (product['originalPrice'] ?? item.price),
-            'size': (product['size'] ?? '').toString(),
-            'tag': (product['tag'] ?? '').toString(),
-            'tags': (product['tags'] is List)
-                ? List<String>.from(product['tags'])
-                : <String>[],
-            'category': (product['category'] ?? '').toString(),
-            'subCategory': (product['subCategory'] ?? '').toString(),
-            'quantity': item.quantity,
-          };
-        })
-        .toList(growable: false);
-
-    final deliveryChargeValue = _calculateDeliveryCharge(itemTotal);
-
-    if (!mounted) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => OrderConfirmScreen(
-          total: grandTotal,
-          orderedItems: orderedItems,
-          deliveryAddress: deliveryAddress,
-          contactDetails: contactDetails,
-          paymentMethod: _selectedPaymentMethod,
-          billDetails: {
-            'itemTotal': itemTotal,
-            'deliveryCharge': deliveryChargeValue,
-            'handlingCharge': 0,
-            'grandTotal': grandTotal,
-          },
+          actions: [
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      side: const BorderSide(color: AppColors.primary),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.xl),
+                      ),
+                    ),
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                    child: const Text(
+                      'Go back',
+                      style: TextStyle(
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.xl),
+                      ),
+                    ),
+                    onPressed: () => Navigator.of(dialogContext).pop(true),
+                    child: const Text(
+                      'Confirm',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
-      ),
-    );
+      );
+
+      // User cancelled — do nothing
+      if (confirmed != true || !mounted) return;
+      // ── End confirmation dialog ──────────────────────────────────────────────
+
+      final auth = context.read<AuthProvider>();
+      final deliveryAddress = _deliveryAddressMap();
+      final contactDetails = _contactDetailsMap();
+
+      unawaited(
+        auth
+            .updateCheckoutDeliveryDetails(
+              deliveryAddress: deliveryAddress,
+              contactDetails: contactDetails,
+            )
+            .then((saved) {
+              if (!saved || !mounted) return;
+            })
+            .catchError((_) {
+              // Best-effort pre-save only. Order persistence still happens on confirmation.
+            }),
+      );
+
+      final allProducts = home.productMaps;
+      final productById = <String, Map<String, dynamic>>{
+        for (final p in allProducts)
+          _baseProductId((p['id'] ?? '').toString()): p,
+      };
+
+      final orderedItems = cart.items
+          .map((item) {
+            final product =
+                productById[_baseProductId(item.id)] ??
+                const <String, dynamic>{};
+            return {
+              'id': item.id,
+              'name': item.name,
+              'brand': item.brand,
+              'image': item.image,
+              'price': item.price,
+              'originalPrice': (product['originalPrice'] ?? item.price),
+              'size': (product['size'] ?? '').toString(),
+              'tag': (product['tag'] ?? '').toString(),
+              'tags': (product['tags'] is List)
+                  ? List<String>.from(product['tags'])
+                  : <String>[],
+              'category': (product['category'] ?? '').toString(),
+              'subCategory': (product['subCategory'] ?? '').toString(),
+              'quantity': item.quantity,
+            };
+          })
+          .toList(growable: false);
+
+      final deliveryChargeValue = _calculateDeliveryCharge(itemTotal);
+
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => OrderConfirmScreen(
+            total: grandTotal,
+            orderedItems: orderedItems,
+            deliveryAddress: deliveryAddress,
+            contactDetails: contactDetails,
+            paymentMethod: _selectedPaymentMethod,
+            billDetails: {
+              'itemTotal': itemTotal,
+              'deliveryCharge': deliveryChargeValue,
+              'handlingCharge': 0,
+              'grandTotal': grandTotal,
+            },
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPlacingOrder = false;
+        });
+      }
+    }
   }
 
   @override
@@ -1348,7 +1365,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           minimumSize: Size.zero,
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         ),
-                        onPressed: () {},
+                        onPressed: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Coupons will be available soon.'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        },
                         child: const Text(
                           'Apply',
                           style: TextStyle(
@@ -1675,25 +1699,35 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 ),
                               ),
                             ),
-                            onPressed: () =>
-                                _placeOrder(cart: cart, home: home),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  '₹$grandTotal • Place Order',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 16,
+                            onPressed: _isPlacingOrder
+                                ? null
+                                : () => _placeOrder(cart: cart, home: home),
+                            child: _isPlacingOrder
+                                ? const SizedBox(
+                                    height: 20,
+                                    width: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.4,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        '₹$grandTotal • Place Order',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                      const SizedBox(width: AppSpacing.sm),
+                                      const Icon(
+                                        Icons.arrow_forward_ios_rounded,
+                                        size: 14,
+                                      ),
+                                    ],
                                   ),
-                                ),
-                                const SizedBox(width: AppSpacing.sm),
-                                const Icon(
-                                  Icons.arrow_forward_ios_rounded,
-                                  size: 14,
-                                ),
-                              ],
-                            ),
                           ),
                         ),
                       ],
