@@ -1,14 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:purecuts/core/models/user_model.dart';
 import 'package:purecuts/core/services/auth_service.dart';
 import 'package:purecuts/core/services/push_notification_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 enum AuthStatus { initial, loading, authenticated, unauthenticated }
 
 class AuthProvider extends ChangeNotifier {
   final AuthService _service = AuthService();
+  static const String _userHeaderCacheKey = 'purecuts_user_header_cache_v1';
 
   UserModel? _user;
   AuthStatus _status = AuthStatus.initial;
@@ -27,17 +30,26 @@ class AuthProvider extends ChangeNotifier {
   bool get isAuthenticated => _status == AuthStatus.authenticated;
 
   AuthProvider() {
+    unawaited(_hydrateCachedHeaderUser());
     _service.authStateChanges.listen((firebaseUser) async {
       if (firebaseUser == null) {
         debugPrint('[AuthProvider] Auth state: signed out.');
         _user = null;
         _status = AuthStatus.unauthenticated;
+        unawaited(_clearCachedHeaderUser());
       } else {
         debugPrint(
           '[AuthProvider] Auth state: signed in. UID=${firebaseUser.uid}',
         );
         try {
+          final cachedUid = (_user?.uid ?? '').trim();
+          if (cachedUid.isNotEmpty && cachedUid != firebaseUser.uid) {
+            _user = null;
+          }
           _user ??= await _service.getCurrentUserData();
+          if (_user != null) {
+            unawaited(_cacheHeaderUser(_user!));
+          }
           unawaited(PushNotificationService.instance.syncTokenForCurrentUser());
         } catch (e, st) {
           debugPrint(
@@ -48,6 +60,67 @@ class AuthProvider extends ChangeNotifier {
       }
       notifyListeners();
     });
+  }
+
+  Future<void> _hydrateCachedHeaderUser() async {
+    final currentUid = (_service.currentUser?.uid ?? '').trim();
+    if (currentUid.isEmpty) return;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_userHeaderCacheKey);
+      if (raw == null || raw.trim().isEmpty) return;
+
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final map = Map<String, dynamic>.from(decoded);
+      final cachedUid = (map['uid'] ?? '').toString().trim();
+      if (cachedUid.isEmpty || cachedUid != currentUid) return;
+
+      final cachedUser = UserModel.fromMap(map, cachedUid);
+      if (_user == null) {
+        _user = cachedUser;
+        notifyListeners();
+      }
+    } catch (e, st) {
+      debugPrint(
+        '[AuthProvider] Failed to hydrate cached header user: $e\n$st',
+      );
+    }
+  }
+
+  Future<void> _cacheHeaderUser(UserModel user) async {
+    try {
+      final uid = user.uid.trim();
+      if (uid.isEmpty) return;
+
+      final payload = {
+        'uid': uid,
+        'name': user.name,
+        'email': user.email,
+        'phone': user.phone,
+        'salonName': user.salonName,
+        'ownerName': user.ownerName,
+        'address': user.address,
+        'country': user.country,
+        'state': user.state,
+        'pincode': user.pincode,
+      };
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_userHeaderCacheKey, jsonEncode(payload));
+    } catch (e, st) {
+      debugPrint('[AuthProvider] Failed to cache header user: $e\n$st');
+    }
+  }
+
+  Future<void> _clearCachedHeaderUser() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_userHeaderCacheKey);
+    } catch (e, st) {
+      debugPrint('[AuthProvider] Failed to clear cached header user: $e\n$st');
+    }
   }
 
   void _setLoading() {
@@ -243,6 +316,9 @@ class AuthProvider extends ChangeNotifier {
         registrationData: registrationData,
         email: email,
       );
+      if (_user != null) {
+        unawaited(_cacheHeaderUser(_user!));
+      }
       debugPrint(
         '[AuthProvider] linkPhoneAndSaveProfile: success. UID=${_user?.uid}',
       );
@@ -291,6 +367,10 @@ class AuthProvider extends ChangeNotifier {
         );
       }
 
+      if (_user != null) {
+        unawaited(_cacheHeaderUser(_user!));
+      }
+
       // _user == null means new user — caller will navigate to ProfileSetupScreen
       debugPrint(
         '[AuthProvider] signInWithPhoneOtp: success. UID=${_service.currentUser?.uid}, profile=${_user != null ? 'found' : 'new user'}',
@@ -325,6 +405,7 @@ class AuthProvider extends ChangeNotifier {
         _setError('No account found. Please register first.');
         return false;
       }
+      unawaited(_cacheHeaderUser(_user!));
       debugPrint(
         '[AuthProvider] signInWithPassword: success. UID=${_user?.uid}',
       );
@@ -366,6 +447,9 @@ class AuthProvider extends ChangeNotifier {
         registrationData: data,
         email: data['email'] ?? '',
       );
+      if (_user != null) {
+        unawaited(_cacheHeaderUser(_user!));
+      }
       _status = AuthStatus.authenticated;
       notifyListeners();
       return true;
@@ -383,6 +467,7 @@ class AuthProvider extends ChangeNotifier {
     await _service.signOut();
     _user = null;
     _status = AuthStatus.unauthenticated;
+    unawaited(_clearCachedHeaderUser());
     notifyListeners();
   }
 
@@ -394,6 +479,7 @@ class AuthProvider extends ChangeNotifier {
     try {
       await _service.firestoreService.updateUserField(uid, 'address', address);
       _user = _user!.copyWith(address: address);
+      unawaited(_cacheHeaderUser(_user!));
       notifyListeners();
     } catch (e) {
       debugPrint('[AuthProvider] updateAddress error: $e');
@@ -539,8 +625,12 @@ class AuthProvider extends ChangeNotifier {
           contactDetails: selectedContact,
           deliveryDetails: normalizedDeliveryDetails,
         );
+        unawaited(_cacheHeaderUser(_user!));
       } else {
         _user = await _service.getCurrentUserData();
+        if (_user != null) {
+          unawaited(_cacheHeaderUser(_user!));
+        }
       }
       notifyListeners();
       return true;
@@ -571,6 +661,9 @@ class AuthProvider extends ChangeNotifier {
 
       // Reload user data
       _user = await _service.getCurrentUserData();
+      if (_user != null) {
+        unawaited(_cacheHeaderUser(_user!));
+      }
       _status = AuthStatus.authenticated;
       notifyListeners();
 

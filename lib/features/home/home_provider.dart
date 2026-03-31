@@ -1,12 +1,18 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:purecuts/core/constants/app_constants.dart';
+import 'package:purecuts/core/constants/feature_flags.dart';
 import 'package:purecuts/core/models/product_model.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeProvider extends ChangeNotifier {
   static const int _homeInitialProductLimit = 48;
   static const int _homeMaxProductPool = 1200;
+  static const String _homeCacheKey = 'purecuts_home_bootstrap_cache_v1';
   static const Set<String> _hiddenCategoryNames = {
     'nail',
     'beard',
@@ -15,6 +21,7 @@ class HomeProvider extends ChangeNotifier {
   };
 
   final FirestoreService _service = FirestoreService();
+  static Future<SharedPreferences>? _prefsFuture;
 
   List<ProductModel> _products = [];
   List<Map<String, dynamic>> _banners = [];
@@ -23,8 +30,132 @@ class HomeProvider extends ChangeNotifier {
   List<Map<String, dynamic>> _subSubCategories = [];
   List<Map<String, dynamic>> _brands = [];
   bool _loading = false;
+  bool _taxonomyLoading = false;
   String? _error;
   bool _hasLoadedOnce = false;
+
+  static Future<SharedPreferences> _prefs() {
+    return _prefsFuture ??= SharedPreferences.getInstance();
+  }
+
+  dynamic _jsonSafe(dynamic value) {
+    if (value == null || value is String || value is num || value is bool) {
+      return value;
+    }
+    if (value is DateTime) return value.toIso8601String();
+    if (value is List) {
+      return value.map(_jsonSafe).toList(growable: false);
+    }
+    if (value is Map) {
+      return value.map(
+        (key, item) => MapEntry(key.toString(), _jsonSafe(item)),
+      );
+    }
+    return value.toString();
+  }
+
+  List<Map<String, dynamic>> _safeMapList(dynamic value) {
+    if (value is! List) return const <Map<String, dynamic>>[];
+    return value
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+  }
+
+  List<ProductModel> _decodeProducts(dynamic value) {
+    if (value is! List) return const <ProductModel>[];
+    final products = <ProductModel>[];
+    for (final row in value.whereType<Map>()) {
+      final map = Map<String, dynamic>.from(row);
+      final id = (map['id'] ?? '').toString().trim();
+      if (id.isEmpty) continue;
+      try {
+        products.add(ProductModel.fromMap(map, id));
+      } catch (_) {
+        // Skip malformed cached rows.
+      }
+    }
+    return products;
+  }
+
+  Future<bool> _hydrateStartupCache() async {
+    if (!FeatureFlags.enableHomeStartupCache) return false;
+    try {
+      final prefs = await _prefs();
+      final raw = prefs.getString(_homeCacheKey);
+      if (raw == null || raw.trim().isEmpty) return false;
+
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return false;
+      final payload = Map<String, dynamic>.from(decoded);
+
+      final cachedProducts = _decodeProducts(payload['products']);
+      final cachedBanners = _safeMapList(payload['banners']);
+      final cachedCategories = _safeMapList(payload['categories']);
+      final cachedSubCategories = _safeMapList(payload['subCategories']);
+      final cachedSubSubCategories = _safeMapList(payload['subSubCategories']);
+      final cachedBrands = _safeMapList(payload['brands']);
+
+      // Startup hydration is considered successful only when product data exists.
+      // Categories can still be shown from AppConstants, but an empty product cache
+      // should not short-circuit network loading.
+      if (cachedProducts.isEmpty) return false;
+
+      _products = cachedProducts;
+      _banners = cachedBanners;
+      if (cachedCategories.isNotEmpty) _categories = cachedCategories;
+      if (cachedSubCategories.isNotEmpty) _subCategories = cachedSubCategories;
+      if (cachedSubSubCategories.isNotEmpty) {
+        _subSubCategories = cachedSubSubCategories;
+      }
+      if (cachedBrands.isNotEmpty) _brands = cachedBrands;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _persistStartupCache() async {
+    if (!FeatureFlags.enableHomeStartupCache) return;
+    if (_products.isEmpty) return;
+    try {
+      final prefs = await _prefs();
+      final payload = {
+        'savedAt': DateTime.now().toIso8601String(),
+        'products': _products.map((p) => _jsonSafe(p.toProductMap())).toList(),
+        'banners': _jsonSafe(_banners),
+        'categories': _jsonSafe(_categories),
+        'subCategories': _jsonSafe(_subCategories),
+        'subSubCategories': _jsonSafe(_subSubCategories),
+        'brands': _jsonSafe(_brands),
+      };
+      await prefs.setString(_homeCacheKey, jsonEncode(payload));
+    } catch (_) {
+      // Best-effort cache write only.
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _timedListFetch(
+    Future<List<Map<String, dynamic>>> future,
+    Duration timeout,
+  ) async {
+    try {
+      return await future.timeout(timeout);
+    } catch (_) {
+      return const <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<List<ProductModel>> _fallbackProductsFetch({int limit = 24}) async {
+    try {
+      final page = await _service
+          .getProductsPage(limit: limit)
+          .timeout(const Duration(seconds: 12));
+      return page.products;
+    } catch (_) {
+      return const <ProductModel>[];
+    }
+  }
 
   String _safeString(dynamic value, {String fallback = ''}) {
     final text = (value ?? fallback).toString().trim();
@@ -370,38 +501,138 @@ class HomeProvider extends ChangeNotifier {
     return _products.map((p) => p.toProductMap()).toList();
   }
 
+  Future<void> _hydrateTaxonomyInBackground() async {
+    if (_taxonomyLoading) return;
+    _taxonomyLoading = true;
+    try {
+      final results = await Future.wait<List<Map<String, dynamic>>>([
+        _service.getCategories(),
+        _service.getSubCategories(),
+        _service.getSubSubCategories(),
+        _service.getBrands(),
+      ]);
+
+      final cats = results[0];
+      final subCats = results[1];
+      final subSubCats = results[2];
+      final brands = results[3];
+      var changed = false;
+
+      if (cats.isNotEmpty) {
+        _categories = cats;
+        changed = true;
+      }
+      if (subCats.isNotEmpty) {
+        _subCategories = subCats;
+        changed = true;
+      }
+      if (subSubCats.isNotEmpty) {
+        _subSubCategories = subSubCats;
+        changed = true;
+      }
+      if (brands.isNotEmpty) {
+        _brands = brands;
+        changed = true;
+      }
+
+      if (changed) notifyListeners();
+    } catch (_) {
+      // Best-effort background enrichment only.
+    } finally {
+      _taxonomyLoading = false;
+    }
+  }
+
   Future<void> loadData({bool forceRefresh = false}) async {
     if (_loading) return;
     if (!forceRefresh && _hasLoadedOnce) return;
 
-    _loading = true;
+    final startupLite =
+        FeatureFlags.enableHomeStartupLite && !forceRefresh && !_hasLoadedOnce;
+    final canUseStartupCache =
+        FeatureFlags.enableHomeStartupCache && startupLite;
+    var hydratedFromCache = false;
+
+    if (canUseStartupCache) {
+      hydratedFromCache = await _hydrateStartupCache();
+      if (hydratedFromCache) {
+        notifyListeners();
+      }
+    }
+
+    _loading = !hydratedFromCache;
     _error = null;
     notifyListeners();
 
     try {
+      final targetPool = startupLite
+          ? FeatureFlags.homeStartupProductPool
+          : _homeMaxProductPool;
       final fetched = <ProductModel>[];
       DocumentSnapshot<Map<String, dynamic>>? cursor;
       var hasMore = true;
+      final productsTimeout = Duration(
+        milliseconds: FeatureFlags.homeProductsPageTimeoutMs,
+      );
 
-      while (hasMore && fetched.length < _homeMaxProductPool) {
-        final page = await _service.getProductsPage(
-          limit: _homeInitialProductLimit,
-          startAfterDoc: cursor,
-        );
+      while (hasMore && fetched.length < targetPool) {
+        final remaining = targetPool - fetched.length;
+        if (remaining <= 0) break;
+        final page = await _service
+            .getProductsPage(
+              limit: remaining < _homeInitialProductLimit
+                  ? remaining
+                  : _homeInitialProductLimit,
+              startAfterDoc: cursor,
+            )
+            .timeout(productsTimeout);
 
         fetched.addAll(page.products);
         cursor = page.lastDocument;
         hasMore = page.hasMore;
       }
 
+      if (fetched.isEmpty) {
+        final fallback = await _fallbackProductsFetch(limit: 24);
+        if (fallback.isNotEmpty) {
+          fetched.addAll(fallback);
+        }
+      }
+
+      final deferTaxonomy =
+          FeatureFlags.enableDeferredHomeTaxonomy && startupLite;
+      final bannersTimeout = Duration(
+        milliseconds: FeatureFlags.homeBannersTimeoutMs,
+      );
+      final taxonomyTimeout = Duration(
+        milliseconds: FeatureFlags.homeTaxonomyTimeoutMs,
+      );
+
       final results = await Future.wait<List<Map<String, dynamic>>>([
-        _service.getBanners(forceRefresh: forceRefresh),
-        _service.getCategories(),
-        _service.getSubCategories(),
-        _service.getSubSubCategories(),
-        _service.getBrands(),
+        _timedListFetch(
+          _service.getBanners(forceRefresh: forceRefresh),
+          bannersTimeout,
+        ),
+        if (deferTaxonomy)
+          Future.value(const <Map<String, dynamic>>[])
+        else
+          _timedListFetch(_service.getCategories(), taxonomyTimeout),
+        if (deferTaxonomy)
+          Future.value(const <Map<String, dynamic>>[])
+        else
+          _timedListFetch(_service.getSubCategories(), taxonomyTimeout),
+        if (deferTaxonomy)
+          Future.value(const <Map<String, dynamic>>[])
+        else
+          _timedListFetch(_service.getSubSubCategories(), taxonomyTimeout),
+        if (deferTaxonomy)
+          Future.value(const <Map<String, dynamic>>[])
+        else
+          _timedListFetch(_service.getBrands(), taxonomyTimeout),
       ]);
-      _products = fetched;
+      if (fetched.isNotEmpty) {
+        _products = fetched;
+      }
       _banners = results[0];
       final cats = results[1];
       final subCats = results[2];
@@ -413,8 +644,34 @@ class HomeProvider extends ChangeNotifier {
       if (subSubCats.isNotEmpty) _subSubCategories = subSubCats;
       if (brands.isNotEmpty) _brands = brands;
       _hasLoadedOnce = true;
+
+      if (deferTaxonomy) {
+        unawaited(_hydrateTaxonomyInBackground());
+      }
+
+      unawaited(_persistStartupCache());
+    } on TimeoutException {
+      _error = 'Home data load timed out. Please pull to refresh.';
+      if (_products.isEmpty) {
+        final fallback = await _fallbackProductsFetch(limit: 24);
+        if (fallback.isNotEmpty) {
+          _products = fallback;
+          _error = null;
+          _hasLoadedOnce = true;
+          unawaited(_persistStartupCache());
+        }
+      }
     } catch (e) {
       _error = e.toString();
+      if (_products.isEmpty) {
+        final fallback = await _fallbackProductsFetch(limit: 24);
+        if (fallback.isNotEmpty) {
+          _products = fallback;
+          _error = null;
+          _hasLoadedOnce = true;
+          unawaited(_persistStartupCache());
+        }
+      }
     }
 
     _loading = false;
