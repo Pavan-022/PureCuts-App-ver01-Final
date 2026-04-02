@@ -58,6 +58,14 @@
           }
         },
         {
+          "client_id": "285724819496-rinceluhmud70mtudsc7etjv5bau23bk.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "purecuts.in",
+            "certificate_hash": "ac01789d82bb3dba81b91569b7243d9743450f83"
+          }
+        },
+        {
           "client_id": "285724819496-2s821i2tiuaivl962k0b2icevgrhobip.apps.googleusercontent.com",
           "client_type": 3
         }

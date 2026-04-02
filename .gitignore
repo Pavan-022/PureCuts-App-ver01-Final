@@ -49,3 +49,8 @@ app.*.map.json
 .env
 .env.*
 functions/.env
+
+# Android signing secrets
+android/key.properties
+**/*.keystore
+**/*.jks
