@@ -5,6 +5,7 @@ import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/auth/edit_profile_screen.dart';
 import 'package:purecuts/features/orders/order_history_screen.dart';
 import 'package:purecuts/features/auth/login/login_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -224,7 +225,7 @@ class ProfileScreen extends StatelessWidget {
                         context,
                         Icons.shield_outlined,
                         'Privacy Policy',
-                        () {},
+                        () => _openPrivacyPolicy(context),
                       ),
                     ]),
                     const SizedBox(height: 24),
@@ -350,6 +351,30 @@ class ProfileScreen extends StatelessWidget {
   );
 
   Widget _divider() => const Divider(height: 1, thickness: 1, indent: 46);
+
+  Future<void> _openPrivacyPolicy(BuildContext context) async {
+    final uri = Uri.parse(
+      'https://sites.google.com/view/purecuts-privacy-policy/home',
+    );
+    try {
+      final launched =
+          await launchUrl(uri, mode: LaunchMode.externalApplication) ||
+          await launchUrl(uri, mode: LaunchMode.platformDefault) ||
+          await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+
+      if (!launched && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to open privacy policy.')),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to open privacy policy.')),
+        );
+      }
+    }
+  }
 
   void _showLogout(BuildContext context) {
     showDialog(
