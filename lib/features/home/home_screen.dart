@@ -66,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen>
   bool _speechReady = false;
   bool _isListening = false;
   bool _speechDialogVisible = false;
+  bool _showAllPopularProducts = false;
   String? _speechLocaleId;
   ValueNotifier<String>? _activeTranscript;
   bool _pendingVoiceSubmit = false;
@@ -1629,6 +1630,9 @@ class _HomeScreenState extends State<HomeScreen>
         : (popularFallbackItems.isNotEmpty
               ? popularFallbackItems
               : unassignedProducts);
+    final visiblePopularItems = _showAllPopularProducts
+        ? popularDisplayItems
+        : popularDisplayItems.take(8).toList(growable: false);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1718,11 +1722,9 @@ class _HomeScreenState extends State<HomeScreen>
               crossAxisSpacing: 12,
               childAspectRatio: 0.63,
             ),
-            itemCount: popularDisplayItems.length > 8
-                ? 8
-                : popularDisplayItems.length,
+            itemCount: visiblePopularItems.length,
             itemBuilder: (_, i) {
-              final product = popularDisplayItems[i];
+              final product = visiblePopularItems[i];
               final productId = _baseProductId(
                 (product['id'] ?? '').toString(),
               );
@@ -1737,6 +1739,40 @@ class _HomeScreenState extends State<HomeScreen>
             },
           ),
         ),
+        if (popularDisplayItems.length > 8)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Align(
+              alignment: Alignment.center,
+              child: OutlinedButton(
+                onPressed: () {
+                  setState(() {
+                    _showAllPopularProducts = !_showAllPopularProducts;
+                  });
+                },
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFFE1D8FF)),
+                  foregroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                child: Text(
+                  _showAllPopularProducts
+                      ? 'Show less popular products'
+                      : 'View all popular products',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ),
         const SizedBox(height: 100),
       ],
     );
