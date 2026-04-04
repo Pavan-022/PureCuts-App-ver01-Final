@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/models/cart_model.dart';
@@ -87,10 +88,14 @@ class _BrandsScreenState extends State<BrandsScreen> {
       );
     }
 
-    return Image.network(
-      resolved,
+    return CachedNetworkImage(
+      imageUrl: resolved,
       fit: BoxFit.contain,
-      errorBuilder: (_, __, ___) => Center(
+      fadeInDuration: Duration.zero,
+      fadeOutDuration: Duration.zero,
+      memCacheWidth: 220,
+      maxWidthDiskCache: 220,
+      errorWidget: (_, __, ___) => Center(
         child: Text(
           (brandName.trim().isNotEmpty ? brandName.trim()[0] : '?')
               .toUpperCase(),

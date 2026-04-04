@@ -5,6 +5,10 @@ const { registerFcmToken } = require("./notifications/tokenService");
 const { onOrderPlacedNotification } = require("./notifications/orderPlacedTrigger");
 const { onVerificationRequestCreated } = require("./verificationRequestsTrigger");
 const {
+	onProductImageContractWrite,
+	backfillProductImageContract,
+} = require("./productImageContractTrigger");
+const {
 	onOrderMetricsWrite,
 	getDashboardMetricsSnapshot,
 	rebuildOrderCounters,
@@ -17,6 +21,8 @@ exports.sendNotification = sendNotification;
 exports.registerFcmToken = registerFcmToken;
 exports.onOrderPlacedNotification = onOrderPlacedNotification;
 exports.onVerificationRequestCreated = onVerificationRequestCreated;
+exports.onProductImageContractWrite = onProductImageContractWrite;
+exports.backfillProductImageContract = backfillProductImageContract;
 exports.onOrderMetricsWrite = onOrderMetricsWrite;
 exports.getDashboardMetricsSnapshot = getDashboardMetricsSnapshot;
 exports.rebuildOrderCounters = rebuildOrderCounters;

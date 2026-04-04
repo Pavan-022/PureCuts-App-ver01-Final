@@ -4,7 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'dart:io';
 import 'package:purecuts/core/models/product_model.dart';
 import 'package:purecuts/core/models/user_model.dart';
@@ -111,6 +111,25 @@ class FirestoreService {
   }
 
   static const int _defaultProductPageBatch = 24;
+
+  Future<Uint8List> _compressImageForUpload(Uint8List bytes) async {
+    if (bytes.isEmpty) return bytes;
+    try {
+      final compressed = await FlutterImageCompress.compressWithList(
+        bytes,
+        minWidth: 1600,
+        minHeight: 1600,
+        quality: 78,
+        format: CompressFormat.jpeg,
+      );
+      if (compressed.isNotEmpty && compressed.length < bytes.length) {
+        return compressed;
+      }
+      return bytes;
+    } catch (_) {
+      return bytes;
+    }
+  }
 
   Future<
     ({
@@ -1604,11 +1623,13 @@ class FirestoreService {
       final file = files[index];
       try {
         final lower = file.name.toLowerCase();
-        String contentType;
-        if (lower.endsWith('.mp4') ||
+        final isVideo =
+            lower.endsWith('.mp4') ||
             lower.endsWith('.mov') ||
             lower.endsWith('.avi') ||
-            lower.endsWith('.mkv')) {
+            lower.endsWith('.mkv');
+        String contentType;
+        if (isVideo) {
           contentType = 'video/mp4';
         } else {
           contentType = 'image/jpeg';
@@ -1621,15 +1642,25 @@ class FirestoreService {
           'reviews/$cleanProductId/$cleanUid/${DateTime.now().millisecondsSinceEpoch}$ext',
         );
         UploadTask uploadTask;
-        if (!kIsWeb && file.path.isNotEmpty) {
+        if (isVideo && !kIsWeb && file.path.isNotEmpty) {
           uploadTask = ref.putFile(
             File(file.path),
-            SettableMetadata(contentType: contentType),
+            SettableMetadata(
+              contentType: contentType,
+              cacheControl: 'public,max-age=31536000,immutable',
+            ),
           );
         } else {
+          final rawBytes = await file.readAsBytes();
+          final uploadBytes = isVideo
+              ? rawBytes
+              : await _compressImageForUpload(rawBytes);
           uploadTask = ref.putData(
-            await file.readAsBytes(),
-            SettableMetadata(contentType: contentType),
+            uploadBytes,
+            SettableMetadata(
+              contentType: contentType,
+              cacheControl: 'public,max-age=31536000,immutable',
+            ),
           );
         }
 

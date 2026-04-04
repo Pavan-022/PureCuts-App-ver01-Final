@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -517,12 +518,16 @@ class _BoughtOrderCard extends StatelessWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
               child: image.isNotEmpty
-                  ? Image.network(
-                      image,
+                  ? CachedNetworkImage(
+                      imageUrl: image,
                       width: 68,
                       height: 68,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _placeholder(),
+                      fadeInDuration: Duration.zero,
+                      fadeOutDuration: Duration.zero,
+                      memCacheWidth: 136,
+                      maxWidthDiskCache: 136,
+                      errorWidget: (_, __, ___) => _placeholder(),
                     )
                   : _placeholder(),
             ),
@@ -721,12 +726,16 @@ class _OrderCard extends StatelessWidget {
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
             child: (productImage.isNotEmpty)
-                ? Image.network(
-                    productImage,
+                ? CachedNetworkImage(
+                    imageUrl: productImage,
                     width: 68,
                     height: 68,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _buildPlaceholder(),
+                    fadeInDuration: Duration.zero,
+                    fadeOutDuration: Duration.zero,
+                    memCacheWidth: 136,
+                    maxWidthDiskCache: 136,
+                    errorWidget: (_, __, ___) => _buildPlaceholder(),
                   )
                 : _buildPlaceholder(),
           ),

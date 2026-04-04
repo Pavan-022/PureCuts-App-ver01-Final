@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/models/cart_model.dart';
@@ -130,10 +131,14 @@ class _StickyCartBarState extends State<StickyCartBar>
                       : null,
                 ),
                 clipBehavior: Clip.antiAlias,
-                child: Image.network(
-                  item.image,
+                child: CachedNetworkImage(
+                  imageUrl: item.image,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, error, stackTrace) => const Icon(
+                  fadeInDuration: Duration.zero,
+                  fadeOutDuration: Duration.zero,
+                  memCacheWidth: 68,
+                  maxWidthDiskCache: 68,
+                  errorWidget: (_, error, stackTrace) => const Icon(
                     Icons.shopping_bag_outlined,
                     color: AppColors.primary,
                     size: 17,

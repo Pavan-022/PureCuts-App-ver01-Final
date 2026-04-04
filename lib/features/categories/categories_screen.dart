@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/models/cart_model.dart';
@@ -791,12 +792,16 @@ class _CategoryIcon extends StatelessWidget {
       );
     }
 
-    return Image.network(
-      trimmed,
+    return CachedNetworkImage(
+      imageUrl: trimmed,
       width: 52,
       height: 52,
       fit: BoxFit.contain,
-      errorBuilder: (_, __, ___) => fallback,
+      fadeInDuration: Duration.zero,
+      fadeOutDuration: Duration.zero,
+      memCacheWidth: 104,
+      maxWidthDiskCache: 104,
+      errorWidget: (_, __, ___) => fallback,
     );
   }
 }

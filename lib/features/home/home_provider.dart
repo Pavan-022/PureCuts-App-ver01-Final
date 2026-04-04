@@ -10,7 +10,7 @@ import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeProvider extends ChangeNotifier {
-  static const int _homeInitialProductLimit = 48;
+  static const int _homeInitialProductLimit = 24;
   static const int _homeMaxProductPool = 1200;
   static const String _homeCacheKey = 'purecuts_home_bootstrap_cache_v1';
   static const Set<String> _hiddenCategoryNames = {

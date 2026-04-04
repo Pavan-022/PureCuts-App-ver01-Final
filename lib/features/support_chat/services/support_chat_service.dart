@@ -1,6 +1,8 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 
 class SupportChatService {
   SupportChatService({FirebaseFirestore? firestore, FirebaseStorage? storage})
@@ -21,6 +23,25 @@ class SupportChatService {
 
   CollectionReference<Map<String, dynamic>> _messagesRef(String chatId) =>
       _chats.doc(chatId).collection(_messagesSubcollection);
+
+  Future<Uint8List> _compressImageForUpload(Uint8List bytes) async {
+    if (bytes.isEmpty) return bytes;
+    try {
+      final compressed = await FlutterImageCompress.compressWithList(
+        bytes,
+        minWidth: 1600,
+        minHeight: 1600,
+        quality: 78,
+        format: CompressFormat.jpeg,
+      );
+      if (compressed.isNotEmpty && compressed.length < bytes.length) {
+        return compressed;
+      }
+      return bytes;
+    } catch (_) {
+      return bytes;
+    }
+  }
 
   Future<bool> chatExists(String chatId) async {
     final snap = await _chats.doc(chatId).get();
@@ -120,12 +141,16 @@ class SupportChatService {
     final storagePath =
         'chats/$cleanChatId/media/$cleanUid/${DateTime.now().millisecondsSinceEpoch}_$safeName';
 
-    final bytes = await file.readAsBytes();
+    final rawBytes = await file.readAsBytes();
+    final bytes = isImage ? await _compressImageForUpload(rawBytes) : rawBytes;
     final task = _storage
         .ref(storagePath)
         .putData(
           bytes,
-          SettableMetadata(contentType: mime.isEmpty ? null : mime),
+          SettableMetadata(
+            contentType: mime.isEmpty ? null : mime,
+            cacheControl: 'public,max-age=31536000,immutable',
+          ),
         );
     final snap = await task;
     final url = await snap.ref.getDownloadURL();

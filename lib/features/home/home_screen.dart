@@ -5,7 +5,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
+import 'package:purecuts/core/services/image_bandwidth_telemetry.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/core/utils/product_image_contract.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
 import 'package:purecuts/core/widgets/shimmer_widgets.dart';
 import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
@@ -634,12 +636,48 @@ class _HomeScreenState extends State<HomeScreen>
     }
 
     if (!resolved.startsWith('assets/')) {
-      return Image.network(
-        resolved,
+      unawaited(
+        ImageBandwidthTelemetry.instance.trackImageLoad(
+          screen: 'home_product_image',
+          imageUrl: resolved,
+        ),
+      );
+
+      int? toCachePx(double? logicalPixels) {
+        if (logicalPixels == null || !logicalPixels.isFinite) return null;
+        if (logicalPixels <= 0) return null;
+        final scaled = logicalPixels * MediaQuery.of(context).devicePixelRatio;
+        if (!scaled.isFinite || scaled <= 0) return null;
+        return scaled.round();
+      }
+
+      final targetHeight = toCachePx(height);
+      final targetWidth = toCachePx(width);
+
+      return CachedNetworkImage(
+        imageUrl: resolved,
         width: width,
         height: height,
         fit: fit,
-        errorBuilder: (_, __, ___) => Container(
+        fadeInDuration: Duration.zero,
+        fadeOutDuration: Duration.zero,
+        memCacheHeight: targetHeight,
+        memCacheWidth: targetWidth,
+        maxHeightDiskCache: targetHeight,
+        maxWidthDiskCache: targetWidth,
+        placeholder: (_, __) => Container(
+          width: width,
+          height: height,
+          color: AppColors.surface,
+          child: const Center(
+            child: SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 1.8),
+            ),
+          ),
+        ),
+        errorWidget: (_, __, ___) => Container(
           width: width,
           height: height,
           color: AppColors.surface,
@@ -863,6 +901,13 @@ class _HomeScreenState extends State<HomeScreen>
 
     final targetWidth = (MediaQuery.of(context).size.width * 2).round();
 
+    unawaited(
+      ImageBandwidthTelemetry.instance.trackImageLoad(
+        screen: 'home_banner',
+        imageUrl: normalized,
+      ),
+    );
+
     return CachedNetworkImage(
       imageUrl: normalized,
       fit: BoxFit.cover,
@@ -955,12 +1000,16 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         );
       }
-      return Image.network(
-        cleaned,
+      return CachedNetworkImage(
+        imageUrl: cleaned,
         width: 16,
         height: 16,
         fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => const Icon(
+        fadeInDuration: Duration.zero,
+        fadeOutDuration: Duration.zero,
+        memCacheWidth: 48,
+        maxWidthDiskCache: 48,
+        errorWidget: (_, __, ___) => const Icon(
           Icons.category_outlined,
           color: AppColors.textHint,
           size: 16,
@@ -1669,7 +1718,9 @@ class _HomeScreenState extends State<HomeScreen>
               crossAxisSpacing: 12,
               childAspectRatio: 0.63,
             ),
-            itemCount: popularDisplayItems.length,
+            itemCount: popularDisplayItems.length > 8
+                ? 8
+                : popularDisplayItems.length,
             itemBuilder: (_, i) {
               final product = popularDisplayItems[i];
               final productId = _baseProductId(
@@ -1950,12 +2001,16 @@ class _HomeScreenState extends State<HomeScreen>
                                 size: 32,
                               ),
                             )
-                          : Image.network(
-                              iconPath,
+                          : CachedNetworkImage(
+                              imageUrl: iconPath,
                               width: 36,
                               height: 36,
                               fit: BoxFit.contain,
-                              errorBuilder: (_, __, ___) => const Icon(
+                              fadeInDuration: Duration.zero,
+                              fadeOutDuration: Duration.zero,
+                              memCacheWidth: 108,
+                              maxWidthDiskCache: 108,
+                              errorWidget: (_, __, ___) => const Icon(
                                 Icons.category_outlined,
                                 color: AppColors.textHint,
                                 size: 32,
@@ -2170,7 +2225,7 @@ class _HomeScreenState extends State<HomeScreen>
                           top: Radius.circular(14),
                         ),
                         child: _buildProductImage(
-                          (p['image'] ?? '').toString(),
+                          resolveListImage(p),
                           height: 100,
                           width: 130,
                           fit: BoxFit.contain,
@@ -2260,7 +2315,7 @@ class _HomeScreenState extends State<HomeScreen>
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(12),
                           child: _buildProductImage(
-                            (p['image'] ?? '').toString(),
+                            resolveListImage(p),
                             height: 110,
                             width: 120,
                             fit: BoxFit.contain,
@@ -2384,7 +2439,7 @@ class _HomeScreenState extends State<HomeScreen>
                     width: double.infinity,
                     color: Colors.white,
                     child: _buildProductImage(
-                      (p['image'] ?? '').toString(),
+                      resolveListImage(p),
                       height: 95,
                       width: double.infinity,
                       fit: BoxFit.contain,

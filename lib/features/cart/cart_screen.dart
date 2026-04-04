@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/theme/spacing.dart';
@@ -408,12 +409,16 @@ class _CartItem extends StatelessWidget {
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(AppRadius.lg),
-                child: Image.network(
-                  item.image,
+                child: CachedNetworkImage(
+                  imageUrl: item.image,
                   width: 72,
                   height: 72,
                   fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const Icon(
+                  fadeInDuration: Duration.zero,
+                  fadeOutDuration: Duration.zero,
+                  memCacheWidth: 144,
+                  maxWidthDiskCache: 144,
+                  errorWidget: (_, __, ___) => const Icon(
                     Icons.image_outlined,
                     color: AppColors.textHint,
                     size: 28,

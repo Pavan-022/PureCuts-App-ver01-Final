@@ -1,10 +1,13 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/models/cart_model.dart';
+import 'package:purecuts/core/services/image_bandwidth_telemetry.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/theme/spacing.dart';
+import 'package:purecuts/core/utils/product_image_contract.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/orders/order_confirm_screen.dart';
@@ -970,6 +973,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final cart = context.watch<CartModel>();
     final home = context.watch<HomeProvider>();
 
+    for (final item in cart.items) {
+      final url = item.image.trim();
+      if (url.isEmpty) continue;
+      unawaited(
+        ImageBandwidthTelemetry.instance.trackImageLoad(
+          screen: 'checkout_selected_items',
+          imageUrl: url,
+        ),
+      );
+    }
+
     if (cart.items.isEmpty) {
       return Scaffold(
         appBar: AppBar(title: const Text('Checkout')),
@@ -1053,10 +1067,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                     borderRadius: BorderRadius.circular(
                                       AppRadius.lg,
                                     ),
-                                    child: Image.network(
-                                      item.image,
+                                    child: CachedNetworkImage(
+                                      imageUrl: item.image,
                                       fit: BoxFit.contain,
-                                      errorBuilder: (_, __, ___) => const Icon(
+                                      fadeInDuration: Duration.zero,
+                                      fadeOutDuration: Duration.zero,
+                                      memCacheWidth: 112,
+                                      maxWidthDiskCache: 112,
+                                      errorWidget: (_, __, ___) => const Icon(
                                         Icons.image_outlined,
                                         color: AppColors.textHint,
                                       ),
@@ -1196,6 +1214,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                               ),
                           itemBuilder: (_, i) {
                             final p = recommendations[i];
+                            final recommendationImage = resolveListImage(p);
+                            if (recommendationImage.isNotEmpty) {
+                              unawaited(
+                                ImageBandwidthTelemetry.instance.trackImageLoad(
+                                  screen: 'checkout_recommendations',
+                                  imageUrl: recommendationImage,
+                                ),
+                              );
+                            }
                             return Material(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -1230,10 +1257,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                       children: [
                                         Expanded(
                                           child: Center(
-                                            child: Image.network(
-                                              (p['image'] ?? '').toString(),
+                                            child: CachedNetworkImage(
+                                              imageUrl: recommendationImage,
                                               fit: BoxFit.contain,
-                                              errorBuilder: (_, __, ___) =>
+                                              fadeInDuration: Duration.zero,
+                                              fadeOutDuration: Duration.zero,
+                                              memCacheWidth: 168,
+                                              maxWidthDiskCache: 168,
+                                              errorWidget: (_, __, ___) =>
                                                   const Icon(
                                                     Icons.image_outlined,
                                                     color: AppColors.textHint,

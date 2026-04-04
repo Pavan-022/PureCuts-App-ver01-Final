@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 
 import 'package:purecuts/core/models/order_model.dart';
@@ -440,12 +441,16 @@ class OrderDetailsScreen extends StatelessWidget {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(10),
                 child: imageUrl.isNotEmpty
-                    ? Image.network(
-                        imageUrl,
+                    ? CachedNetworkImage(
+                        imageUrl: imageUrl,
                         width: 56,
                         height: 56,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _itemPlaceholder(),
+                        fadeInDuration: Duration.zero,
+                        fadeOutDuration: Duration.zero,
+                        memCacheWidth: 112,
+                        maxWidthDiskCache: 112,
+                        errorWidget: (_, __, ___) => _itemPlaceholder(),
                       )
                     : _itemPlaceholder(),
               ),

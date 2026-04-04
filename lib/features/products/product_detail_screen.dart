@@ -1,9 +1,12 @@
 import 'dart:typed_data';
+import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/models/cart_model.dart';
+import 'package:purecuts/core/services/image_bandwidth_telemetry.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
@@ -247,24 +250,70 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   Widget _buildImage(String imagePath, {BoxFit fit = BoxFit.contain}) {
     final resolved = _normalizeImagePath(imagePath);
-    final placeholder = Container(
-      color: const Color(0xFFF0F0F5),
-      child: const Center(
-        child: Icon(Icons.image_outlined, size: 64, color: Color(0xFFCCCCD8)),
-      ),
-    );
-    if (resolved.isEmpty) return placeholder;
+    Widget placeholder() {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final shortest = constraints.biggest.shortestSide;
+          final iconSize = shortest.isFinite
+              ? (shortest * 0.34).clamp(14.0, 56.0)
+              : 36.0;
+          final spinnerSize = shortest.isFinite
+              ? (shortest * 0.22).clamp(10.0, 20.0)
+              : 14.0;
+
+          return DecoratedBox(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFF6F5FA), Color(0xFFEFEDF6)],
+              ),
+            ),
+            child: Center(
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Icon(
+                    Icons.image_outlined,
+                    size: iconSize,
+                    color: const Color(0xFFC9C6D6),
+                  ),
+                  SizedBox(
+                    width: spinnerSize,
+                    height: spinnerSize,
+                    child: const CircularProgressIndicator(strokeWidth: 1.8),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    if (resolved.isEmpty) return placeholder();
     if (resolved.startsWith('assets/')) {
       return Image.asset(
         resolved,
         fit: fit,
-        errorBuilder: (_, __, ___) => placeholder,
+        errorBuilder: (_, __, ___) => placeholder(),
       );
     }
-    return Image.network(
-      resolved,
+
+    unawaited(
+      ImageBandwidthTelemetry.instance.trackImageLoad(
+        screen: 'product_detail',
+        imageUrl: resolved,
+      ),
+    );
+
+    return CachedNetworkImage(
+      imageUrl: resolved,
       fit: fit,
-      errorBuilder: (_, __, ___) => placeholder,
+      fadeInDuration: Duration.zero,
+      fadeOutDuration: Duration.zero,
+      placeholder: (_, __) => placeholder(),
+      errorWidget: (_, __, ___) => placeholder(),
     );
   }
 
@@ -482,10 +531,14 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             fit: BoxFit.cover,
             errorBuilder: (_, __, ___) => placeholder,
           )
-        : Image.network(
-            resolved,
+        : CachedNetworkImage(
+            imageUrl: resolved,
             fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => placeholder,
+            fadeInDuration: Duration.zero,
+            fadeOutDuration: Duration.zero,
+            memCacheWidth: 92,
+            maxWidthDiskCache: 92,
+            errorWidget: (_, __, ___) => placeholder,
           );
 
     return ClipRRect(
@@ -1449,7 +1502,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     final idx = _productState?.selectedImageIndex ?? 0;
     if (imgs.isNotEmpty && idx >= 0 && idx < imgs.length) return imgs[idx];
     if (_product.images.isNotEmpty) return _product.images.first;
-    return (widget.product['image'] ?? '').toString();
+    return (widget.product['fullImageUrl'] ??
+            widget.product['imageUrl'] ??
+            widget.product['image'] ??
+            '')
+        .toString();
   }
 
   Map<String, dynamic> get _cartPayload {
@@ -1521,7 +1578,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         ? imageList
         : (_product.images.isNotEmpty
               ? _product.images
-              : [(widget.product['image'] ?? '').toString()]);
+              : [
+                  (widget.product['fullImageUrl'] ??
+                          widget.product['imageUrl'] ??
+                          widget.product['image'] ??
+                          '')
+                      .toString(),
+                ]);
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -2311,13 +2374,16 @@ class _ProductImageCarousel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final mainImageHeight = (screenHeight * 0.40).clamp(260.0, 340.0);
+
     return Container(
       color: Colors.white,
       child: Column(
         children: [
           // Main swipeable image
           SizedBox(
-            height: 340,
+            height: mainImageHeight,
             child: PageView.builder(
               controller: pageController,
               itemCount: images.length,
@@ -2356,22 +2422,30 @@ class _ProductImageCarousel extends StatelessWidget {
 
           if (images.length > 1) ...[
             // Pill dot indicators
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(images.length, (i) {
-                final active = i == selectedIndex;
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeInOut,
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  width: active ? 20 : 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: active ? AppColors.primary : const Color(0xFFD1D1D8),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                );
-              }),
+            SizedBox(
+              height: 8,
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                shrinkWrap: true,
+                scrollDirection: Axis.horizontal,
+                itemCount: images.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (_, i) {
+                  final active = i == selectedIndex;
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeInOut,
+                    width: active ? 20 : 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: active
+                          ? AppColors.primary
+                          : const Color(0xFFD1D1D8),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  );
+                },
+              ),
             ),
             const SizedBox(height: 12),
 
@@ -2679,10 +2753,14 @@ class _ReviewPreviewTile extends StatelessWidget {
                                 ),
                               ],
                             )
-                          : Image.network(
-                              url,
+                          : CachedNetworkImage(
+                              imageUrl: url,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => const Icon(
+                              fadeInDuration: Duration.zero,
+                              fadeOutDuration: Duration.zero,
+                              memCacheWidth: 124,
+                              maxWidthDiskCache: 124,
+                              errorWidget: (_, __, ___) => const Icon(
                                 Icons.image_not_supported_outlined,
                                 color: AppColors.textHint,
                               ),
@@ -2747,10 +2825,14 @@ class _ExistingReviewMediaTile extends StatelessWidget {
                             ),
                           ),
                         )
-                      : Image.network(
-                          url,
+                      : CachedNetworkImage(
+                          imageUrl: url,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
+                          fadeInDuration: Duration.zero,
+                          fadeOutDuration: Duration.zero,
+                          memCacheWidth: 144,
+                          maxWidthDiskCache: 144,
+                          errorWidget: (_, __, ___) => Container(
                             color: const Color(0xFFE9E9F2),
                             child: const Icon(
                               Icons.image_not_supported_outlined,

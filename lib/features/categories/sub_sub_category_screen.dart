@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
@@ -661,12 +662,16 @@ class _ThumbIcon extends StatelessWidget {
       );
     }
 
-    return Image.network(
-      trimmed,
+    return CachedNetworkImage(
+      imageUrl: trimmed,
       width: size,
       height: size,
       fit: BoxFit.contain,
-      errorBuilder: (_, __, ___) => fallback,
+      fadeInDuration: Duration.zero,
+      fadeOutDuration: Duration.zero,
+      memCacheWidth: (size * 2).round(),
+      maxWidthDiskCache: (size * 2).round(),
+      errorWidget: (_, __, ___) => fallback,
     );
   }
 }

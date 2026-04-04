@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -1041,12 +1042,16 @@ class _ChatBubble extends StatelessWidget {
             if (mediaUrl.isNotEmpty && mediaType == 'image') ...[
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
-                child: Image.network(
-                  mediaUrl,
+                child: CachedNetworkImage(
+                  imageUrl: mediaUrl,
                   width: 220,
                   height: 220,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => Container(
+                  fadeInDuration: Duration.zero,
+                  fadeOutDuration: Duration.zero,
+                  memCacheWidth: 440,
+                  maxWidthDiskCache: 440,
+                  errorWidget: (_, _, __) => Container(
                     width: 220,
                     height: 140,
                     color: Colors.black12,

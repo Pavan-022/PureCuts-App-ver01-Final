@@ -1,3 +1,5 @@
+import 'package:purecuts/core/utils/product_image_contract.dart';
+
 class ProductModel {
   final String id;
   final String name;
@@ -13,6 +15,8 @@ class ProductModel {
   final double rating;
   final int reviews;
   final String image;
+  final String thumbnailUrl;
+  final String fullImageUrl;
   final List<String> additionalImages;
   final List<String> images;
   final String tag;
@@ -45,6 +49,8 @@ class ProductModel {
     required this.rating,
     required this.reviews,
     required this.image,
+    this.thumbnailUrl = '',
+    this.fullImageUrl = '',
     this.additionalImages = const [],
     this.images = const [],
     this.tag = '',
@@ -132,12 +138,17 @@ class ProductModel {
     final tags = <String>{...parsedTags};
     if (singleTag.isNotEmpty) tags.add(singleTag);
 
-    final thumbnail =
-        (map['image'] ?? map['imageUrl'] ?? '').toString().trim().isNotEmpty
-        ? (map['image'] ?? map['imageUrl']).toString().trim()
-        : (images.isNotEmpty
-              ? images.first
-              : (additionalImages.isNotEmpty ? additionalImages.first : ''));
+    final thumbnail = resolveThumbnailImage(map);
+    final fullImage = resolveFullImage(map);
+    final listImage = thumbnail.isNotEmpty
+        ? thumbnail
+        : (fullImage.isNotEmpty
+              ? fullImage
+              : (images.isNotEmpty
+                    ? images.first
+                    : (additionalImages.isNotEmpty
+                          ? additionalImages.first
+                          : '')));
 
     return ProductModel(
       id: id,
@@ -167,7 +178,9 @@ class ProductModel {
       originalPrice: (map['originalPrice'] as num?)?.toInt() ?? 0,
       rating: (map['rating'] as num?)?.toDouble() ?? 0.0,
       reviews: (map['reviews'] as num?)?.toInt() ?? 0,
-      image: thumbnail,
+      image: listImage,
+      thumbnailUrl: thumbnail,
+      fullImageUrl: fullImage,
       additionalImages: additionalImages,
       images: images,
       tag: singleTag,
@@ -210,6 +223,10 @@ class ProductModel {
       'rating': rating,
       'reviews': reviews,
       'image': image,
+      'thumbnailUrl': thumbnailUrl,
+      'thumbnail': thumbnailUrl,
+      'thumb': thumbnailUrl,
+      'fullImageUrl': fullImageUrl,
       'additionalImages': additionalImages,
       'images': images,
       'tag': tag,
@@ -250,7 +267,11 @@ class ProductModel {
       'rating': rating,
       'reviews': reviews,
       'image': image,
-      'imageUrl': image,
+      'imageUrl': fullImageUrl.isNotEmpty ? fullImageUrl : image,
+      'thumbnailUrl': thumbnailUrl,
+      'thumbnail': thumbnailUrl,
+      'thumb': thumbnailUrl,
+      'fullImageUrl': fullImageUrl,
       'additionalImages': additionalImages,
       'images': images,
       'tag': tag,

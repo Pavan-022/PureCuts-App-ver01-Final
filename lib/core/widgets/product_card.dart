@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
+import 'dart:async';
 import 'package:purecuts/core/services/firestore_service.dart';
+import 'package:purecuts/core/services/image_bandwidth_telemetry.dart';
+import 'package:purecuts/core/utils/product_image_contract.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/models/cart_model.dart';
 import '../../features/auth/providers/auth_provider.dart';
@@ -52,7 +56,7 @@ class _ProductCardState extends State<ProductCard> {
     return {
       'name': (product['name'] ?? '').toString(),
       'brand': (product['brand'] ?? '').toString(),
-      'image': (product['image'] ?? '').toString(),
+      'image': resolveListImage(product),
       'price': product['price'],
       'originalPrice': product['originalPrice'],
       'category': (product['category'] ?? '').toString(),
@@ -249,8 +253,10 @@ class _ProductCardState extends State<ProductCard> {
     return 'https://firebasestorage.googleapis.com/v0/b/purecuts-11a7c.firebasestorage.app/o/${Uri.encodeComponent(path)}?alt=media';
   }
 
-  Widget _buildProductImage(String imagePath) {
+  Widget _buildProductImage(BuildContext context, String imagePath) {
     final resolved = _normalizeImagePath(imagePath);
+    final targetHeight = (110 * MediaQuery.of(context).devicePixelRatio)
+        .round();
     if (resolved.isEmpty) {
       return Container(
         height: 110,
@@ -260,12 +266,34 @@ class _ProductCardState extends State<ProductCard> {
     }
 
     if (!resolved.startsWith('assets/')) {
-      return Image.network(
-        resolved,
+      unawaited(
+        ImageBandwidthTelemetry.instance.trackImageLoad(
+          screen: 'product_card',
+          imageUrl: resolved,
+        ),
+      );
+
+      return CachedNetworkImage(
+        imageUrl: resolved,
         height: 110,
         width: double.infinity,
         fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => Container(
+        fadeInDuration: Duration.zero,
+        fadeOutDuration: Duration.zero,
+        memCacheHeight: targetHeight,
+        maxHeightDiskCache: targetHeight,
+        placeholder: (_, __) => Container(
+          height: 110,
+          color: AppColors.surface,
+          child: const Center(
+            child: SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 1.8),
+            ),
+          ),
+        ),
+        errorWidget: (_, __, ___) => Container(
           height: 110,
           color: AppColors.surface,
           child: const Icon(Icons.image, color: AppColors.textHint, size: 40),
@@ -288,8 +316,9 @@ class _ProductCardState extends State<ProductCard> {
 
   @override
   Widget build(BuildContext context) {
-    final cart = context.watch<CartModel>();
-    final qty = cart.quantityOf(product['id']);
+    final qty = context.select<CartModel, int>(
+      (cart) => cart.quantityOf(product['id']),
+    );
 
     final hasDiscount =
         (product['originalPrice'] as num? ?? 0) >
@@ -314,9 +343,7 @@ class _ProductCardState extends State<ProductCard> {
                   borderRadius: const BorderRadius.vertical(
                     top: Radius.circular(12),
                   ),
-                  child: _buildProductImage(
-                    (product['image'] ?? '').toString(),
-                  ),
+                  child: _buildProductImage(context, resolveListImage(product)),
                 ),
 
                 // Heart

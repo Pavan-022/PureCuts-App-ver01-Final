@@ -7,6 +7,12 @@ class FeatureFlags {
     defaultValue: true,
   );
 
+  /// Toggle debug-only image bandwidth telemetry (cache hit/miss + bytes).
+  static const bool enableImageBandwidthTelemetry = bool.fromEnvironment(
+    'ENABLE_IMAGE_BANDWIDTH_TELEMETRY',
+    defaultValue: true,
+  );
+
   /// Rollout toggle for incremental order-history pagination.
   static const bool enableOrdersPaging = bool.fromEnvironment(
     'ENABLE_ORDERS_PAGING',
@@ -63,7 +69,7 @@ class FeatureFlags {
 
   static const int homeStartupProductPool = int.fromEnvironment(
     'HOME_STARTUP_PRODUCT_POOL',
-    defaultValue: 48,
+    defaultValue: 24,
   );
 
   static const bool enableDeferredHomeTaxonomy = bool.fromEnvironment(

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:purecuts/core/utils/product_image_contract.dart';
 
 class CartItem {
   final String id;
@@ -115,6 +116,8 @@ class CartModel extends ChangeNotifier {
     final productId = (product['id'] ?? '').toString().trim();
     if (productId.isEmpty) return;
     final idx = _items.indexWhere((e) => e.id == productId);
+    final selectedImage = resolveListImage(product);
+
     if (idx >= 0) {
       _items[idx].quantity++;
     } else {
@@ -123,7 +126,7 @@ class CartModel extends ChangeNotifier {
           id: productId,
           name: (product['name'] ?? '').toString(),
           brand: (product['brand'] ?? '').toString(),
-          image: (product['image'] ?? '').toString(),
+          image: selectedImage,
           price: (product['price'] is num)
               ? (product['price'] as num).toInt()
               : int.tryParse((product['price'] ?? '0').toString()) ?? 0,
@@ -133,7 +136,7 @@ class CartModel extends ChangeNotifier {
 
     _touchPreview(productId);
     _lastAddedProductId = productId;
-    _lastAddedImage = (product['image'] ?? '').toString();
+    _lastAddedImage = selectedImage;
     _addEventTick++;
 
     _persist();
