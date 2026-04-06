@@ -181,6 +181,13 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Backend-verified payment transaction records
+    match /payments/{txnid} {
+      allow read: if signedIn() &&
+        (isAdmin() || request.auth.uid == resource.data.userId);
+      allow create, update, delete: if false;
+    }
+
     // Optional product share analytics
     match /productShares/{docId} {
       allow create: if signedIn();

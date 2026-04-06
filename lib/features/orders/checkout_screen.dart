@@ -11,6 +11,7 @@ import 'package:purecuts/core/utils/product_image_contract.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/orders/order_confirm_screen.dart';
+import 'package:purecuts/features/orders/payu_payment_screen.dart';
 import 'package:purecuts/features/products/product_detail_screen.dart';
 
 class CheckoutScreen extends StatefulWidget {
@@ -21,13 +22,14 @@ class CheckoutScreen extends StatefulWidget {
 }
 
 class _CheckoutScreenState extends State<CheckoutScreen> {
+  static const String _codPaymentMethod = 'Cash on Delivery';
+  static const String _payuPaymentMethod =
+      'Pay Online (UPI/Card/NetBanking/Wallet)';
+
   // Delivery charge constants
   static const int _puneDeliveryCharge = 19;
   static const int _otherDeliveryCharge = 30;
   static const int _freeDeliveryThreshold = 1000;
-  static const int _handlingCharge = 5;
-  static const int _smallCartThreshold = 99;
-  static const int _smallCartCharge = 20;
 
   // All Pune pincodes
   static const Set<String> _punePincodes = {
@@ -90,7 +92,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     '412207',
   };
 
-  String _selectedPaymentMethod = 'Cash on Delivery';
+  String _selectedPaymentMethod = _codPaymentMethod;
 
   final TextEditingController _line1Controller = TextEditingController();
   final TextEditingController _line2Controller = TextEditingController();
@@ -267,10 +269,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   int _itemTotal(CartModel cart) => cart.totalPrice;
 
-  int _smallCartChargeAmount(int itemTotal) {
-    return itemTotal < _smallCartThreshold ? _smallCartCharge : 0;
-  }
-
   /// Check if delivery location is Pune based on pincode
   bool _isPuneDelivery() {
     final pincode = _pincodeController.text.trim();
@@ -290,10 +288,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   int _grandTotal(CartModel cart) {
     final itemTotal = _itemTotal(cart);
     final deliveryCharge = _calculateDeliveryCharge(itemTotal);
-    return itemTotal +
-        deliveryCharge +
-        _handlingCharge +
-        _smallCartChargeAmount(itemTotal);
+    return itemTotal + deliveryCharge;
   }
 
   List<Map<String, dynamic>> _recommendations({
@@ -674,7 +669,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final itemTotal = _itemTotal(cart);
       final deliveryCharge = _calculateDeliveryCharge(itemTotal);
       final grandTotal = _grandTotal(cart);
-      final smallCartCharge = _smallCartChargeAmount(itemTotal);
 
       // ── Confirmation dialog ──────────────────────────────────────────────────
       if (!mounted) return;
@@ -758,29 +752,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         ),
                       ],
                     ),
-                    if (smallCartCharge > 0) ...[
-                      const SizedBox(height: 6),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Small cart charge',
-                            style: TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 13,
-                            ),
-                          ),
-                          Text(
-                            '₹$smallCartCharge',
-                            style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                       child: Divider(height: 1),
@@ -810,21 +781,30 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     const SizedBox(height: AppSpacing.sm),
                     // Payment method
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
-                          'Payment',
-                          style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 13,
+                        const Expanded(
+                          flex: 3,
+                          child: Text(
+                            'Payment',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
-                        Text(
-                          _selectedPaymentMethod,
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 5,
+                          child: Text(
+                            _selectedPaymentMethod,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                       ],
@@ -940,6 +920,34 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
       final deliveryChargeValue = _calculateDeliveryCharge(itemTotal);
 
+      if (_selectedPaymentMethod == _payuPaymentMethod) {
+        final paymentResult = await Navigator.push<Map<String, dynamic>>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PayUPaymentScreen(
+              amount: grandTotal.toString(),
+              productInfo: 'PureCuts Order',
+            ),
+          ),
+        );
+
+        if (!mounted) return;
+
+        final paymentStatus = (paymentResult?['status'] ?? '')
+            .toString()
+            .toLowerCase();
+        if (paymentStatus != 'success') {
+          final reason = (paymentResult?['reason'] ?? '').toString();
+          final message = reason.isNotEmpty
+              ? 'Payment not completed: $reason'
+              : 'Payment not completed. Please try again.';
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(message)));
+          return;
+        }
+      }
+
       if (!mounted) return;
       Navigator.push(
         context,
@@ -965,6 +973,163 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           _isPlacingOrder = false;
         });
       }
+    }
+  }
+
+  IconData _paymentMethodIcon(String method) {
+    if (method == _codPaymentMethod) {
+      return Icons.local_shipping_outlined;
+    }
+    return Icons.account_balance_wallet_outlined;
+  }
+
+  String _paymentMethodSubtitle(String method) {
+    if (method == _codPaymentMethod) {
+      return 'Pay after delivery';
+    }
+    return 'UPI, Card, NetBanking, Wallet';
+  }
+
+  Future<void> _openPaymentMethodSheet() async {
+    final methods = [_codPaymentMethod, _payuPaymentMethod];
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) {
+        return SafeArea(
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg,
+              AppSpacing.md,
+              AppSpacing.lg,
+              AppSpacing.lg,
+            ),
+            decoration: const BoxDecoration(
+              color: Color(0xFFFDF9FF),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.divider,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                const Text(
+                  'Choose payment method',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Select the option that works best for you.',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                ...methods.map((method) {
+                  final isSelected = _selectedPaymentMethod == method;
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        onTap: () => Navigator.pop(context, method),
+                        child: Ink(
+                          padding: const EdgeInsets.all(AppSpacing.md),
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? AppColors.primary.withOpacity(0.08)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(AppRadius.lg),
+                            border: Border.all(
+                              color: isSelected
+                                  ? AppColors.primary.withOpacity(0.35)
+                                  : AppColors.border,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? AppColors.primary.withOpacity(0.14)
+                                      : AppColors.surface,
+                                  borderRadius: BorderRadius.circular(
+                                    AppRadius.md,
+                                  ),
+                                ),
+                                child: Icon(
+                                  _paymentMethodIcon(method),
+                                  color: isSelected
+                                      ? AppColors.primary
+                                      : AppColors.textSecondary,
+                                  size: 20,
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.md),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      method,
+                                      style: const TextStyle(
+                                        color: AppColors.textPrimary,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _paymentMethodSubtitle(method),
+                                      style: const TextStyle(
+                                        color: AppColors.textSecondary,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (isSelected)
+                                const Icon(
+                                  Icons.check_circle_rounded,
+                                  color: AppColors.primary,
+                                  size: 22,
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selected != null && mounted) {
+      setState(() => _selectedPaymentMethod = selected);
     }
   }
 
@@ -1651,35 +1816,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     GestureDetector(
-                      onTap: () async {
-                        final methods = ['Cash on Delivery'];
-                        final selected = await showModalBottomSheet<String>(
-                          context: context,
-                          builder: (_) => SafeArea(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: methods
-                                  .map(
-                                    (method) => ListTile(
-                                      title: Text(method),
-                                      trailing: _selectedPaymentMethod == method
-                                          ? const Icon(
-                                              Icons.check_circle,
-                                              color: AppColors.primary,
-                                            )
-                                          : null,
-                                      onTap: () =>
-                                          Navigator.pop(context, method),
-                                    ),
-                                  )
-                                  .toList(),
-                            ),
-                          ),
-                        );
-                        if (selected != null && mounted) {
-                          setState(() => _selectedPaymentMethod = selected);
-                        }
-                      },
+                      onTap: _openPaymentMethodSheet,
                       child: Container(
                         width: double.infinity,
                         padding: const EdgeInsets.symmetric(

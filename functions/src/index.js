@@ -13,6 +13,7 @@ const {
 	getDashboardMetricsSnapshot,
 	rebuildOrderCounters,
 } = require("./dashboardMetrics");
+const { paymentApi } = require("./payment/paymentHandler");
 
 exports.onSupportMessageCreated = onSupportMessageCreated;
 exports.setAdminClaims = setAdminClaims;
@@ -26,3 +27,4 @@ exports.backfillProductImageContract = backfillProductImageContract;
 exports.onOrderMetricsWrite = onOrderMetricsWrite;
 exports.getDashboardMetricsSnapshot = getDashboardMetricsSnapshot;
 exports.rebuildOrderCounters = rebuildOrderCounters;
+exports.paymentApi = paymentApi;

@@ -96,4 +96,41 @@ class FeatureFlags {
     'HOME_TAXONOMY_TIMEOUT_MS',
     defaultValue: 5000,
   );
+
+  /// PayU non-secret runtime config (keep SALT on backend only).
+  static const String payuMerchantKey = String.fromEnvironment(
+    'PAYU_MERCHANT_KEY',
+    defaultValue: 'TEST_MERCHANT_KEY',
+  );
+
+  static const String payuEnvironment = String.fromEnvironment(
+    'PAYU_ENVIRONMENT',
+    defaultValue: '0',
+  );
+
+  static const String payuBackendBaseUrl = String.fromEnvironment(
+    'PAYU_BACKEND_BASE_URL',
+    defaultValue:
+        'https://asia-south1-purecuts-11a7c.cloudfunctions.net/paymentApi',
+  );
+
+  static const String payuAndroidSuccessUrl = String.fromEnvironment(
+    'PAYU_ANDROID_SURL',
+    defaultValue: 'https://payu.herokuapp.com/success',
+  );
+
+  static const String payuAndroidFailureUrl = String.fromEnvironment(
+    'PAYU_ANDROID_FURL',
+    defaultValue: 'https://payu.herokuapp.com/failure',
+  );
+
+  static const String payuIosSuccessUrl = String.fromEnvironment(
+    'PAYU_IOS_SURL',
+    defaultValue: 'https://payu.herokuapp.com/success',
+  );
+
+  static const String payuIosFailureUrl = String.fromEnvironment(
+    'PAYU_IOS_FURL',
+    defaultValue: 'https://payu.herokuapp.com/failure',
+  );
 }
