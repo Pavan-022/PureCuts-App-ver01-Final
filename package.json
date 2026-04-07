@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "build:dash": "npm --prefix purecuts-dash run build",
+    "deploy:dash": "npm run build:dash && firebase deploy --only hosting --project purecuts-11a7c"
+  },
   "dependencies": {
     "firebase": "^12.10.0"
   }

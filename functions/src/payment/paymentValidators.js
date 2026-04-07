@@ -49,6 +49,7 @@ function validateGenerateHashInput(raw = {}) {
       firstname: asCleanString(raw.firstname),
       email: asCleanString(raw.email),
       phone: asCleanString(raw.phone),
+      orderDraft: null,
     };
   }
 
@@ -61,6 +62,10 @@ function validateGenerateHashInput(raw = {}) {
     email: ensureRequired("email", raw.email),
     phone: asCleanString(raw.phone),
     userId: normalizeUserId(raw.userId),
+    orderDraft:
+      raw.orderDraft && typeof raw.orderDraft === "object" && !Array.isArray(raw.orderDraft)
+        ? raw.orderDraft
+        : null,
   };
 }
 
@@ -103,9 +108,51 @@ function validateVerifyPaymentInput(raw = {}) {
   };
 }
 
+function validateSyncPaymentStatusInput(raw = {}) {
+  return {
+    txnid: ensureRequired("txnid", raw.txnid),
+    userId: normalizeUserId(raw.userId),
+  };
+}
+
+function validatePayuWebhookInput(raw = {}) {
+  const status = ensureRequired("status", raw.status).toLowerCase();
+  const txnid = ensureRequired("txnid", raw.txnid);
+
+  const amountSource =
+    raw.amount ?? raw.amt ?? raw.net_amount_debit ?? raw.netAmountDebit;
+  const amount = normalizeAmount(amountSource);
+
+  const productinfo = asCleanString(raw.productinfo || raw.productInfo);
+  const firstname = asCleanString(raw.firstname || raw.firstName);
+  const email = asCleanString(raw.email);
+
+  return {
+    status,
+    txnid,
+    amount,
+    hash: asCleanString(raw.hash).toLowerCase(),
+    productinfo,
+    firstname,
+    email,
+    key: asCleanString(raw.key),
+    additionalCharges: asCleanString(raw.additionalCharges),
+    mihpayid: asCleanString(raw.mihpayid || raw.mihPayId),
+    mode: asCleanString(raw.mode),
+    udf1: asCleanString(raw.udf1),
+    udf2: asCleanString(raw.udf2),
+    udf3: asCleanString(raw.udf3),
+    udf4: asCleanString(raw.udf4),
+    udf5: asCleanString(raw.udf5),
+    userId: normalizeUserId(raw.userId || raw.udf1),
+  };
+}
+
 module.exports = {
   validateGenerateHashInput,
   validateVerifyPaymentInput,
+  validateSyncPaymentStatusInput,
+  validatePayuWebhookInput,
   normalizeAmount,
   asCleanString,
 };

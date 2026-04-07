@@ -21,6 +21,7 @@ class OrderConfirmScreen extends StatefulWidget {
   final Map<String, dynamic>? contactDetails;
   final String? paymentMethod;
   final Map<String, dynamic>? billDetails;
+  final String? alreadyPlacedOrderRef;
 
   const OrderConfirmScreen({
     super.key,
@@ -30,6 +31,7 @@ class OrderConfirmScreen extends StatefulWidget {
     this.contactDetails,
     this.paymentMethod,
     this.billDetails,
+    this.alreadyPlacedOrderRef,
   });
 
   @override
@@ -67,7 +69,10 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
     final orders = context.read<OrderProvider>();
     final auth = context.read<AuthProvider>();
     final uid = auth.user?.uid ?? FirebaseAuth.instance.currentUser?.uid ?? '';
-    final provisionalOrderRef = _firestoreService.generateOrderRef();
+    final provisionalOrderRef =
+        (widget.alreadyPlacedOrderRef ?? '').trim().isNotEmpty
+        ? widget.alreadyPlacedOrderRef!.trim()
+        : _firestoreService.generateOrderRef();
     _orderRef = provisionalOrderRef;
 
     final orderedItems = widget.orderedItems?.isNotEmpty == true
@@ -90,7 +95,13 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
 
     orders.addOrderedItems(orderedItems);
 
-    if (uid.trim().isNotEmpty && orderedItems.isNotEmpty) {
+    final shouldPersistOrder = (widget.alreadyPlacedOrderRef ?? '')
+        .trim()
+        .isEmpty;
+
+    if (shouldPersistOrder &&
+        uid.trim().isNotEmpty &&
+        orderedItems.isNotEmpty) {
       _firestoreService
           .registerUserPurchase(
             uid: uid,
@@ -116,8 +127,10 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
           });
     }
 
-    // ✅ Clear cart AFTER saving
-    cart.clear();
+    // ✅ Keep backward compatibility: clear cart only when this screen performs persistence.
+    if (shouldPersistOrder) {
+      cart.clear();
+    }
   }
 
   @override

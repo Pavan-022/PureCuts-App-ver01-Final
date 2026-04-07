@@ -1,13 +1,17 @@
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/models/cart_model.dart';
+import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/services/image_bandwidth_telemetry.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/theme/spacing.dart';
 import 'package:purecuts/core/utils/product_image_contract.dart';
+import 'package:purecuts/core/services/payu_payment_service.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/orders/order_confirm_screen.dart';
@@ -22,9 +26,11 @@ class CheckoutScreen extends StatefulWidget {
 }
 
 class _CheckoutScreenState extends State<CheckoutScreen> {
+  final FirestoreService _firestoreService = FirestoreService();
   static const String _codPaymentMethod = 'Cash on Delivery';
   static const String _payuPaymentMethod =
       'Pay Online (UPI/Card/NetBanking/Wallet)';
+  static const bool _waiveDeliveryChargeTemporarily = true;
 
   // Delivery charge constants
   static const int _puneDeliveryCharge = 19;
@@ -109,6 +115,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   int _selectedAddressIndex = 0;
   bool _initialAddressPromptShown = false;
   bool _isPlacingOrder = false;
+  String? _recoveredSuccessfulPayuTxnId;
+  bool _checkingRecoveredPayment = false;
 
   void _applyAddressEntry(Map<String, dynamic> entry) {
     final address = (entry['deliveryAddress'] is Map)
@@ -200,6 +208,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         home.loadData();
       }
     });
+
+    unawaited(_recoverPendingOnlinePayment());
   }
 
   @override
@@ -277,6 +287,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   /// Calculate delivery charge based on location and order value
   int _calculateDeliveryCharge(int itemTotal) {
+    if (_waiveDeliveryChargeTemporarily) {
+      return 0;
+    }
+
     // Free delivery for orders >= ₹1000
     if (itemTotal >= _freeDeliveryThreshold) {
       return 0;
@@ -289,6 +303,71 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final itemTotal = _itemTotal(cart);
     final deliveryCharge = _calculateDeliveryCharge(itemTotal);
     return itemTotal + deliveryCharge;
+  }
+
+  Future<void> _clearPendingOnlinePaymentMarkers() async {
+    await PayUPaymentService.clearPendingTransaction();
+    if (!mounted) return;
+    setState(() {
+      _recoveredSuccessfulPayuTxnId = null;
+    });
+  }
+
+  Future<void> _recoverPendingOnlinePayment() async {
+    final auth = context.read<AuthProvider>();
+    final uid = auth.user?.uid ?? FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (uid.trim().isEmpty) return;
+
+    if (mounted) {
+      setState(() {
+        _checkingRecoveredPayment = true;
+      });
+    }
+
+    try {
+      final pendingTxnId = await PayUPaymentService.getPendingTxnIdForUser(uid);
+      if ((pendingTxnId ?? '').trim().isEmpty) return;
+
+      final paymentDoc = await FirebaseFirestore.instance
+          .collection('payments')
+          .doc(pendingTxnId)
+          .get();
+
+      if (!paymentDoc.exists) {
+        return;
+      }
+
+      final data = paymentDoc.data() ?? const <String, dynamic>{};
+      final status = (data['status'] ?? '').toString().toLowerCase();
+      final verified = data['hashVerified'] == true;
+
+      if (status == 'success' && verified) {
+        if (!mounted) return;
+        setState(() {
+          _recoveredSuccessfulPayuTxnId = pendingTxnId;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Payment already received. Tap Place Order to finalize your order.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      if (status == 'failure' || status == 'cancelled') {
+        await _clearPendingOnlinePaymentMarkers();
+      }
+    } catch (_) {
+      // Non-blocking recovery path.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _checkingRecoveredPayment = false;
+        });
+      }
+    }
   }
 
   List<Map<String, dynamic>> _recommendations({
@@ -871,6 +950,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       // ── End confirmation dialog ──────────────────────────────────────────────
 
       final auth = context.read<AuthProvider>();
+      final uid =
+          auth.user?.uid ?? FirebaseAuth.instance.currentUser?.uid ?? '';
       final deliveryAddress = _deliveryAddressMap();
       final contactDetails = _contactDetailsMap();
 
@@ -919,34 +1000,123 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           .toList(growable: false);
 
       final deliveryChargeValue = _calculateDeliveryCharge(itemTotal);
+      var successfulPaymentTxnId =
+          (_recoveredSuccessfulPayuTxnId ?? '').trim();
 
       if (_selectedPaymentMethod == _payuPaymentMethod) {
-        final paymentResult = await Navigator.push<Map<String, dynamic>>(
-          context,
-          MaterialPageRoute(
-            builder: (_) => PayUPaymentScreen(
-              amount: grandTotal.toString(),
-              productInfo: 'PureCuts Order',
+        if ((_recoveredSuccessfulPayuTxnId ?? '').trim().isEmpty) {
+          final authUser = context.read<AuthProvider>().user;
+          final draftCustomerName =
+              (authUser?.ownerName ?? authUser?.name ?? '').trim();
+          final draftCustomerEmail = (authUser?.email ?? '').trim();
+          final draftCustomerPhone =
+              (contactDetails['phone'] ?? '').toString().trim();
+
+          final paymentResult = await Navigator.push<Map<String, dynamic>>(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PayUPaymentScreen(
+                amount: grandTotal.toString(),
+                productInfo: 'PureCuts Order',
+                orderDraft: {
+                  'uid': uid,
+                  'userId': uid,
+                  'customerId': uid,
+                  'items': orderedItems,
+                  'deliveryAddress': deliveryAddress,
+                  'contactDetails': contactDetails,
+                  'paymentMethod': _selectedPaymentMethod,
+                  'itemTotal': itemTotal,
+                  'deliveryCharge': deliveryChargeValue,
+                  'handlingCharge': 0,
+                  'grandTotal': grandTotal,
+                  'customerName': draftCustomerName,
+                  'customerEmail': draftCustomerEmail,
+                  'customerPhone': draftCustomerPhone,
+                },
+              ),
+            ),
+          );
+
+          if (!mounted) return;
+
+          final paymentStatus = (paymentResult?['status'] ?? '')
+              .toString()
+              .toLowerCase();
+          if (paymentStatus != 'success') {
+            final reason = (paymentResult?['reason'] ?? '').toString();
+            final message = reason.isNotEmpty
+                ? 'Payment not completed: $reason'
+                : 'Payment not completed. Please try again.';
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(message)));
+            return;
+          }
+
+          successfulPaymentTxnId =
+              (paymentResult?['txnid'] ?? '').toString().trim();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Using recovered successful payment to place order.',
+              ),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+
+      if (uid.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Session expired. Please login again to place order.',
             ),
           ),
         );
-
-        if (!mounted) return;
-
-        final paymentStatus = (paymentResult?['status'] ?? '')
-            .toString()
-            .toLowerCase();
-        if (paymentStatus != 'success') {
-          final reason = (paymentResult?['reason'] ?? '').toString();
-          final message = reason.isNotEmpty
-              ? 'Payment not completed: $reason'
-              : 'Payment not completed. Please try again.';
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(message)));
-          return;
-        }
+        return;
       }
+
+      String? orderRef;
+      try {
+        orderRef = await _firestoreService.registerUserPurchase(
+          uid: uid,
+          items: orderedItems,
+          total: grandTotal,
+          deliveryAddress: deliveryAddress,
+          contactDetails: contactDetails,
+          paymentMethod: _selectedPaymentMethod,
+          paymentTxnId: successfulPaymentTxnId,
+          billDetails: {
+            'itemTotal': itemTotal,
+            'deliveryCharge': deliveryChargeValue,
+            'handlingCharge': 0,
+            'grandTotal': grandTotal,
+          },
+          userProfile: auth.user?.toMap(),
+        );
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Order could not be saved: $error')),
+        );
+        return;
+      }
+
+      if ((orderRef ?? '').trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Order could not be placed. Please try again.'),
+          ),
+        );
+        return;
+      }
+
+      // Clear cart only after confirmed order persistence.
+      cart.clear();
+      await _clearPendingOnlinePaymentMarkers();
 
       if (!mounted) return;
       Navigator.push(
@@ -958,6 +1128,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             deliveryAddress: deliveryAddress,
             contactDetails: contactDetails,
             paymentMethod: _selectedPaymentMethod,
+            alreadyPlacedOrderRef: orderRef,
             billDetails: {
               'itemTotal': itemTotal,
               'deliveryCharge': deliveryChargeValue,
@@ -967,6 +1138,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ),
         ),
       );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not place order: $error')));
     } finally {
       if (mounted) {
         setState(() {
@@ -1815,6 +1991,30 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (_checkingRecoveredPayment)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: AppSpacing.sm),
+                        child: LinearProgressIndicator(minHeight: 2),
+                      ),
+                    if ((_recoveredSuccessfulPayuTxnId ?? '').trim().isNotEmpty)
+                      Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.only(bottom: AppSpacing.md),
+                        padding: const EdgeInsets.all(AppSpacing.sm),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEFFDF5),
+                          borderRadius: BorderRadius.circular(AppRadius.md),
+                          border: Border.all(color: const Color(0xFFBBF7D0)),
+                        ),
+                        child: const Text(
+                          'Payment already completed. Tap Place Order to finish.',
+                          style: TextStyle(
+                            color: Color(0xFF166534),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     GestureDetector(
                       onTap: _openPaymentMethodSheet,
                       child: Container(

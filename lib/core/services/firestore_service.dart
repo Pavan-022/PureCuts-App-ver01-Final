@@ -275,6 +275,11 @@ class FirestoreService {
     return id.substring(0, sep);
   }
 
+  String _orderDocIdFromPaymentTxn(String txnId) {
+    final cleaned = txnId.trim().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    return 'payu_${cleaned.isEmpty ? 'unknown' : cleaned}';
+  }
+
   Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _queryOrdersByUid({
     required String uid,
     int maxOrders = 200,
@@ -902,6 +907,7 @@ class FirestoreService {
     Map<String, dynamic>? deliveryAddress,
     Map<String, dynamic>? contactDetails,
     String? paymentMethod,
+    String? paymentTxnId,
     Map<String, dynamic>? billDetails,
     String? orderRefOverride,
     Map<String, dynamic>? userProfile,
@@ -917,7 +923,32 @@ class FirestoreService {
 
     if (productIds.isEmpty) return null;
 
-    final orderDoc = _db.collection(_ordersCollection).doc();
+    final cleanPaymentTxnId = (paymentTxnId ?? '').trim();
+    if (cleanPaymentTxnId.isNotEmpty) {
+      try {
+        final existingByTxn = await _db
+            .collection(_ordersCollection)
+            .where('paymentTxnId', isEqualTo: cleanPaymentTxnId)
+            .limit(1)
+            .get();
+        if (existingByTxn.docs.isNotEmpty) {
+          final existingData = existingByTxn.docs.first.data();
+          return _firstNonEmpty([
+            existingData['orderRef'],
+            existingData['orderId'],
+            existingData['orderNumber'],
+          ]);
+        }
+      } catch (_) {
+        // Continue with normal flow if lookup query fails.
+      }
+    }
+
+    final orderDoc = cleanPaymentTxnId.isNotEmpty
+      ? _db
+          .collection(_ordersCollection)
+          .doc(_orderDocIdFromPaymentTxn(cleanPaymentTxnId))
+      : _db.collection(_ordersCollection).doc();
     final orderRef = (orderRefOverride ?? '').trim().isNotEmpty
         ? orderRefOverride!.trim()
         : generateOrderRef(entropy: orderDoc.id.substring(0, 6));
@@ -1028,7 +1059,7 @@ class FirestoreService {
         })
         .toList(growable: false);
 
-    await orderDoc.set({
+    final payload = {
       'orderId': orderRef,
       'orderRef': orderRef,
       'orderNumber': orderRef,
@@ -1046,6 +1077,7 @@ class FirestoreService {
           : (userData['address'] ?? '').toString(),
       'contactDetails': normalizedContactDetails,
       'paymentMethod': (paymentMethod ?? '').toString().trim(),
+      'paymentTxnId': cleanPaymentTxnId,
       'billDetails': {...?billDetails},
       'items': normalizedItems,
       'productIds': productIds,
@@ -1059,10 +1091,31 @@ class FirestoreService {
       'deliveryPlaced': true,
       'status': 'placed',
       'orderStatus': 'placed',
-      'paymentStatus': 'pending',
+      'paymentStatus': cleanPaymentTxnId.isEmpty ? 'pending' : 'paid',
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
-    });
+    };
+
+    var persistedOrderRef = orderRef;
+    if (cleanPaymentTxnId.isNotEmpty) {
+      await _db.runTransaction((tx) async {
+        final existingSnap = await tx.get(orderDoc);
+        if (existingSnap.exists) {
+          final existing = existingSnap.data() ?? const <String, dynamic>{};
+          persistedOrderRef = _firstNonEmpty([
+            existing['orderRef'],
+            existing['orderId'],
+            existing['orderNumber'],
+            orderRef,
+          ]);
+          return;
+        }
+
+        tx.set(orderDoc, payload, SetOptions(merge: false));
+      });
+    } else {
+      await orderDoc.set(payload);
+    }
 
     unawaited(
       _db
@@ -1074,6 +1127,7 @@ class FirestoreService {
             'contactDetails': normalizedContactDetails,
             'deliveryDetails': {
               ...normalizedDeliveryDetails,
+              'lastOrderRef': persistedOrderRef,
               'updatedAt': FieldValue.serverTimestamp(),
             },
             'deliveryPlaced': true,
@@ -1086,7 +1140,7 @@ class FirestoreService {
           }),
     );
 
-    return orderRef;
+    return persistedOrderRef;
   }
 
   String generateOrderRef({DateTime? now, String? entropy}) {

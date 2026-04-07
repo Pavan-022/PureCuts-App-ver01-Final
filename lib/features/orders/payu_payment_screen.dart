@@ -15,10 +15,12 @@ class PayUPaymentScreen extends StatefulWidget {
     super.key,
     required this.amount,
     required this.productInfo,
+    this.orderDraft,
   });
 
   final String amount;
   final String productInfo;
+  final Map<String, dynamic>? orderDraft;
 
   @override
   State<PayUPaymentScreen> createState() => _PayUPaymentScreenState();
@@ -47,6 +49,26 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
     _paymentService = PayUPaymentService();
     _eventSub = _paymentService.events.listen((event) {
       if (!mounted) return;
+
+      if ((event['type'] ?? '').toString() == 'pending') {
+        setState(() {
+          _loading = false;
+        });
+      }
+
+      if ((event['type'] ?? '').toString() == 'sync') {
+        final syncStatus = (event['status'] ?? '').toString().toLowerCase();
+
+        if (syncStatus == 'success') {
+          _completeFlow(status: 'success');
+          return;
+        }
+
+        if (syncStatus == 'failure' || syncStatus == 'cancelled') {
+          _completeFlow(status: syncStatus, reason: 'sync-$syncStatus');
+          return;
+        }
+      }
 
       if ((event['type'] ?? '').toString() == 'error') {
         _completeFlow(
@@ -77,7 +99,7 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
   }
 
   Future<void> _startPayment() async {
-    if (_loading) return;
+    if (_loading || (_txnId ?? '').trim().isNotEmpty) return;
 
     setState(() {
       _loading = true;
@@ -102,6 +124,7 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
         firstName: firstName,
         email: email,
         phone: phone,
+        orderDraft: widget.orderDraft,
       );
 
       if (!mounted) return;
@@ -364,10 +387,18 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
 
                     if (status == 'success' && verified) {
                       WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) return;
+                        setState(() {
+                          _errorText = null;
+                        });
                         _completeFlow(status: 'success');
                       });
                     } else if (status == 'failure' || status == 'cancelled') {
                       WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) return;
+                        setState(() {
+                          _errorText = null;
+                        });
                         _completeFlow(status: status, reason: status);
                       });
                     }

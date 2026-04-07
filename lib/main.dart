@@ -1,5 +1,6 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/models/cart_model.dart';
@@ -45,6 +46,7 @@ class _SlideLeftPageTransitionsBuilder extends PageTransitionsBuilder {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   try {
     _initialCartModel = await CartModel.create();

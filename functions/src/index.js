@@ -8,6 +8,7 @@ const {
 	onProductImageContractWrite,
 	backfillProductImageContract,
 } = require("./productImageContractTrigger");
+const { reconcileSuccessfulPayments } = require("./payment/paymentReconciler");
 const {
 	onOrderMetricsWrite,
 	getDashboardMetricsSnapshot,
@@ -28,3 +29,4 @@ exports.onOrderMetricsWrite = onOrderMetricsWrite;
 exports.getDashboardMetricsSnapshot = getDashboardMetricsSnapshot;
 exports.rebuildOrderCounters = rebuildOrderCounters;
 exports.paymentApi = paymentApi;
+exports.reconcileSuccessfulPayments = reconcileSuccessfulPayments;
