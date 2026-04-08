@@ -3,9 +3,11 @@
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/services/image_bandwidth_telemetry.dart';
+import 'package:purecuts/core/services/payu_payment_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/utils/product_image_contract.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
@@ -49,6 +51,10 @@ class _HomeScreenState extends State<HomeScreen>
   bool _hasOrderHistory = false;
   bool _orderHistoryResolved = false;
   bool _orderHistoryLoading = false;
+  bool _payuRecoveryLoading = false;
+  String? _payuRecoveryTxnId;
+  bool _payuRecoveryOrderPlaced = false;
+  String? _dismissedRecoveryTxnId;
   bool _showStickySearch = false;
   bool _showStickyCategories = false;
   bool _stickyLabelsOnly = false;
@@ -123,11 +129,126 @@ class _HomeScreenState extends State<HomeScreen>
     await Future.wait([
       context.read<HomeProvider>().loadData(forceRefresh: true),
       _resolveOrderHistory(force: true),
+      _resolvePayuRecoveryAction(force: true),
     ]);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _recalculateStickyThresholds();
     });
+  }
+
+  Future<void> _resolvePayuRecoveryAction({bool force = false}) async {
+    if (_payuRecoveryLoading && !force) return;
+
+    final uid = fb_auth.FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    if (uid.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _payuRecoveryLoading = false;
+        _payuRecoveryTxnId = null;
+        _payuRecoveryOrderPlaced = false;
+      });
+      return;
+    }
+
+    _payuRecoveryLoading = true;
+    try {
+      final pendingTxnId = await PayUPaymentService.getPendingTxnIdForUser(uid);
+      if ((pendingTxnId ?? '').trim().isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _payuRecoveryTxnId = null;
+          _payuRecoveryOrderPlaced = false;
+          _dismissedRecoveryTxnId = null;
+        });
+        return;
+      }
+
+      final paymentDoc = await FirebaseFirestore.instance
+          .collection('payments')
+          .doc(pendingTxnId)
+          .get();
+
+      if (!paymentDoc.exists) {
+        await PayUPaymentService.clearPendingTransaction();
+        if (!mounted) return;
+        setState(() {
+          _payuRecoveryTxnId = null;
+          _payuRecoveryOrderPlaced = false;
+          _dismissedRecoveryTxnId = null;
+        });
+        return;
+      }
+
+      final data = paymentDoc.data() ?? const <String, dynamic>{};
+      final status = (data['status'] ?? '').toString().toLowerCase();
+      final verified = data['hashVerified'] == true;
+      final orderPlacementStatus = (data['orderPlacementStatus'] ?? '')
+          .toString()
+          .toLowerCase();
+      final orderRef =
+          (data['orderRef'] ?? data['orderId'] ?? data['orderNumber'] ?? '')
+              .toString()
+              .trim();
+
+      if (status == 'failure' || status == 'cancelled') {
+        await PayUPaymentService.clearPendingTransaction();
+        if (!mounted) return;
+        setState(() {
+          _payuRecoveryTxnId = null;
+          _payuRecoveryOrderPlaced = false;
+          _dismissedRecoveryTxnId = null;
+        });
+        return;
+      }
+
+      final placed =
+          orderRef.isNotEmpty &&
+          (orderPlacementStatus == 'placed' || status == 'success');
+
+      if (!mounted) return;
+      setState(() {
+        _payuRecoveryTxnId = (status == 'success' && verified)
+            ? pendingTxnId
+            : null;
+        _payuRecoveryOrderPlaced = placed;
+      });
+    } catch (_) {
+      // Non-blocking home banner hydration.
+    } finally {
+      _payuRecoveryLoading = false;
+    }
+  }
+
+  Future<void> _finalizeRecoveredPayuOrder() async {
+    final txnId = (_payuRecoveryTxnId ?? '').trim();
+    if (txnId.isEmpty || _payuRecoveryOrderPlaced) return;
+
+    if (mounted) {
+      setState(() {
+        _payuRecoveryLoading = true;
+        _dismissedRecoveryTxnId = txnId;
+        _payuRecoveryTxnId = null;
+        _payuRecoveryOrderPlaced = true;
+      });
+    }
+
+    try {
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              const CheckoutScreen(autoFinalizeRecoveredPayuOrder: true),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        await _resolvePayuRecoveryAction(force: true);
+        setState(() {
+          _payuRecoveryLoading = false;
+        });
+      }
+    }
   }
 
   Future<void> _resolveOrderHistory({bool force = false}) async {
@@ -713,6 +834,7 @@ class _HomeScreenState extends State<HomeScreen>
       Future.wait([
         context.read<HomeProvider>().loadData(),
         _resolveOrderHistory(force: true),
+        _resolvePayuRecoveryAction(force: true),
       ]).then((_) {
         if (mounted) _startAutoScroll();
       });
@@ -1633,10 +1755,23 @@ class _HomeScreenState extends State<HomeScreen>
     final visiblePopularItems = _showAllPopularProducts
         ? popularDisplayItems
         : popularDisplayItems.take(8).toList(growable: false);
+    final recoveryTxnId = (_payuRecoveryTxnId ?? '').trim();
+    final isDismissedTxn =
+        recoveryTxnId.isNotEmpty && recoveryTxnId == _dismissedRecoveryTxnId;
+    final showPayuRecoveryBanner =
+        recoveryTxnId.isNotEmpty &&
+        !isDismissedTxn &&
+        !_payuRecoveryOrderPlaced;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (showPayuRecoveryBanner) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+            child: _buildPayuRecoveryBanner(),
+          ),
+        ],
         // Categories section
         Container(
           key: _categoriesSectionKey,
@@ -1775,6 +1910,96 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         const SizedBox(height: 100),
       ],
+    );
+  }
+
+  Widget _buildPayuRecoveryBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F5FF),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE1D8FF)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.10),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.receipt_long_rounded,
+              color: AppColors.primary,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Payment already received',
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Finalize this recovered payment to create your order.',
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 12,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton(
+                    onPressed: _payuRecoveryLoading
+                        ? null
+                        : _finalizeRecoveredPayuOrder,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      'Finalize order',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_payuRecoveryLoading) ...[
+            const SizedBox(width: 8),
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

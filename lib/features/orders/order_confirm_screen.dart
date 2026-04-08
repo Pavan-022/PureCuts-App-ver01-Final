@@ -22,6 +22,7 @@ class OrderConfirmScreen extends StatefulWidget {
   final String? paymentMethod;
   final Map<String, dynamic>? billDetails;
   final String? alreadyPlacedOrderRef;
+  final bool persistOrder;
 
   const OrderConfirmScreen({
     super.key,
@@ -32,6 +33,7 @@ class OrderConfirmScreen extends StatefulWidget {
     this.paymentMethod,
     this.billDetails,
     this.alreadyPlacedOrderRef,
+    this.persistOrder = true,
   });
 
   @override
@@ -95,9 +97,9 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
 
     orders.addOrderedItems(orderedItems);
 
-    final shouldPersistOrder = (widget.alreadyPlacedOrderRef ?? '')
-        .trim()
-        .isEmpty;
+    final shouldPersistOrder =
+        widget.persistOrder &&
+        (widget.alreadyPlacedOrderRef ?? '').trim().isEmpty;
 
     if (shouldPersistOrder &&
         uid.trim().isNotEmpty &&

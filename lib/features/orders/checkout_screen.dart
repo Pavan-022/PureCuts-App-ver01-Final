@@ -19,7 +19,12 @@ import 'package:purecuts/features/orders/payu_payment_screen.dart';
 import 'package:purecuts/features/products/product_detail_screen.dart';
 
 class CheckoutScreen extends StatefulWidget {
-  const CheckoutScreen({super.key});
+  const CheckoutScreen({
+    super.key,
+    this.autoFinalizeRecoveredPayuOrder = false,
+  });
+
+  final bool autoFinalizeRecoveredPayuOrder;
 
   @override
   State<CheckoutScreen> createState() => _CheckoutScreenState();
@@ -117,6 +122,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _isPlacingOrder = false;
   String? _recoveredSuccessfulPayuTxnId;
   bool _checkingRecoveredPayment = false;
+  bool _autoFinalizeAttempted = false;
 
   void _applyAddressEntry(Map<String, dynamic> entry) {
     final address = (entry['deliveryAddress'] is Map)
@@ -313,6 +319,75 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     });
   }
 
+  Future<String?> _waitForBackendPayuOrderRef(
+    String txnid, {
+    Duration timeout = const Duration(seconds: 45),
+  }) async {
+    final cleanTxnId = txnid.trim();
+    if (cleanTxnId.isEmpty) return null;
+
+    final deadline = DateTime.now().add(timeout);
+    final paymentRef = FirebaseFirestore.instance
+        .collection('payments')
+        .doc(cleanTxnId);
+    final ordersRef = FirebaseFirestore.instance.collection('orders');
+
+    while (DateTime.now().isBefore(deadline)) {
+      final snap = await paymentRef.get();
+      if (!snap.exists) {
+        await Future.delayed(const Duration(milliseconds: 750));
+        continue;
+      }
+
+      final data = snap.data() ?? const <String, dynamic>{};
+      final status = (data['status'] ?? '').toString().toLowerCase();
+      final orderPlacementStatus = (data['orderPlacementStatus'] ?? '')
+          .toString()
+          .toLowerCase();
+      final orderRef =
+          (data['orderRef'] ?? data['orderId'] ?? data['orderNumber'] ?? '')
+              .toString()
+              .trim();
+
+      if (orderRef.isNotEmpty &&
+          (orderPlacementStatus == 'placed' || status == 'success')) {
+        return orderRef;
+      }
+
+      try {
+        final orderSnap = await ordersRef
+            .where('paymentTxnId', isEqualTo: cleanTxnId)
+            .limit(1)
+            .get();
+        if (orderSnap.docs.isNotEmpty) {
+          final orderData = orderSnap.docs.first.data();
+          final resolvedOrderRef =
+              (orderData['orderRef'] ??
+                      orderData['orderId'] ??
+                      orderData['orderNumber'] ??
+                      orderSnap.docs.first.id)
+                  .toString()
+                  .trim();
+          if (resolvedOrderRef.isNotEmpty) {
+            return resolvedOrderRef;
+          }
+        }
+      } catch (_) {
+        // Ignore query failures and keep polling the payment record.
+      }
+
+      if (status == 'failure' ||
+          status == 'cancelled' ||
+          orderPlacementStatus == 'failed-no-draft') {
+        return null;
+      }
+
+      await Future.delayed(const Duration(milliseconds: 750));
+    }
+
+    return null;
+  }
+
   Future<void> _recoverPendingOnlinePayment() async {
     final auth = context.read<AuthProvider>();
     final uid = auth.user?.uid ?? FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -346,13 +421,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         setState(() {
           _recoveredSuccessfulPayuTxnId = pendingTxnId;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Payment already received. Tap Place Order to finalize your order.',
-            ),
-          ),
-        );
+        _maybeAutoFinalizeRecoveredOrder();
         return;
       }
 
@@ -368,6 +437,29 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         });
       }
     }
+  }
+
+  void _maybeAutoFinalizeRecoveredOrder() {
+    if (!widget.autoFinalizeRecoveredPayuOrder) return;
+    if (_autoFinalizeAttempted) return;
+    if ((_recoveredSuccessfulPayuTxnId ?? '').trim().isEmpty) return;
+    _autoFinalizeAttempted = true;
+
+    if (_selectedPaymentMethod != _payuPaymentMethod) {
+      setState(() {
+        _selectedPaymentMethod = _payuPaymentMethod;
+      });
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_isPlacingOrder) return;
+      _placeOrder(
+        cart: context.read<CartModel>(),
+        home: context.read<HomeProvider>(),
+        skipConfirmation: true,
+      );
+    });
   }
 
   List<Map<String, dynamic>> _recommendations({
@@ -726,6 +818,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Future<void> _placeOrder({
     required CartModel cart,
     required HomeProvider home,
+    bool skipConfirmation = false,
   }) async {
     if (_isPlacingOrder) return;
 
@@ -749,201 +842,215 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final deliveryCharge = _calculateDeliveryCharge(itemTotal);
       final grandTotal = _grandTotal(cart);
 
+      bool confirmed = true;
       // ── Confirmation dialog ──────────────────────────────────────────────────
-      if (!mounted) return;
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadius.xl),
-          ),
-          title: const Text(
-            'Confirm order',
-            style: TextStyle(
-              color: AppColors.textPrimary,
-              fontWeight: FontWeight.w800,
-              fontSize: 18,
-            ),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Please review your order before placing it.',
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              // Summary box
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(AppSpacing.md),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8F2FF),
-                  borderRadius: BorderRadius.circular(AppRadius.lg),
-                  border: Border.all(color: const Color(0xFFE3D4F4)),
+      if (!skipConfirmation) {
+        if (!mounted) return;
+        confirmed =
+            await showDialog<bool>(
+              context: context,
+              builder: (dialogContext) => AlertDialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.xl),
                 ),
-                child: Column(
+                title: const Text(
+                  'Confirm order',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Item count
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Items',
-                          style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 13,
-                          ),
-                        ),
-                        Text(
-                          '${cart.items.length} item${cart.items.length == 1 ? '' : 's'}',
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
+                    const Text(
+                      'Please review your order before placing it.',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 13,
+                      ),
                     ),
-                    const SizedBox(height: 6),
-                    // Delivery charge row
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Delivery',
-                          style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 13,
+                    const SizedBox(height: AppSpacing.md),
+                    // Summary box
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8F2FF),
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        border: Border.all(color: const Color(0xFFE3D4F4)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Item count
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Items',
+                                style: TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              Text(
+                                '${cart.items.length} item${cart.items.length == 1 ? '' : 's'}',
+                                style: const TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                        Text(
-                          deliveryCharge == 0 ? 'FREE' : '₹$deliveryCharge',
-                          style: TextStyle(
-                            color: deliveryCharge == 0
-                                ? Colors.green
-                                : AppColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
+                          const SizedBox(height: 6),
+                          // Delivery charge row
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Delivery',
+                                style: TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              Text(
+                                deliveryCharge == 0
+                                    ? 'FREE'
+                                    : '₹$deliveryCharge',
+                                style: TextStyle(
+                                  color: deliveryCharge == 0
+                                      ? Colors.green
+                                      : AppColors.textPrimary,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ],
-                    ),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
-                      child: Divider(height: 1),
-                    ),
-                    // Grand total
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Total',
-                          style: TextStyle(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14,
-                          ),
-                        ),
-                        Text(
-                          '₹$grandTotal',
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    // Payment method
-                    Row(
-                      children: [
-                        const Expanded(
-                          flex: 3,
-                          child: Text(
-                            'Payment',
-                            style: TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 13,
+                          const Padding(
+                            padding: EdgeInsets.symmetric(
+                              vertical: AppSpacing.sm,
                             ),
+                            child: Divider(height: 1),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          flex: 5,
-                          child: Text(
-                            _selectedPaymentMethod,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.right,
-                            style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13,
-                            ),
+                          // Grand total
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Total',
+                                style: TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              Text(
+                                '₹$grandTotal',
+                                style: const TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: AppSpacing.sm),
+                          // Payment method
+                          Row(
+                            children: [
+                              const Expanded(
+                                flex: 3,
+                                child: Text(
+                                  'Payment',
+                                  style: TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 5,
+                                child: Text(
+                                  _selectedPaymentMethod,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(
+                                    color: AppColors.textPrimary,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
+                actionsPadding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md,
+                  0,
+                  AppSpacing.md,
+                  AppSpacing.md,
+                ),
+                actions: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            side: const BorderSide(color: AppColors.primary),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(AppRadius.xl),
+                            ),
+                          ),
+                          onPressed: () =>
+                              Navigator.of(dialogContext).pop(false),
+                          child: const Text(
+                            'Go back',
+                            style: TextStyle(
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(AppRadius.xl),
+                            ),
+                          ),
+                          onPressed: () =>
+                              Navigator.of(dialogContext).pop(true),
+                          child: const Text(
+                            'Confirm',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            ],
-          ),
-          actionsPadding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            0,
-            AppSpacing.md,
-            AppSpacing.md,
-          ),
-          actions: [
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      side: const BorderSide(color: AppColors.primary),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppRadius.xl),
-                      ),
-                    ),
-                    onPressed: () => Navigator.of(dialogContext).pop(false),
-                    child: const Text(
-                      'Go back',
-                      style: TextStyle(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppRadius.xl),
-                      ),
-                    ),
-                    onPressed: () => Navigator.of(dialogContext).pop(true),
-                    child: const Text(
-                      'Confirm',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
+            ) ??
+            false;
+      }
 
       // User cancelled — do nothing
       if (confirmed != true || !mounted) return;
@@ -1000,8 +1107,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           .toList(growable: false);
 
       final deliveryChargeValue = _calculateDeliveryCharge(itemTotal);
-      var successfulPaymentTxnId =
-          (_recoveredSuccessfulPayuTxnId ?? '').trim();
+      var successfulPaymentTxnId = (_recoveredSuccessfulPayuTxnId ?? '').trim();
+      String? orderRef;
 
       if (_selectedPaymentMethod == _payuPaymentMethod) {
         if ((_recoveredSuccessfulPayuTxnId ?? '').trim().isEmpty) {
@@ -1009,8 +1116,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           final draftCustomerName =
               (authUser?.ownerName ?? authUser?.name ?? '').trim();
           final draftCustomerEmail = (authUser?.email ?? '').trim();
-          final draftCustomerPhone =
-              (contactDetails['phone'] ?? '').toString().trim();
+          final draftCustomerPhone = (contactDetails['phone'] ?? '')
+              .toString()
+              .trim();
 
           final paymentResult = await Navigator.push<Map<String, dynamic>>(
             context,
@@ -1054,17 +1162,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             return;
           }
 
-          successfulPaymentTxnId =
-              (paymentResult?['txnid'] ?? '').toString().trim();
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Using recovered successful payment to place order.',
-              ),
-              duration: Duration(seconds: 2),
-            ),
-          );
+          final resolvedOrderRef = (paymentResult?['orderRef'] ?? '')
+              .toString()
+              .trim();
+          if (resolvedOrderRef.isNotEmpty) {
+            orderRef = resolvedOrderRef;
+          }
+
+          successfulPaymentTxnId = (paymentResult?['txnid'] ?? '')
+              .toString()
+              .trim();
         }
       }
 
@@ -1079,24 +1186,38 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         return;
       }
 
-      String? orderRef;
       try {
-        orderRef = await _firestoreService.registerUserPurchase(
-          uid: uid,
-          items: orderedItems,
-          total: grandTotal,
-          deliveryAddress: deliveryAddress,
-          contactDetails: contactDetails,
-          paymentMethod: _selectedPaymentMethod,
-          paymentTxnId: successfulPaymentTxnId,
-          billDetails: {
-            'itemTotal': itemTotal,
-            'deliveryCharge': deliveryChargeValue,
-            'handlingCharge': 0,
-            'grandTotal': grandTotal,
-          },
-          userProfile: auth.user?.toMap(),
-        );
+        if (_selectedPaymentMethod == _payuPaymentMethod) {
+          if (successfulPaymentTxnId.isEmpty) {
+            throw StateError('Missing payment transaction id.');
+          }
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Payment received. Finalizing your order...'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+
+          orderRef = await _waitForBackendPayuOrderRef(successfulPaymentTxnId);
+        } else {
+          orderRef = await _firestoreService.registerUserPurchase(
+            uid: uid,
+            items: orderedItems,
+            total: grandTotal,
+            deliveryAddress: deliveryAddress,
+            contactDetails: contactDetails,
+            paymentMethod: _selectedPaymentMethod,
+            paymentTxnId: successfulPaymentTxnId,
+            billDetails: {
+              'itemTotal': itemTotal,
+              'deliveryCharge': deliveryChargeValue,
+              'handlingCharge': 0,
+              'grandTotal': grandTotal,
+            },
+            userProfile: auth.user?.toMap(),
+          );
+        }
       } catch (error) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1114,9 +1235,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         return;
       }
 
+      if (_selectedPaymentMethod == _payuPaymentMethod) {
+        await _clearPendingOnlinePaymentMarkers();
+      }
+
       // Clear cart only after confirmed order persistence.
       cart.clear();
-      await _clearPendingOnlinePaymentMarkers();
 
       if (!mounted) return;
       Navigator.push(
@@ -1129,6 +1253,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             contactDetails: contactDetails,
             paymentMethod: _selectedPaymentMethod,
             alreadyPlacedOrderRef: orderRef,
+            persistOrder: _selectedPaymentMethod != _payuPaymentMethod,
             billDetails: {
               'itemTotal': itemTotal,
               'deliveryCharge': deliveryChargeValue,
@@ -2006,9 +2131,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           borderRadius: BorderRadius.circular(AppRadius.md),
                           border: Border.all(color: const Color(0xFFBBF7D0)),
                         ),
-                        child: const Text(
-                          'Payment already completed. Tap Place Order to finish.',
-                          style: TextStyle(
+                        child: Text(
+                          widget.autoFinalizeRecoveredPayuOrder
+                              ? 'Recovered payment detected. Finalizing your order now...'
+                              : 'Payment already completed. Tap Place Order to finish.',
+                          style: const TextStyle(
                             color: Color(0xFF166534),
                             fontSize: 12,
                             fontWeight: FontWeight.w600,

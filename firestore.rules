@@ -171,7 +171,12 @@ service cloud.firestore {
 
     // Orders
     match /orders/{orderId} {
-      allow create: if signedIn();
+      allow create: if signedIn() &&
+        isOwner(request.resource.data.uid) &&
+        (request.resource.data.userId == request.auth.uid ||
+         request.resource.data.userId == request.resource.data.uid) &&
+        (request.resource.data.customerId == request.auth.uid ||
+         request.resource.data.customerId == request.resource.data.uid);
       allow read: if signedIn() &&
         (isAdmin() ||
          request.auth.uid == resource.data.uid ||

@@ -32,15 +32,36 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
 
   String? _txnId;
   bool _loading = false;
+  bool _finalizingOrder = false;
   String? _errorText;
   bool _resultSent = false;
 
-  void _completeFlow({required String status, String reason = ''}) {
+  void _completeFlow({
+    required String status,
+    String reason = '',
+    String orderRef = '',
+  }) {
     if (_resultSent || !mounted) return;
     _resultSent = true;
-    Navigator.of(
-      context,
-    ).pop({'status': status, 'txnid': _txnId ?? '', 'reason': reason});
+    Navigator.of(context).pop({
+      'status': status,
+      'txnid': _txnId ?? '',
+      'reason': reason,
+      'orderRef': orderRef,
+    });
+  }
+
+  bool _isOrderPlaced(Map<String, dynamic> data) {
+    final status = (data['status'] ?? '').toString().toLowerCase();
+    final orderPlacementStatus = (data['orderPlacementStatus'] ?? '')
+        .toString()
+        .toLowerCase();
+    final orderRef =
+        (data['orderRef'] ?? data['orderId'] ?? data['orderNumber'] ?? '')
+            .toString()
+            .trim();
+    return orderRef.isNotEmpty &&
+        (orderPlacementStatus == 'placed' || status == 'success');
   }
 
   @override
@@ -60,7 +81,9 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
         final syncStatus = (event['status'] ?? '').toString().toLowerCase();
 
         if (syncStatus == 'success') {
-          _completeFlow(status: 'success');
+          setState(() {
+            _finalizingOrder = true;
+          });
           return;
         }
 
@@ -384,20 +407,42 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
                         snapshot.data!.data() ?? const <String, dynamic>{};
                     final status = (data['status'] ?? 'initiated').toString();
                     final verified = data['hashVerified'] == true;
+                    final orderReady = _isOrderPlaced(data);
 
-                    if (status == 'success' && verified) {
+                    if (status == 'success' && verified && orderReady) {
                       WidgetsBinding.instance.addPostFrameCallback((_) {
                         if (!mounted) return;
                         setState(() {
                           _errorText = null;
+                          _finalizingOrder = false;
                         });
-                        _completeFlow(status: 'success');
+                        _completeFlow(
+                          status: 'success',
+                          orderRef:
+                              (data['orderRef'] ??
+                                      data['orderId'] ??
+                                      data['orderNumber'] ??
+                                      '')
+                                  .toString()
+                                  .trim(),
+                        );
+                      });
+                    } else if (status == 'success' && verified) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) return;
+                        if (!_finalizingOrder) {
+                          setState(() {
+                            _errorText = null;
+                            _finalizingOrder = true;
+                          });
+                        }
                       });
                     } else if (status == 'failure' || status == 'cancelled') {
                       WidgetsBinding.instance.addPostFrameCallback((_) {
                         if (!mounted) return;
                         setState(() {
                           _errorText = null;
+                          _finalizingOrder = false;
                         });
                         _completeFlow(status: status, reason: status);
                       });
@@ -407,6 +452,11 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
                       status: status,
                       verified: verified,
                     );
+
+                    final subtitle =
+                        status == 'success' && verified && !orderReady
+                        ? 'Payment received. Finalizing your order on the server...'
+                        : visuals.subtitle;
 
                     return Container(
                       margin: const EdgeInsets.only(top: 2),
@@ -449,7 +499,7 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      visuals.subtitle,
+                                      subtitle,
                                       style: const TextStyle(
                                         color: Color(0xFF6B7280),
                                         fontSize: 12,
@@ -474,6 +524,32 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
                             label: 'Hash verification',
                             value: verified ? 'Verified' : 'Pending',
                           ),
+                          if (_finalizingOrder ||
+                              (status == 'success' && verified && !orderReady))
+                            const Padding(
+                              padding: EdgeInsets.only(top: 10),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                  SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      'Finalizing order... please keep this screen open for a moment.',
+                                      style: TextStyle(
+                                        color: Color(0xFF4B5563),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           if (status == 'failure' || status == 'cancelled') ...[
                             const SizedBox(height: 10),
                             Align(
