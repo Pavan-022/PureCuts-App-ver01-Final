@@ -29,7 +29,9 @@ class _ParentCategoryScreenState extends State<ParentCategoryScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      context.read<HomeProvider>().loadData();
+      final home = context.read<HomeProvider>();
+      home.loadData();
+      home.ensureVisibilityCatalogLoaded();
     });
     _resolvePurchasedProducts();
   }
@@ -150,6 +152,13 @@ class _ParentCategoryScreenState extends State<ParentCategoryScreen> {
       if (!mounted) return;
       setState(() => _purchasedProductIds = <String>{});
     }
+  }
+
+  Future<void> _refreshCategoryProducts() async {
+    final home = context.read<HomeProvider>();
+    await home.loadData(forceRefresh: true);
+    await home.ensureVisibilityCatalogLoaded();
+    await _resolvePurchasedProducts();
   }
 
   Future<void> _onSelectSubCategory(
@@ -320,50 +329,58 @@ class _ParentCategoryScreenState extends State<ParentCategoryScreen> {
                   ),
                 const SizedBox(height: 6),
                 Expanded(
-                  child: products.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No products found for this selection',
-                            style: TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        )
-                      : GridView.builder(
-                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 110),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                mainAxisSpacing: 8,
-                                crossAxisSpacing: 8,
-                                childAspectRatio: 0.62,
+                  child: RefreshIndicator(
+                    onRefresh: _refreshCategoryProducts,
+                    child: products.isEmpty
+                        ? ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 110),
+                            children: const [
+                              SizedBox(height: 220),
+                              Center(
+                                child: Text(
+                                  'No products found for this selection',
+                                  style: TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
                               ),
-                          itemCount: products.length,
-                          itemBuilder: (_, i) {
-                            final product = products[i];
-                            final productId = _baseProductId(
-                              (product['id'] ?? '').toString(),
-                            );
-                            return ProductCard(
-                              product: product,
-                              showHeartIcon: false,
-                              showBoughtEarlierBadge: _purchasedProductIds
-                                  .contains(productId),
-                            );
-                          },
-                        ),
+                            ],
+                          )
+                        : GridView.builder(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 110),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 2,
+                                  mainAxisSpacing: 8,
+                                  crossAxisSpacing: 8,
+                                  childAspectRatio: 0.62,
+                                ),
+                            itemCount: products.length,
+                            itemBuilder: (_, i) {
+                              final product = products[i];
+                              final productId = _baseProductId(
+                                (product['id'] ?? '').toString(),
+                              );
+                              return ProductCard(
+                                product: product,
+                                showHeartIcon: false,
+                                showBoughtEarlierBadge: _purchasedProductIds
+                                    .contains(productId),
+                              );
+                            },
+                          ),
+                  ),
                 ),
               ],
             ),
       bottomNavigationBar: Consumer<CartModel>(
         builder: (context, cart, _) {
           if (cart.itemCount == 0) return const SizedBox.shrink();
-          return const Padding(
-            padding: EdgeInsets.only(bottom: 12),
-            child: StickyCartBar(),
-          );
+          return const StickyCartBar();
         },
       ),
     );

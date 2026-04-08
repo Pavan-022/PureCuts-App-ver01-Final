@@ -178,77 +178,82 @@ class _StickyCartBarState extends State<StickyCartBar>
               ),
             );
           },
-          child: SizedBox(
-            height: 64,
-            child: Center(
-              child: GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const CheckoutScreen()),
-                ),
-                child: Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.fromLTRB(11, 7, 11, 7),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                      colors: [Color(0xFF5C138B), Color(0xFF5C138B)],
-                    ),
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF5C138B).withValues(alpha: 0.28),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
+          child: SafeArea(
+            top: false,
+            minimum: const EdgeInsets.only(bottom: 8),
+            child: SizedBox(
+              height: 64,
+              child: Center(
+                child: GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const CheckoutScreen()),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _previewCluster(previews),
-                      const SizedBox(width: 9),
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'View cart',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 14,
-                              height: 1,
-                            ),
-                          ),
-                          const SizedBox(height: 1),
-                          Text(
-                            itemLabel,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.9),
-                              fontWeight: FontWeight.w500,
-                              fontSize: 11,
-                              height: 1.1,
-                            ),
-                          ),
-                        ],
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(11, 7, 11, 7),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [Color(0xFF5C138B), Color(0xFF5C138B)],
                       ),
-                      const SizedBox(width: 7),
-                      Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(
+                            0xFF5C138B,
+                          ).withValues(alpha: 0.28),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
                         ),
-                        child: const Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          color: Colors.white,
-                          size: 13,
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _previewCluster(previews),
+                        const SizedBox(width: 9),
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'View cart',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                                height: 1,
+                              ),
+                            ),
+                            const SizedBox(height: 1),
+                            Text(
+                              itemLabel,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.9),
+                                fontWeight: FontWeight.w500,
+                                fontSize: 11,
+                                height: 1.1,
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 7),
+                        Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            color: Colors.white,
+                            size: 13,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

@@ -1,4 +1,6 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:async';
+
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
@@ -50,7 +52,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
   bool _isPageLoading = false;
   bool _isInitialLoading = false;
   bool _isSearchHydrating = false;
+  bool _isEmergencyHydrating = false;
   String? _pagingError;
+  String? _lastEmergencyHydrationKey;
 
   String _searchQuery = '';
 
@@ -63,22 +67,15 @@ class _ProductListScreenState extends State<ProductListScreen> {
   bool get _needsFullScopeForSearch {
     final hasQuery = _searchQuery.trim().isNotEmpty;
     final hasTagFilter = (_selectedTag ?? '').trim().isNotEmpty;
-    return hasQuery || hasTagFilter;
+    final hasCategoryFilter = _selectedCategory.trim().toLowerCase() != 'all';
+    return hasQuery || hasTagFilter || hasCategoryFilter;
   }
 
   String? _serverCategoryFilter({required bool forSearchHydration}) {
-    final category = _selectedCategory.trim();
-    if (category.isEmpty || category.toLowerCase() == 'all') return null;
-
-    // Keep full-catalog hydration path for search/tag discovery to avoid
-    // restricting searchable results.
-    if (forSearchHydration) return null;
-
-    final hasQuery = _searchQuery.trim().isNotEmpty;
-    final hasTagFilter = (_selectedTag ?? '').trim().isNotEmpty;
-    if (hasQuery || hasTagFilter) return null;
-
-    return category;
+    // Do not apply server-side category equality filters because many products
+    // are stored under alternate category fields (selectedCategories,
+    // categoryPathNames, categoryName). We filter locally with normalized logic.
+    return null;
   }
 
   Future<void> _hydrateScopeForSearchIfNeeded() async {
@@ -145,6 +142,143 @@ class _ProductListScreenState extends State<ProductListScreen> {
     } finally {
       if (mounted) {
         setState(() => _isSearchHydrating = false);
+        if (_searchQuery.trim().isNotEmpty) {
+          unawaited(_hydrateFullCatalogEmergency());
+        }
+      }
+    }
+  }
+
+  Future<void> _hydrateFullCatalogEmergency() async {
+    if (_isInitialLoading || _isPageLoading || _isSearchHydrating) return;
+    if (_isEmergencyHydrating) return;
+
+    final key = '${_scopeKey()}|${_searchQuery.trim().toLowerCase()}';
+    if (_lastEmergencyHydrationKey == key) return;
+
+    _lastEmergencyHydrationKey = key;
+    setState(() {
+      _isEmergencyHydrating = true;
+      _pagingError = null;
+    });
+
+    try {
+      DocumentSnapshot<Map<String, dynamic>>? cursor;
+      var hasMore = true;
+      String? lastCursorId;
+      final fetched = <Map<String, dynamic>>[];
+
+      while (hasMore) {
+        if (!mounted) break;
+
+        final page = await _firestoreService.getProductsPageFiltered(
+          limit: 180,
+          startAfterDoc: cursor,
+          category: null,
+          brand: (_selectedBrand ?? '').trim().isEmpty ? null : _selectedBrand,
+        );
+
+        fetched.addAll(page.products.map((p) => p.toProductMap()));
+
+        final nextCursor = page.lastDocument;
+        final nextCursorId = nextCursor?.id;
+        final cursorStalled =
+            nextCursorId != null && nextCursorId == lastCursorId;
+
+        cursor = nextCursor;
+        hasMore = page.hasMore && cursor != null && !cursorStalled;
+        lastCursorId = nextCursorId;
+
+        if (!hasMore) break;
+      }
+
+      final query = _searchQuery.trim();
+      if (query.isNotEmpty) {
+        final normalized = query.toLowerCase();
+        final titleCase = normalized
+            .split(RegExp(r'\s+'))
+            .where((s) => s.isNotEmpty)
+            .map((s) => '${s[0].toUpperCase()}${s.substring(1)}')
+            .join(' ');
+
+        final brandCandidates = <String>{
+          query,
+          normalized,
+          normalized.toUpperCase(),
+          titleCase,
+        }.where((v) => v.trim().isNotEmpty).toList(growable: false);
+
+        for (final candidate in brandCandidates) {
+          final page = await _firestoreService.getProductsPageFiltered(
+            limit: 180,
+            category: null,
+            brand: candidate,
+          );
+          fetched.addAll(page.products.map((p) => p.toProductMap()));
+        }
+
+        // Also fetch products for all known brand names that contain the
+        // query token (e.g. query: "navratna", brand: "Navratna Ayurvedic").
+        final home = context.read<HomeProvider>();
+        final matchingBrands = home.brands
+            .map((b) => (b['name'] ?? '').toString().trim())
+            .where((name) => name.isNotEmpty)
+            .where((name) => name.toLowerCase().contains(normalized))
+            .toSet()
+            .toList(growable: false);
+
+        for (final brandName in matchingBrands) {
+          DocumentSnapshot<Map<String, dynamic>>? brandCursor;
+          var brandHasMore = true;
+          String? brandLastCursorId;
+
+          while (brandHasMore) {
+            final page = await _firestoreService.getProductsPageFiltered(
+              limit: 180,
+              startAfterDoc: brandCursor,
+              category: null,
+              brand: brandName,
+            );
+
+            fetched.addAll(page.products.map((p) => p.toProductMap()));
+
+            final nextCursor = page.lastDocument;
+            final nextCursorId = nextCursor?.id;
+            final cursorStalled =
+                nextCursorId != null && nextCursorId == brandLastCursorId;
+
+            brandCursor = nextCursor;
+            brandHasMore =
+                page.hasMore && brandCursor != null && !cursorStalled;
+            brandLastCursorId = nextCursorId;
+          }
+        }
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        final merged = <String, Map<String, dynamic>>{};
+        for (final p in _pagedProducts) {
+          final id = (p['id'] ?? '').toString().trim();
+          if (id.isNotEmpty) merged[id] = p;
+        }
+        for (final p in fetched) {
+          final id = (p['id'] ?? '').toString().trim();
+          if (id.isNotEmpty) merged[id] = p;
+        }
+        _pagedProducts
+          ..clear()
+          ..addAll(merged.values);
+        _lastProductDoc = cursor ?? _lastProductDoc;
+        _hasMoreProducts = hasMore;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _pagingError = e.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isEmergencyHydrating = false);
       }
     }
   }
@@ -193,11 +327,20 @@ class _ProductListScreenState extends State<ProductListScreen> {
     final categoryCandidates = <String>{
       (product['category'] ?? '').toString(),
       (product['categoryName'] ?? '').toString(),
+      (product['parentCategory'] ?? '').toString(),
     };
 
     final rawSelectedCategories = product['selectedCategories'];
     if (rawSelectedCategories is List) {
       for (final item in rawSelectedCategories) {
+        final value = item.toString().trim();
+        if (value.isNotEmpty) categoryCandidates.add(value);
+      }
+    }
+
+    final rawCategoryPath = product['categoryPathNames'];
+    if (rawCategoryPath is List) {
+      for (final item in rawCategoryPath) {
         final value = item.toString().trim();
         if (value.isNotEmpty) categoryCandidates.add(value);
       }
@@ -502,6 +645,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
   }
 
   Future<void> _refreshProducts() async {
+    unawaited(context.read<HomeProvider>().loadData(forceRefresh: true));
     await _loadFirstPage();
   }
 
@@ -675,6 +819,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
       _isListening = false;
       _searchQuery = spoken;
     });
+    unawaited(_hydrateFullCatalogEmergency());
   }
 
   void _closeSpeechDialog() {
@@ -794,6 +939,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
         // Trigger a second-phase hydration AFTER initial loading flips false,
         // otherwise _hydrateScopeForSearchIfNeeded exits early.
         _hydrateScopeForSearchIfNeeded();
+        if (_searchQuery.trim().isNotEmpty) {
+          unawaited(_hydrateFullCatalogEmergency());
+        }
       }
     }
   }
@@ -859,7 +1007,14 @@ class _ProductListScreenState extends State<ProductListScreen> {
     _initSpeech();
     _scrollController.addListener(_onScroll);
 
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadFirstPage());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(context.read<HomeProvider>().loadData(forceRefresh: true));
+      _loadFirstPage();
+      if (_searchQuery.trim().isNotEmpty) {
+        unawaited(_hydrateFullCatalogEmergency());
+      }
+    });
   }
 
   @override
@@ -886,6 +1041,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
     final hasQuery = _searchQuery.trim().isNotEmpty;
     final shouldUseExpandedPool =
         hasQuery ||
+        _selectedCategory.trim().toLowerCase() != 'all' ||
         (_selectedTag ?? '').trim().isNotEmpty ||
         (_selectedBrand ?? '').trim().isNotEmpty;
 
@@ -899,6 +1055,17 @@ class _ProductListScreenState extends State<ProductListScreen> {
       scopedProducts,
       hasQuery: hasQuery,
     );
+
+    if (hasQuery &&
+        products.isEmpty &&
+        !_isInitialLoading &&
+        !_isSearchHydrating &&
+        !_isEmergencyHydrating) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_hydrateFullCatalogEmergency());
+      });
+    }
 
     _sortProductsForDisplay(products, hasQuery: hasQuery);
 
@@ -989,6 +1156,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
               onChanged: (v) {
                 setState(() => _searchQuery = v);
                 _hydrateScopeForSearchIfNeeded();
+                if (v.trim().isNotEmpty) {
+                  unawaited(_hydrateFullCatalogEmergency());
+                }
               },
               decoration: InputDecoration(
                 hintText: 'Search products...',
@@ -1166,7 +1336,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
             child: Row(
               children: [
                 Text(
-                  _isSearchHydrating
+                  (_isSearchHydrating || _isEmergencyHydrating)
                       ? '${displayedProducts.length} products • searching full catalog...'
                       : '${displayedProducts.length} products',
                   style: const TextStyle(

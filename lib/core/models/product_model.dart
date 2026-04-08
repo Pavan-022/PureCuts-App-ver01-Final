@@ -8,8 +8,12 @@ class ProductModel {
   final int stock;
   final bool manageStock;
   final String category;
+  final String categoryName;
+  final String parentCategory;
   final String subCategory;
   final String subSubCategory;
+  final List<String> selectedCategories;
+  final List<String> categoryPathNames;
   final int price;
   final int originalPrice;
   final double rating;
@@ -42,8 +46,12 @@ class ProductModel {
     this.stock = 0,
     this.manageStock = true,
     required this.category,
+    this.categoryName = '',
+    this.parentCategory = '',
     this.subCategory = '',
     this.subSubCategory = '',
+    this.selectedCategories = const [],
+    this.categoryPathNames = const [],
     required this.price,
     required this.originalPrice,
     required this.rating,
@@ -166,6 +174,8 @@ class ProductModel {
       ),
       manageStock: boolValue(map['manageStock'], fallback: true),
       category: stringValue(map['category'] ?? map['categoryName']),
+      categoryName: stringValue(map['categoryName'] ?? map['category']),
+      parentCategory: stringValue(map['parentCategory']),
       subCategory: stringValue(
         map['subCategory'] ?? map['subcategory'] ?? map['sub_category'],
       ),
@@ -174,6 +184,8 @@ class ProductModel {
             map['subsubCategory'] ??
             map['sub_sub_category'],
       ),
+      selectedCategories: toStringList(map['selectedCategories']),
+      categoryPathNames: toStringList(map['categoryPathNames']),
       price: (map['price'] as num?)?.toInt() ?? 0,
       originalPrice: (map['originalPrice'] as num?)?.toInt() ?? 0,
       rating: (map['rating'] as num?)?.toDouble() ?? 0.0,
@@ -214,10 +226,14 @@ class ProductModel {
       'stock': stock,
       'manageStock': manageStock,
       'category': category,
+      'categoryName': categoryName,
+      'parentCategory': parentCategory,
       'subCategory': subCategory,
       'subSubCategory': subSubCategory,
       'subsubCategory': subSubCategory,
       'sub_sub_category': subSubCategory,
+      'selectedCategories': selectedCategories,
+      'categoryPathNames': categoryPathNames,
       'price': price,
       'originalPrice': originalPrice,
       'rating': rating,
@@ -258,10 +274,14 @@ class ProductModel {
       'stock': stock,
       'manageStock': manageStock,
       'category': category,
+      'categoryName': categoryName,
+      'parentCategory': parentCategory,
       'subCategory': subCategory,
       'subSubCategory': subSubCategory,
       'subsubCategory': subSubCategory,
       'sub_sub_category': subSubCategory,
+      'selectedCategories': selectedCategories,
+      'categoryPathNames': categoryPathNames,
       'price': price,
       'originalPrice': originalPrice,
       'rating': rating,

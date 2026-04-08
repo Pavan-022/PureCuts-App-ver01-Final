@@ -39,6 +39,12 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
   void initState() {
     super.initState();
     _selectedSubCategory = widget.initialSubCategory;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final home = context.read<HomeProvider>();
+      home.loadData();
+      home.ensureVisibilityCatalogLoaded();
+    });
     _productsScrollController.addListener(_onProductsScroll);
   }
 

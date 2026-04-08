@@ -33,6 +33,7 @@ class HomeProvider extends ChangeNotifier {
   bool _taxonomyLoading = false;
   String? _error;
   bool _hasLoadedOnce = false;
+  bool _hasAttemptedFullCatalogLoad = false;
 
   static Future<SharedPreferences> _prefs() {
     return _prefsFuture ??= SharedPreferences.getInstance();
@@ -359,6 +360,53 @@ class HomeProvider extends ChangeNotifier {
         .trim();
   }
 
+  List<String> _stringList(dynamic raw) {
+    if (raw == null) return const <String>[];
+    if (raw is Iterable) {
+      return raw
+          .map((item) => item.toString().trim())
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false);
+    }
+    if (raw is String) {
+      return raw
+          .split(RegExp(r'[,|/&;>]+'))
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false);
+    }
+    final value = raw.toString().trim();
+    return value.isEmpty ? const <String>[] : <String>[value];
+  }
+
+  List<String> _categoryCandidates(Map<String, dynamic> product) {
+    final values = <String>{
+      _safeString(product['category']),
+      _safeString(product['categoryName']),
+      _safeString(product['parentCategory']),
+    };
+
+    values.addAll(_stringList(product['selectedCategories']));
+    values.addAll(_stringList(product['categoryPathNames']));
+
+    return values.where((value) => value.trim().isNotEmpty).toList();
+  }
+
+  bool _matchesCategory(Map<String, dynamic> product, String category) {
+    if (category.trim().isEmpty || category == 'All') return true;
+
+    final selected = _normalizedKey(category);
+    if (selected.isEmpty) return true;
+
+    for (final candidate in _categoryCandidates(product)) {
+      final key = _normalizedKey(candidate);
+      if (key.isEmpty) continue;
+      if (key == selected) return true;
+    }
+
+    return false;
+  }
+
   List<String> _productTags(Map<String, dynamic> product) {
     final tags = <String>{};
 
@@ -481,19 +529,41 @@ class HomeProvider extends ChangeNotifier {
   }
 
   String productSubCategory(Map<String, dynamic> product) {
-    return (product['subCategory'] ??
-            product['subcategory'] ??
-            product['sub_category'] ??
-            '')
-        .toString();
+    final direct =
+        (product['subCategory'] ??
+                product['subcategory'] ??
+                product['sub_category'] ??
+                '')
+            .toString()
+            .trim();
+    if (direct.isNotEmpty) return direct;
+
+    final path = _stringList(product['categoryPathNames']);
+    if (path.length >= 2) return path[1];
+
+    return '';
   }
 
   String productSubSubCategory(Map<String, dynamic> product) {
-    return (product['subSubCategory'] ??
-            product['subsubCategory'] ??
-            product['sub_sub_category'] ??
-            '')
-        .toString();
+    final direct =
+        (product['subSubCategory'] ??
+                product['subsubCategory'] ??
+                product['sub_sub_category'] ??
+                '')
+            .toString()
+            .trim();
+    if (direct.isNotEmpty) return direct;
+
+    final path = _stringList(product['categoryPathNames']);
+    if (path.length >= 3) return path[2];
+
+    return '';
+  }
+
+  Future<void> ensureVisibilityCatalogLoaded() async {
+    if (_loading) return;
+    if (_hasAttemptedFullCatalogLoad) return;
+    await loadData(forceRefresh: true);
   }
 
   /// Returns all products as the legacy Map format (for widgets that expect Map)
@@ -599,6 +669,12 @@ class HomeProvider extends ChangeNotifier {
         }
       }
 
+      _hasAttemptedFullCatalogLoad =
+          forceRefresh ||
+          !startupLite ||
+          !hasMore ||
+          fetched.length >= _homeMaxProductPool;
+
       final deferTaxonomy =
           FeatureFlags.enableDeferredHomeTaxonomy && startupLite;
       final bannersTimeout = Duration(
@@ -687,15 +763,9 @@ class HomeProvider extends ChangeNotifier {
   }) {
     var list = List<Map<String, dynamic>>.from(productMaps);
 
-    if (category != 'All') {
-      list = list
-          .where(
-            (p) =>
-                _normalizedKey(_safeString(p['category'])) ==
-                _normalizedKey(category),
-          )
-          .toList();
-    }
+    list = list
+        .where((product) => _matchesCategory(product, category))
+        .toList();
 
     final hasStructuredSubCategories = list.any(
       (product) => productSubCategory(product).trim().isNotEmpty,

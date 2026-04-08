@@ -61,7 +61,9 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      context.read<HomeProvider>().loadData();
+      final home = context.read<HomeProvider>();
+      home.loadData();
+      home.ensureVisibilityCatalogLoaded();
     });
     _resolvePurchasedProducts();
     _initSpeech();
