@@ -4,8 +4,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:purecuts/core/navigation/app_navigator.dart';
+import 'package:purecuts/features/orders/checkout_screen.dart';
 
 class PushNotificationService {
   PushNotificationService._();
@@ -27,6 +29,8 @@ class PushNotificationService {
 
   StreamSubscription<String>? _tokenRefreshSub;
   bool _initialized = false;
+
+  static const String _payuRecoveryPayloadPrefix = 'payu_recovery:';
 
   Future<void> initialize() async {
     if (_initialized) return;
@@ -109,6 +113,7 @@ class PushNotificationService {
 
     await _localNotifications.initialize(
       const InitializationSettings(android: androidSettings, iOS: iosSettings),
+      onDidReceiveNotificationResponse: _onNotificationTap,
     );
 
     final androidPlugin = _localNotifications
@@ -116,6 +121,28 @@ class PushNotificationService {
           AndroidFlutterLocalNotificationsPlugin
         >();
     await androidPlugin?.createNotificationChannel(_channel);
+  }
+
+  void _onNotificationTap(NotificationResponse response) {
+    final payload = (response.payload ?? '').trim();
+    if (!payload.startsWith(_payuRecoveryPayloadPrefix)) return;
+    unawaited(_openRecoveredPaymentCheckout());
+  }
+
+  Future<void> _openRecoveredPaymentCheckout({int attempts = 0}) async {
+    final navigator = appNavigatorKey.currentState;
+    if (navigator == null) {
+      if (attempts >= 6) return;
+      await Future.delayed(const Duration(milliseconds: 350));
+      return _openRecoveredPaymentCheckout(attempts: attempts + 1);
+    }
+
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) =>
+            const CheckoutScreen(autoFinalizeRecoveredPayuOrder: true),
+      ),
+    );
   }
 
   Future<void> _showForegroundNotification(RemoteMessage message) async {
@@ -143,6 +170,51 @@ class PushNotificationService {
           presentSound: true,
         ),
       ),
+    );
+  }
+
+  Future<void> showLocalNotification({
+    required String title,
+    required String body,
+    int? id,
+    String? payload,
+  }) async {
+    if (!_initialized) {
+      await initialize();
+    }
+
+    await _localNotifications.show(
+      id ?? (DateTime.now().millisecondsSinceEpoch ~/ 1000),
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'high_importance_channel',
+          'High Importance Notifications',
+          channelDescription: 'Used for important app notifications.',
+          importance: Importance.max,
+          priority: Priority.high,
+        ),
+        iOS: DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
+      ),
+      payload: payload,
+    );
+  }
+
+  Future<void> showPayuRecoveryNotification({String? txnId}) {
+    final resolvedTxnId = (txnId ?? '').trim();
+    final uniqueId = DateTime.now().millisecondsSinceEpoch.remainder(
+      2147483647,
+    );
+    return showLocalNotification(
+      id: uniqueId,
+      title: 'Payment completed',
+      body: 'Your payment is successful. Open checkout to complete your order.',
+      payload: '$_payuRecoveryPayloadPrefix$resolvedTxnId',
     );
   }
 
