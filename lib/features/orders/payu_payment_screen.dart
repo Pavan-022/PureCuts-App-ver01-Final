@@ -36,6 +36,50 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
   String? _errorText;
   bool _resultSent = false;
 
+  String _friendlyPaymentError(Object? error) {
+    final raw = (error ?? '').toString().trim();
+    if (raw.isEmpty) {
+      return 'Could not start payment right now. Please try again.';
+    }
+
+    final message = raw.toLowerCase();
+
+    final hasNetworkIssue =
+        message.contains('socketexception') ||
+        message.contains('failed host lookup') ||
+        message.contains('no address associated with hostname') ||
+        message.contains('network is unreachable') ||
+        message.contains('connection refused') ||
+        message.contains('connection reset');
+
+    if (hasNetworkIssue) {
+      return 'Unable to connect to payment service. Check your internet and try again.';
+    }
+
+    if (message.contains('timeout') || message.contains('timed out')) {
+      return 'Payment service is taking too long to respond. Please try again.';
+    }
+
+    final hasBackendIssue =
+        message.contains('generate-hash') ||
+        message.contains('verify-payment') ||
+        message.contains('sync-payment-status') ||
+        message.contains('cloudfunctions') ||
+        message.contains('unable to generate hash') ||
+        message.contains('unable to verify payment') ||
+        message.contains('unable to sync payment status');
+
+    if (hasBackendIssue) {
+      return 'Payment service is temporarily unavailable. Please try again in a moment.';
+    }
+
+    if (message.contains('cancel')) {
+      return 'Payment cancelled. You can retry.';
+    }
+
+    return 'Could not start payment right now. Please try again.';
+  }
+
   void _completeFlow({
     required String status,
     String reason = '',
@@ -94,12 +138,10 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
       }
 
       if ((event['type'] ?? '').toString() == 'error') {
-        _completeFlow(
-          status: 'failure',
-          reason: event['message']?.toString() ?? 'payment-error',
-        );
+        final rawError = event['message']?.toString() ?? '';
+        _completeFlow(status: 'failure', reason: 'payment-error');
         setState(() {
-          _errorText = event['message']?.toString() ?? 'Payment error';
+          _errorText = _friendlyPaymentError(rawError);
           _loading = false;
         });
       }
@@ -158,7 +200,7 @@ class _PayUPaymentScreenState extends State<PayUPaymentScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _errorText = error.toString();
+        _errorText = _friendlyPaymentError(error);
         _loading = false;
       });
     }

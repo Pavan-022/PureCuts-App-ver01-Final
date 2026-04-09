@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/features/auth/login/login_screen.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 
@@ -49,7 +50,11 @@ class _PendingApprovalScreenState extends State<PendingApprovalScreen> {
   Future<void> _logout() async {
     await context.read<AuthProvider>().signOut();
     if (!mounted) return;
-    Navigator.popUntil(context, (route) => route.isFirst);
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (_) => false,
+    );
   }
 
   @override

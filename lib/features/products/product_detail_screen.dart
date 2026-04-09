@@ -126,22 +126,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               reviews: product.reviews,
             );
           }
-          debugPrint(
-            '[ProductDetail] Fallback variants fetched: ${fallbackVariants.length} for productId=$productId',
-          );
-        } catch (e, st) {
-          debugPrint(
-            '[ProductDetail] Fallback variant fetch failed for productId=$productId: $e\n$st',
-          );
-        }
+        } catch (e) {}
       }
 
       if (!mounted || _productState == null) return;
       _productState!.replaceProduct(product);
-    } catch (e, st) {
-      debugPrint(
-        '[ProductDetail] Failed to load product detail for productId=$productId: $e\n$st',
-      );
+    } catch (e) {
     } finally {
       if (mounted) setState(() => _loadingDetail = false);
     }
@@ -168,8 +158,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       );
       if (!mounted) return;
       setState(() => _isWishlisted = liked);
-    } catch (e, st) {
-      debugPrint('[ProductDetail] Failed to load wishlist state: $e\n$st');
+    } catch (e) {
       // Keep UI resilient even if this request fails.
     }
   }
@@ -211,8 +200,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         isFavorited: nextValue,
         productData: _favoriteSnapshot(),
       );
-    } catch (e, st) {
-      debugPrint('[ProductDetail] Failed to toggle favourite: $e\n$st');
+    } catch (e) {
       if (!mounted) return;
       setState(() => _isWishlisted = !nextValue);
       messenger.showSnackBar(

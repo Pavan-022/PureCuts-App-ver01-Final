@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
@@ -62,8 +64,12 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final home = context.read<HomeProvider>();
-      home.loadData();
-      home.ensureVisibilityCatalogLoaded();
+      unawaited(
+        Future<void>(() async {
+          await home.loadData();
+          await home.ensureVisibilityCatalogLoaded();
+        }),
+      );
     });
     _resolvePurchasedProducts();
     _initSpeech();

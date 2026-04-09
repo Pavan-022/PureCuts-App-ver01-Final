@@ -149,7 +149,6 @@ class OrderProvider extends ChangeNotifier {
       _ordersLoadedUid = cleanUid;
       _ordersError = null;
     } catch (e) {
-      debugPrint('[OrderProvider] fetchUserOrders error: $e');
       _ordersError = 'Failed to load orders. Please try again.';
     } finally {
       _ordersLoading = false;
@@ -202,7 +201,6 @@ class OrderProvider extends ChangeNotifier {
       _ordersHasMore = page.hasMore;
       _ordersLegacyMode = page.usedLegacyFallback;
     } catch (e) {
-      debugPrint('[OrderProvider] fetchMoreUserOrders error: $e');
       _ordersHasMore = false;
     } finally {
       _ordersPagingLoading = false;

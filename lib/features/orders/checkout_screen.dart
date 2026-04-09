@@ -120,9 +120,46 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   int _selectedAddressIndex = 0;
   bool _initialAddressPromptShown = false;
   bool _isPlacingOrder = false;
+  String? _recoveredPayuTxnId;
+  String? _recoveredPayuStatus;
   String? _recoveredSuccessfulPayuTxnId;
   bool _checkingRecoveredPayment = false;
   bool _autoFinalizeAttempted = false;
+
+  String _friendlyPaymentNotCompletedMessage(String reasonRaw) {
+    final reason = reasonRaw.trim().toLowerCase();
+    if (reason.isEmpty) {
+      return 'Payment not completed. Please try again.';
+    }
+
+    if (reason.contains('cancel')) {
+      return 'Payment was cancelled. You can try again.';
+    }
+
+    final hasNetworkIssue =
+        reason.contains('socketexception') ||
+        reason.contains('failed host lookup') ||
+        reason.contains('no address associated with hostname') ||
+        reason.contains('network is unreachable') ||
+        reason.contains('connection refused') ||
+        reason.contains('connection reset') ||
+        reason.contains('timeout') ||
+        reason.contains('timed out');
+
+    if (hasNetworkIssue) {
+      return 'Unable to connect to payment service. Please check your internet and try again.';
+    }
+
+    if (reason == 'payment-error' ||
+        reason.contains('sync-failure') ||
+        reason.contains('sync-cancelled') ||
+        reason.contains('failure') ||
+        reason.contains('error')) {
+      return 'Payment could not be completed right now. Please try again.';
+    }
+
+    return 'Payment not completed. Please try again.';
+  }
 
   void _applyAddressEntry(Map<String, dynamic> entry) {
     final address = (entry['deliveryAddress'] is Map)
@@ -315,6 +352,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     await PayUPaymentService.clearPendingTransaction();
     if (!mounted) return;
     setState(() {
+      _recoveredPayuTxnId = null;
+      _recoveredPayuStatus = null;
       _recoveredSuccessfulPayuTxnId = null;
     });
   }
@@ -403,6 +442,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final pendingTxnId = await PayUPaymentService.getPendingTxnIdForUser(uid);
       if ((pendingTxnId ?? '').trim().isEmpty) return;
 
+      if (mounted) {
+        setState(() {
+          _recoveredPayuTxnId = pendingTxnId;
+          _recoveredPayuStatus = 'recovering';
+        });
+      }
+
       final paymentDoc = await FirebaseFirestore.instance
           .collection('payments')
           .doc(pendingTxnId)
@@ -416,9 +462,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final status = (data['status'] ?? '').toString().toLowerCase();
       final verified = data['hashVerified'] == true;
 
+      if (mounted) {
+        setState(() {
+          _recoveredPayuStatus = status.isEmpty ? 'recovering' : status;
+        });
+      }
+
       if (status == 'success' && verified) {
         if (!mounted) return;
         setState(() {
+          _recoveredPayuTxnId = pendingTxnId;
+          _recoveredPayuStatus = 'success';
           _recoveredSuccessfulPayuTxnId = pendingTxnId;
         });
         _maybeAutoFinalizeRecoveredOrder();
@@ -1153,9 +1207,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               .toLowerCase();
           if (paymentStatus != 'success') {
             final reason = (paymentResult?['reason'] ?? '').toString();
-            final message = reason.isNotEmpty
-                ? 'Payment not completed: $reason'
-                : 'Payment not completed. Please try again.';
+            final message = _friendlyPaymentNotCompletedMessage(reason);
             ScaffoldMessenger.of(
               context,
             ).showSnackBar(SnackBar(content: Text(message)));
@@ -1221,7 +1273,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       } catch (error) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Order could not be saved: $error')),
+          const SnackBar(
+            content: Text(
+              'Order could not be saved right now. Please try again.',
+            ),
+          ),
         );
         return;
       }
@@ -1265,9 +1321,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Could not place order: $error')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not place order right now. Please try again.'),
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -2121,22 +2179,39 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         padding: EdgeInsets.only(bottom: AppSpacing.sm),
                         child: LinearProgressIndicator(minHeight: 2),
                       ),
-                    if ((_recoveredSuccessfulPayuTxnId ?? '').trim().isNotEmpty)
+                    if ((_recoveredPayuTxnId ?? '').trim().isNotEmpty)
                       Container(
                         width: double.infinity,
                         margin: const EdgeInsets.only(bottom: AppSpacing.md),
                         padding: const EdgeInsets.all(AppSpacing.sm),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFEFFDF5),
+                          color:
+                              ((_recoveredPayuStatus ?? '').toLowerCase() ==
+                                  'success')
+                              ? const Color(0xFFEFFDF5)
+                              : const Color(0xFFFFFBEB),
                           borderRadius: BorderRadius.circular(AppRadius.md),
-                          border: Border.all(color: const Color(0xFFBBF7D0)),
+                          border: Border.all(
+                            color:
+                                ((_recoveredPayuStatus ?? '').toLowerCase() ==
+                                    'success')
+                                ? const Color(0xFFBBF7D0)
+                                : const Color(0xFFFDE68A),
+                          ),
                         ),
                         child: Text(
-                          widget.autoFinalizeRecoveredPayuOrder
-                              ? 'Recovered payment detected. Finalizing your order now...'
-                              : 'Payment already completed. Tap Place Order to finish.',
-                          style: const TextStyle(
-                            color: Color(0xFF166534),
+                          ((_recoveredPayuStatus ?? '').toLowerCase() ==
+                                  'success')
+                              ? (widget.autoFinalizeRecoveredPayuOrder
+                                    ? 'Recovered payment detected. Finalizing your order now...'
+                                    : 'Payment already completed. Tap Place Order to finish.')
+                              : 'Recovered payment is being confirmed. Please wait or tap Place Order to retry finalization.',
+                          style: TextStyle(
+                            color:
+                                ((_recoveredPayuStatus ?? '').toLowerCase() ==
+                                    'success')
+                                ? const Color(0xFF166534)
+                                : const Color(0xFF92400E),
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                           ),

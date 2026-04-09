@@ -122,9 +122,6 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
             setState(() => _orderRef = ref.trim());
           })
           .catchError((error, stackTrace) {
-            debugPrint(
-              '[OrderConfirmScreen] registerUserPurchase failed: $error',
-            );
             // Best effort persistence for review eligibility and order history.
           });
     }

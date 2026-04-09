@@ -40,13 +40,22 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
 
   Future<void> _completeSetup() async {
     if (!_formKey.currentState!.validate()) return;
+
+    final gst = _gstController.text.trim().toUpperCase();
+    final udyam = _udyamController.text.trim().toUpperCase();
+
+    if (gst.isEmpty && udyam.isEmpty) {
+      _showError('Please provide at least GST Number or Udyam Number');
+      return;
+    }
+
     setState(() => _loading = true);
 
     final data = {
       'salonName': _salonNameController.text.trim(),
       'ownerName': _ownerNameController.text.trim(),
-      'gst': _gstController.text.trim(),
-      'udyamNumber': _udyamController.text.trim(),
+      'gst': gst,
+      'udyamNumber': udyam,
       'country': 'India',
       'state': _stateController.text.trim(),
       'pincode': _pincodeController.text.trim(),
@@ -175,7 +184,17 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
               hint: '22AAAAA0000A1Z5',
               icon: Icons.receipt_long_outlined,
               caps: TextCapitalization.characters,
-              validator: _required('GST Number'),
+              formatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9]')),
+                LengthLimitingTextInputFormatter(15),
+              ],
+              validator: (v) {
+                final value = (v ?? '').trim();
+                if (value.isEmpty) return null;
+                if (value.length != 15)
+                  return 'GST Number must be exactly 15 characters';
+                return null;
+              },
             ),
             const SizedBox(height: 16),
 
@@ -187,7 +206,17 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
               hint: 'UDYAM-XX-00-0000000',
               icon: Icons.verified_user_outlined,
               caps: TextCapitalization.characters,
-              validator: _required('Udyam Number'),
+              formatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9]')),
+                LengthLimitingTextInputFormatter(16),
+              ],
+              validator: (v) {
+                final value = (v ?? '').trim();
+                if (value.isEmpty) return null;
+                if (value.length != 16)
+                  return 'Udyam Number must be exactly 16 characters';
+                return null;
+              },
             ),
             const SizedBox(height: 16),
 

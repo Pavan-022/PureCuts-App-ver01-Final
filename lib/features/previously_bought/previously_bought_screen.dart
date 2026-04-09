@@ -8,6 +8,7 @@ import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 import 'package:purecuts/features/orders/order_provider.dart';
+import 'package:purecuts/features/products/product_detail_screen.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class PreviouslyBoughtScreen extends StatefulWidget {
@@ -704,108 +705,124 @@ class _BoughtItem extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
+      child: Material(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 68,
-            height: 68,
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: imageUrl.isNotEmpty
-                  ? CachedNetworkImage(
-                      imageUrl: imageUrl,
-                      fit: BoxFit.contain,
-                      fadeInDuration: Duration.zero,
-                      fadeOutDuration: Duration.zero,
-                      memCacheWidth: 136,
-                      maxWidthDiskCache: 136,
-                      errorWidget: (_, __, ___) => const Icon(
-                        Icons.image_outlined,
-                        color: AppColors.textHint,
-                      ),
-                    )
-                  : const Icon(Icons.image_outlined, color: AppColors.textHint),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ProductDetailScreen(product: product),
+              ),
+            );
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
               children: [
-                Text(
-                  name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                    height: 1.35,
+                Container(
+                  width: 68,
+                  height: 68,
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: imageUrl.isNotEmpty
+                        ? CachedNetworkImage(
+                            imageUrl: imageUrl,
+                            fit: BoxFit.contain,
+                            fadeInDuration: Duration.zero,
+                            fadeOutDuration: Duration.zero,
+                            memCacheWidth: 136,
+                            maxWidthDiskCache: 136,
+                            errorWidget: (_, __, ___) => const Icon(
+                              Icons.image_outlined,
+                              color: AppColors.textHint,
+                            ),
+                          )
+                        : const Icon(
+                            Icons.image_outlined,
+                            color: AppColors.textHint,
+                          ),
                   ),
                 ),
-                if (brand.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    brand,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppColors.textHint,
-                      fontSize: 11,
-                    ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                          height: 1.35,
+                        ),
+                      ),
+                      if (brand.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          brand,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.textHint,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      Text(
+                        '₹$price',
+                        style: const TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-                const SizedBox(height: 8),
-                Text(
-                  '₹$price',
-                  style: const TextStyle(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                  ),
+                ),
+                const SizedBox(width: 8),
+                Consumer<CartModel>(
+                  builder: (context, cart, _) {
+                    final qty = id.isEmpty ? 0 : cart.quantityOf(id);
+                    if (qty == 0) {
+                      return _AddButton(
+                        onTap: () => context.read<CartModel>().add({
+                          'id': id,
+                          'name': name,
+                          'brand': brand,
+                          'image': imageUrl,
+                          'price': price,
+                        }),
+                      );
+                    }
+
+                    return _QtyControl(
+                      qty: qty,
+                      onMinus: () => context.read<CartModel>().remove(id),
+                      onPlus: () => context.read<CartModel>().add({
+                        'id': id,
+                        'name': name,
+                        'brand': brand,
+                        'image': imageUrl,
+                        'price': price,
+                      }),
+                    );
+                  },
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 8),
-          Consumer<CartModel>(
-            builder: (context, cart, _) {
-              final qty = id.isEmpty ? 0 : cart.quantityOf(id);
-              if (qty == 0) {
-                return _AddButton(
-                  onTap: () => context.read<CartModel>().add({
-                    'id': id,
-                    'name': name,
-                    'brand': brand,
-                    'image': imageUrl,
-                    'price': price,
-                  }),
-                );
-              }
-
-              return _QtyControl(
-                qty: qty,
-                onMinus: () => context.read<CartModel>().remove(id),
-                onPlus: () => context.read<CartModel>().add({
-                  'id': id,
-                  'name': name,
-                  'brand': brand,
-                  'image': imageUrl,
-                  'price': price,
-                }),
-              );
-            },
-          ),
-        ],
+        ),
       ),
     );
   }

@@ -2852,9 +2852,7 @@ class _BannerVideoState extends State<_BannerVideo> {
           await controller.play();
           if (mounted) setState(() {});
         })
-        .catchError((error) {
-          print('Video initialization error: $error');
-        });
+        .catchError((error) {});
   }
 
   Future<void> _disposeController() async {
@@ -2898,7 +2896,6 @@ class _BannerVideoState extends State<_BannerVideo> {
         }
 
         if (snapshot.hasError) {
-          print('Video error: ${snapshot.error}');
           return Container(
             color: AppColors.surface,
             child: const Center(

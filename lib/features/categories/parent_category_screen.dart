@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -30,8 +32,12 @@ class _ParentCategoryScreenState extends State<ParentCategoryScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final home = context.read<HomeProvider>();
-      home.loadData();
-      home.ensureVisibilityCatalogLoaded();
+      unawaited(
+        Future<void>(() async {
+          await home.loadData();
+          await home.ensureVisibilityCatalogLoaded();
+        }),
+      );
     });
     _resolvePurchasedProducts();
   }

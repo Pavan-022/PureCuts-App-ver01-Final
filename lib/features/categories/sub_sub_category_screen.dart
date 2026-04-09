@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
@@ -27,7 +29,6 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
   static const int _pageSize = 12;
 
   final TextEditingController _searchController = TextEditingController();
-  final ScrollController _productsScrollController = ScrollController();
   String _searchQuery = '';
   String? _selectedBrand;
   String? _selectedSubCategory;
@@ -42,35 +43,23 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final home = context.read<HomeProvider>();
-      home.loadData();
-      home.ensureVisibilityCatalogLoaded();
+      unawaited(
+        Future<void>(() async {
+          await home.loadData();
+          await home.ensureVisibilityCatalogLoaded();
+        }),
+      );
     });
-    _productsScrollController.addListener(_onProductsScroll);
   }
 
   @override
   void dispose() {
-    _productsScrollController.removeListener(_onProductsScroll);
-    _productsScrollController.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
   void _resetPagination() {
     _visibleProductCount = _pageSize;
-  }
-
-  void _onProductsScroll() {
-    if (!_productsScrollController.hasClients) return;
-    if (_productsScrollController.position.extentAfter > 320) return;
-    if (_visibleProductCount >= _currentFilteredProductCount) return;
-
-    setState(() {
-      _visibleProductCount = (_visibleProductCount + _pageSize).clamp(
-        _pageSize,
-        _currentFilteredProductCount,
-      );
-    });
   }
 
   String _normalize(String value) => value.trim().toLowerCase();
@@ -257,14 +246,17 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
     final home = context.watch<HomeProvider>();
     final subCategories = home.subCategoriesFor(widget.categoryName);
 
-    final availableSubCategoryNames = subCategories
-        .map((s) => (s['name'] ?? '').toString())
-        .where((name) => name.trim().isNotEmpty)
-        .toSet();
+    final subCategoryNameByKey = <String, String>{
+      for (final s in subCategories)
+        if ((s['name'] ?? '').toString().trim().isNotEmpty)
+          _normalize((s['name'] ?? '').toString()): (s['name'] ?? '')
+              .toString(),
+    };
 
+    final selectedSubCategoryKey = _normalize(_selectedSubCategory ?? '');
     final selectedSubCategory =
-        availableSubCategoryNames.contains(_selectedSubCategory)
-        ? _selectedSubCategory
+        subCategoryNameByKey.containsKey(selectedSubCategoryKey)
+        ? subCategoryNameByKey[selectedSubCategoryKey]
         : (subCategories.isEmpty
               ? null
               : (subCategories.first['name'] ?? '').toString());
@@ -273,14 +265,17 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
         ? const <Map<String, dynamic>>[]
         : home.subSubCategoriesFor(widget.categoryName, selectedSubCategory);
 
-    final availableSubSubCategoryNames = subSubCategories
-        .map((s) => (s['name'] ?? '').toString())
-        .where((name) => name.trim().isNotEmpty)
-        .toSet();
+    final subSubCategoryNameByKey = <String, String>{
+      for (final s in subSubCategories)
+        if ((s['name'] ?? '').toString().trim().isNotEmpty)
+          _normalize((s['name'] ?? '').toString()): (s['name'] ?? '')
+              .toString(),
+    };
 
+    final selectedSubSubCategoryKey = _normalize(_selectedSubSubCategory ?? '');
     final selectedSubSubCategory =
-        availableSubSubCategoryNames.contains(_selectedSubSubCategory)
-        ? _selectedSubSubCategory
+        subSubCategoryNameByKey.containsKey(selectedSubSubCategoryKey)
+        ? subSubCategoryNameByKey[selectedSubSubCategoryKey]
         : null;
 
     final products = _productsForSelection(
@@ -433,7 +428,7 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
               child: Row(
                 children: [
                   Container(
-                    width: 82,
+                    width: 74,
                     decoration: BoxDecoration(
                       color: const Color(0xFFF7F8FA),
                       borderRadius: BorderRadius.circular(12),
@@ -455,7 +450,8 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
                                   ?.toString();
                         final selected = isAll
                             ? selectedSubSubCategory == null
-                            : selectedSubSubCategory == name;
+                            : _normalize(selectedSubSubCategory ?? '') ==
+                                  _normalize(name);
 
                         return _SubSubRailItem(
                           label: name,
@@ -487,7 +483,6 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
                             children: [
                               Expanded(
                                 child: GridView.builder(
-                                  controller: _productsScrollController,
                                   padding: const EdgeInsets.fromLTRB(
                                     0,
                                     0,
@@ -519,15 +514,15 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
                               ),
                               if (hasMoreProducts)
                                 Padding(
-                                  padding: const EdgeInsets.fromLTRB(
+                                  padding: EdgeInsets.fromLTRB(
                                     0,
+                                    6,
                                     0,
-                                    0,
-                                    100,
+                                    MediaQuery.of(context).padding.bottom + 12,
                                   ),
                                   child: SizedBox(
                                     width: double.infinity,
-                                    height: 36,
+                                    height: 38,
                                     child: OutlinedButton(
                                       onPressed: () {
                                         setState(() {
@@ -561,7 +556,11 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
                                   ),
                                 )
                               else
-                                const SizedBox(height: 100),
+                                SizedBox(
+                                  height:
+                                      MediaQuery.of(context).padding.bottom +
+                                      12,
+                                ),
                             ],
                           ),
                   ),

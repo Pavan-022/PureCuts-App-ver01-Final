@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/features/auth/profile_setup_screen.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/auth/pending_approval_screen.dart';
 import 'package:purecuts/features/main_nav/main_nav_screen.dart';
@@ -162,6 +163,19 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   Future<void> _goHome(AuthProvider authProvider) async {
     final gate = await authProvider.getCurrentUserAccessState();
     if (!mounted) return;
+
+    if (!gate.exists) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ProfileSetupScreen(
+            phoneNumber: '+91${_phoneController.text.trim()}',
+          ),
+        ),
+        (_) => false,
+      );
+      return;
+    }
 
     Navigator.pushAndRemoveUntil(
       context,

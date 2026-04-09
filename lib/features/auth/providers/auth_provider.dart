@@ -33,14 +33,10 @@ class AuthProvider extends ChangeNotifier {
     unawaited(_hydrateCachedHeaderUser());
     _service.authStateChanges.listen((firebaseUser) async {
       if (firebaseUser == null) {
-        debugPrint('[AuthProvider] Auth state: signed out.');
         _user = null;
         _status = AuthStatus.unauthenticated;
         unawaited(_clearCachedHeaderUser());
       } else {
-        debugPrint(
-          '[AuthProvider] Auth state: signed in. UID=${firebaseUser.uid}',
-        );
         try {
           final cachedUid = (_user?.uid ?? '').trim();
           if (cachedUid.isNotEmpty && cachedUid != firebaseUser.uid) {
@@ -54,11 +50,7 @@ class AuthProvider extends ChangeNotifier {
             unawaited(_cacheHeaderUser(_user!));
           }
           unawaited(PushNotificationService.instance.syncTokenForCurrentUser());
-        } catch (e, st) {
-          debugPrint(
-            '[AuthProvider] Failed to load user data on auth state change: $e\n$st',
-          );
-        }
+        } catch (e) {}
         _status = AuthStatus.authenticated;
       }
       notifyListeners();
@@ -85,11 +77,7 @@ class AuthProvider extends ChangeNotifier {
         _user = cachedUser;
         notifyListeners();
       }
-    } catch (e, st) {
-      debugPrint(
-        '[AuthProvider] Failed to hydrate cached header user: $e\n$st',
-      );
-    }
+    } catch (e) {}
   }
 
   Future<void> _cacheHeaderUser(UserModel user) async {
@@ -115,18 +103,14 @@ class AuthProvider extends ChangeNotifier {
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_userHeaderCacheKey, jsonEncode(payload));
-    } catch (e, st) {
-      debugPrint('[AuthProvider] Failed to cache header user: $e\n$st');
-    }
+    } catch (e) {}
   }
 
   Future<void> _clearCachedHeaderUser() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_userHeaderCacheKey);
-    } catch (e, st) {
-      debugPrint('[AuthProvider] Failed to clear cached header user: $e\n$st');
-    }
+    } catch (e) {}
   }
 
   void _setLoading() {
@@ -151,19 +135,14 @@ class AuthProvider extends ChangeNotifier {
   Future<bool> createEmailAccount(String email, String password) async {
     try {
       _setLoading();
-      debugPrint('[AuthProvider] createEmailAccount: $email');
       await _service.createEmailAccount(email, password);
       _status = AuthStatus.unauthenticated;
       notifyListeners();
       return true;
-    } on FirebaseAuthException catch (e, st) {
-      debugPrint(
-        '[AuthProvider] createEmailAccount failed — code: ${e.code}, message: ${e.message}\n$st',
-      );
+    } on FirebaseAuthException catch (e) {
       _setError(_friendlyError(e));
       return false;
-    } catch (e, st) {
-      debugPrint('[AuthProvider] createEmailAccount unexpected error: $e\n$st');
+    } catch (e) {
       _setError('Failed to create account. Please try again.');
       return false;
     }
@@ -174,8 +153,7 @@ class AuthProvider extends ChangeNotifier {
   Future<bool> checkEmailVerified() async {
     try {
       return await _service.reloadAndCheckEmailVerified();
-    } catch (e, st) {
-      debugPrint('[AuthProvider] checkEmailVerified failed: $e\n$st');
+    } catch (e) {
       return false;
     }
   }
@@ -183,9 +161,7 @@ class AuthProvider extends ChangeNotifier {
   Future<void> resendVerificationEmail() async {
     try {
       await _service.resendVerificationEmail();
-    } catch (e, st) {
-      debugPrint('[AuthProvider] resendVerificationEmail failed: $e\n$st');
-    }
+    } catch (e) {}
   }
 
   // ── Signup Step 2: Send OTP to phone ─────────────────────────────────────
@@ -194,8 +170,6 @@ class AuthProvider extends ChangeNotifier {
     final completer = Completer<bool>();
     _autoCredential = null;
     _setLoading();
-    debugPrint('[AuthProvider] sendOtp: $phoneNumber');
-
     try {
       await _service.verifyPhoneNumber(
         phoneNumber: phoneNumber,
@@ -207,22 +181,17 @@ class AuthProvider extends ChangeNotifier {
           if (!completer.isCompleted) completer.complete(true);
         },
         onFailed: (e) {
-          debugPrint(
-            '[AuthProvider] sendOtp — verificationFailed: code=${e.code}, message=${e.message}',
-          );
           _setError(_friendlyError(e));
           if (!completer.isCompleted) completer.complete(false);
         },
         onAutoVerified: (credential) {
-          debugPrint('[AuthProvider] sendOtp — auto-verified (Android).');
           // Android silently verified the phone
           _autoCredential = credential;
           notifyListeners();
           if (!completer.isCompleted) completer.complete(true);
         },
       );
-    } catch (e, st) {
-      debugPrint('[AuthProvider] sendOtp unexpected error: $e\n$st');
+    } catch (e) {
       _setError('Failed to start phone verification. Please try again.');
       if (!completer.isCompleted) completer.complete(false);
     }
@@ -230,7 +199,6 @@ class AuthProvider extends ChangeNotifier {
     return completer.future.timeout(
       const Duration(seconds: 90),
       onTimeout: () {
-        debugPrint('[AuthProvider] sendOtp timed out.');
         _setError('Verification timed out. Please try again.');
         return false;
       },
@@ -243,8 +211,6 @@ class AuthProvider extends ChangeNotifier {
     final completer = Completer<bool>();
     _autoCredential = null;
     _setLoading();
-    debugPrint('[AuthProvider] resendOtp: $phoneNumber');
-
     try {
       await _service.verifyPhoneNumber(
         phoneNumber: phoneNumber,
@@ -257,21 +223,16 @@ class AuthProvider extends ChangeNotifier {
           if (!completer.isCompleted) completer.complete(true);
         },
         onFailed: (e) {
-          debugPrint(
-            '[AuthProvider] resendOtp — verificationFailed: code=${e.code}, message=${e.message}',
-          );
           _setError(_friendlyError(e));
           if (!completer.isCompleted) completer.complete(false);
         },
         onAutoVerified: (credential) {
-          debugPrint('[AuthProvider] resendOtp — auto-verified (Android).');
           _autoCredential = credential;
           notifyListeners();
           if (!completer.isCompleted) completer.complete(true);
         },
       );
-    } catch (e, st) {
-      debugPrint('[AuthProvider] resendOtp unexpected error: $e\n$st');
+    } catch (e) {
       _setError('Failed to resend OTP. Please try again.');
       if (!completer.isCompleted) completer.complete(false);
     }
@@ -279,7 +240,6 @@ class AuthProvider extends ChangeNotifier {
     return completer.future.timeout(
       const Duration(seconds: 90),
       onTimeout: () {
-        debugPrint('[AuthProvider] resendOtp timed out.');
         _setError('Verification timed out. Please try again.');
         return false;
       },
@@ -296,17 +256,11 @@ class AuthProvider extends ChangeNotifier {
     required Map<String, dynamic> registrationData,
   }) async {
     if (_verificationId == null && _autoCredential == null) {
-      debugPrint(
-        '[AuthProvider] linkPhoneAndSaveProfile: no verificationId or autoCredential — session expired.',
-      );
       _setError('Session expired. Please request a new OTP.');
       return false;
     }
     try {
       _setLoading();
-      debugPrint(
-        '[AuthProvider] linkPhoneAndSaveProfile: autoCredential=${_autoCredential != null}',
-      );
 
       if (_autoCredential != null) {
         // Android auto-verified — link directly
@@ -325,24 +279,15 @@ class AuthProvider extends ChangeNotifier {
       if (_user != null) {
         unawaited(_cacheHeaderUser(_user!));
       }
-      debugPrint(
-        '[AuthProvider] linkPhoneAndSaveProfile: success. UID=${_user?.uid}',
-      );
       _status = AuthStatus.authenticated;
       notifyListeners();
       return true;
-    } on FirebaseAuthException catch (e, st) {
-      debugPrint(
-        '[AuthProvider] linkPhoneAndSaveProfile FirebaseAuthException — code: ${e.code}, message: ${e.message}\n$st',
-      );
+    } on FirebaseAuthException catch (e) {
       // Roll back the email account on failure so user can retry cleanly
       await _service.deleteCurrentUser();
       _setError(_friendlyError(e));
       return false;
-    } catch (e, st) {
-      debugPrint(
-        '[AuthProvider] linkPhoneAndSaveProfile unexpected error: $e\n$st',
-      );
+    } catch (e) {
       await _service.deleteCurrentUser();
       _setError(e.toString().replaceFirst('Exception: ', ''));
       return false;
@@ -354,15 +299,11 @@ class AuthProvider extends ChangeNotifier {
 
   Future<bool> signInWithPhoneOtp(String otp) async {
     if (_verificationId == null && _autoCredential == null) {
-      debugPrint('[AuthProvider] signInWithPhoneOtp: session expired.');
       _setError('Session expired. Please request a new OTP.');
       return false;
     }
     try {
       _setLoading();
-      debugPrint(
-        '[AuthProvider] signInWithPhoneOtp: autoCredential=${_autoCredential != null}',
-      );
 
       if (_autoCredential != null) {
         _user = await _service.signInWithAutoCredential(_autoCredential!);
@@ -378,20 +319,13 @@ class AuthProvider extends ChangeNotifier {
       }
 
       // _user == null means new user — caller will navigate to ProfileSetupScreen
-      debugPrint(
-        '[AuthProvider] signInWithPhoneOtp: success. UID=${_service.currentUser?.uid}, profile=${_user != null ? 'found' : 'new user'}',
-      );
       _status = AuthStatus.authenticated;
       notifyListeners();
       return true;
-    } on FirebaseAuthException catch (e, st) {
-      debugPrint(
-        '[AuthProvider] signInWithPhoneOtp FirebaseAuthException — code: ${e.code}, message: ${e.message}\n$st',
-      );
+    } on FirebaseAuthException catch (e) {
       _setError(_friendlyError(e));
       return false;
-    } catch (e, st) {
-      debugPrint('[AuthProvider] signInWithPhoneOtp unexpected error: $e\n$st');
+    } catch (e) {
       _setError(e.toString().replaceFirst('Exception: ', ''));
       return false;
     }
@@ -402,30 +336,19 @@ class AuthProvider extends ChangeNotifier {
   Future<bool> signInWithPassword(String email, String password) async {
     try {
       _setLoading();
-      debugPrint('[AuthProvider] signInWithPassword: $email');
       _user = await _service.signInWithPassword(email, password);
       if (_user == null) {
-        debugPrint(
-          '[AuthProvider] signInWithPassword: no Firestore profile found.',
-        );
         _setError('No account found. Please register first.');
         return false;
       }
       unawaited(_cacheHeaderUser(_user!));
-      debugPrint(
-        '[AuthProvider] signInWithPassword: success. UID=${_user?.uid}',
-      );
       _status = AuthStatus.authenticated;
       notifyListeners();
       return true;
-    } on FirebaseAuthException catch (e, st) {
-      debugPrint(
-        '[AuthProvider] signInWithPassword FirebaseAuthException — code: ${e.code}, message: ${e.message}\n$st',
-      );
+    } on FirebaseAuthException catch (e) {
       _setError(_friendlyError(e));
       return false;
-    } catch (e, st) {
-      debugPrint('[AuthProvider] signInWithPassword unexpected error: $e\n$st');
+    } catch (e) {
       _setError('Sign-in failed. Please try again.');
       return false;
     }
@@ -435,8 +358,7 @@ class AuthProvider extends ChangeNotifier {
   getCurrentUserAccessState() async {
     try {
       return await _service.getCurrentUserAccessState();
-    } catch (e, st) {
-      debugPrint('[AuthProvider] getCurrentUserAccessState failed: $e\n$st');
+    } catch (e) {
       return (exists: false, isApproved: false, verificationStatus: 'missing');
     }
   }
@@ -446,9 +368,6 @@ class AuthProvider extends ChangeNotifier {
   Future<bool> saveNewUserProfile(Map<String, dynamic> data) async {
     try {
       _setLoading();
-      debugPrint(
-        '[AuthProvider] saveNewUserProfile: UID=${_service.currentUser?.uid}',
-      );
       _user = await _service.saveUserProfile(
         registrationData: data,
         email: data['email'] ?? '',
@@ -459,8 +378,7 @@ class AuthProvider extends ChangeNotifier {
       _status = AuthStatus.authenticated;
       notifyListeners();
       return true;
-    } catch (e, st) {
-      debugPrint('[AuthProvider] saveNewUserProfile error: $e\n$st');
+    } catch (e) {
       _setError('Failed to save profile. Please try again.');
       return false;
     }
@@ -469,7 +387,6 @@ class AuthProvider extends ChangeNotifier {
   // ── Sign Out ──────────────────────────────────────────────────────────────
 
   Future<void> signOut() async {
-    debugPrint('[AuthProvider] signOut: UID=${_service.currentUser?.uid}');
     await _service.signOut();
     _user = null;
     _status = AuthStatus.unauthenticated;
@@ -487,9 +404,7 @@ class AuthProvider extends ChangeNotifier {
       _user = _user!.copyWith(address: address);
       unawaited(_cacheHeaderUser(_user!));
       notifyListeners();
-    } catch (e) {
-      debugPrint('[AuthProvider] updateAddress error: $e');
-    }
+    } catch (e) {}
   }
 
   Future<bool> updateCheckoutDeliveryDetails({
@@ -641,7 +556,6 @@ class AuthProvider extends ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
-      debugPrint('[AuthProvider] updateCheckoutDeliveryDetails error: $e');
       return false;
     }
   }
@@ -657,7 +571,6 @@ class AuthProvider extends ChangeNotifier {
         return false;
       }
 
-      debugPrint('[AuthProvider] updateUserProfile for UID=$uid');
       final success = await _service.updateUserProfile(uid: uid, data: data);
 
       if (!success) {
@@ -673,10 +586,8 @@ class AuthProvider extends ChangeNotifier {
       _status = AuthStatus.authenticated;
       notifyListeners();
 
-      debugPrint('[AuthProvider] updateUserProfile: success');
       return true;
-    } catch (e, st) {
-      debugPrint('[AuthProvider] updateUserProfile error: $e\n$st');
+    } catch (e) {
       _setError('Failed to update profile. Please try again.');
       return false;
     }

@@ -397,6 +397,24 @@ class FirestoreService {
       user.udyamNumber,
     ]);
 
+    String sanitizeAlphaNum(String value) =>
+        value.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
+
+    final gstSanitized = sanitizeAlphaNum(gstNumber);
+    final udyamSanitized = sanitizeAlphaNum(udyamNumber);
+
+    if (gstSanitized.isEmpty && udyamSanitized.isEmpty) {
+      throw Exception('Please provide at least GST Number or Udyam Number');
+    }
+
+    if (gstSanitized.isNotEmpty && gstSanitized.length != 15) {
+      throw Exception('GST Number must be exactly 15 characters');
+    }
+
+    if (udyamSanitized.isNotEmpty && udyamSanitized.length != 16) {
+      throw Exception('Udyam Number must be exactly 16 characters');
+    }
+
     await _db.collection(_verificationRequestsCollection).add({
       'userId': uid,
       'uid': uid,
@@ -414,8 +432,8 @@ class FirestoreService {
       ]),
       'state': _firstNonEmpty([registrationData['state'], user.state]),
       'pincode': _firstNonEmpty([registrationData['pincode'], user.pincode]),
-      if (gstNumber.isNotEmpty) 'gstNumber': gstNumber,
-      if (udyamNumber.isNotEmpty) 'udyamNumber': udyamNumber,
+      if (gstSanitized.isNotEmpty) 'gstNumber': gstSanitized,
+      if (udyamSanitized.isNotEmpty) 'udyamNumber': udyamSanitized,
       'status': 'pending',
       'approved': false,
       'rejected': false,
@@ -450,7 +468,25 @@ class FirestoreService {
         ? statusRaw
         : (approved ? 'approved' : 'pending');
 
-    return (exists: true, isApproved: approved, verificationStatus: status);
+    bool hasNonEmpty(dynamic value) =>
+        (value ?? '').toString().trim().isNotEmpty;
+
+    // Guard against partial/legacy user docs: if user is not approved and core
+    // onboarding fields are missing, treat as profile-not-created so the app
+    // routes to ProfileSetup instead of PendingApproval.
+    final hasCoreProfile =
+        hasNonEmpty(data['ownerName']) &&
+        hasNonEmpty(data['salonName']) &&
+        hasNonEmpty(data['state']) &&
+        hasNonEmpty(data['pincode']);
+
+    final treatAsExistingProfile = approved || hasCoreProfile;
+
+    return (
+      exists: treatAsExistingProfile,
+      isApproved: approved,
+      verificationStatus: status,
+    );
   }
 
   // ── Update a single field in user profile ────────────────────────────────
@@ -945,10 +981,10 @@ class FirestoreService {
     }
 
     final orderDoc = cleanPaymentTxnId.isNotEmpty
-      ? _db
-          .collection(_ordersCollection)
-          .doc(_orderDocIdFromPaymentTxn(cleanPaymentTxnId))
-      : _db.collection(_ordersCollection).doc();
+        ? _db
+              .collection(_ordersCollection)
+              .doc(_orderDocIdFromPaymentTxn(cleanPaymentTxnId))
+        : _db.collection(_ordersCollection).doc();
     final orderRef = (orderRefOverride ?? '').trim().isNotEmpty
         ? orderRefOverride!.trim()
         : generateOrderRef(entropy: orderDoc.id.substring(0, 6));

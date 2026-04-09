@@ -85,32 +85,34 @@ class _OtpScreenState extends State<OtpScreen> {
       return;
     }
 
-    // success: navigate based on profile + approval state
-    if (authProvider.user != null) {
-      final gate = await authProvider.getCurrentUserAccessState();
-      if (!mounted) return;
+    // success: use authoritative Firestore access-state to decide routing.
+    // `authProvider.user` can be stale in rare auth-state timing cases.
+    final gate = await authProvider.getCurrentUserAccessState();
+    if (!mounted) return;
 
-      if (gate.isApproved) {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => const MainNavScreen()),
-          (_) => false,
-        );
-      } else {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => const PendingApprovalScreen()),
-          (_) => false,
-        );
-      }
-    } else {
-      // New user — fill in profile
+    if (!gate.exists) {
+      // New user — fill in profile first.
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
           builder: (_) =>
               ProfileSetupScreen(phoneNumber: '+91${widget.phoneNumber}'),
         ),
+      );
+      return;
+    }
+
+    if (gate.isApproved) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const MainNavScreen()),
+        (_) => false,
+      );
+    } else {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const PendingApprovalScreen()),
+        (_) => false,
       );
     }
   }
