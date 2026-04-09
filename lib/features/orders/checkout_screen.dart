@@ -35,16 +35,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   static const String _codPaymentMethod = 'Cash on Delivery';
   static const String _payuPaymentMethod =
       'Pay Online (UPI/Card/NetBanking/Wallet)';
-  static const bool _waiveDeliveryChargeTemporarily = true;
 
-  // Delivery charge constants
   static const int _puneDeliveryCharge = 19;
-  static const int _otherDeliveryCharge = 30;
+  static const int _maharashtraDeliveryCharge = 30;
+  static const int _outsideMaharashtraDeliveryCharge = 49;
   static const int _freeDeliveryThreshold = 1000;
 
-  // All Pune pincodes
   static const Set<String> _punePincodes = {
-    // Pune city core
     '411001',
     '411002',
     '411003',
@@ -93,13 +90,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     '411046',
     '411047',
     '411048',
-    // Pimpri-Chinchwad areas
-    '412001', '412108', '412115',
-    // Hadapsar and suburbs
-    '411050', '411051',
-    // Outer Pune areas
-    '413001', '413101', '413201', '413202',
-
+    '411050',
+    '411051',
+    '412001',
+    '412108',
+    '412115',
     '412207',
   };
 
@@ -322,24 +317,52 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   int _itemTotal(CartModel cart) => cart.totalPrice;
 
-  /// Check if delivery location is Pune based on pincode
   bool _isPuneDelivery() {
+    final city = _cityController.text.trim().toLowerCase();
     final pincode = _pincodeController.text.trim();
-    return _punePincodes.contains(pincode);
+    return city == 'pune' ||
+        city.contains('pune') ||
+        _punePincodes.contains(pincode);
   }
 
-  /// Calculate delivery charge based on location and order value
+  bool _isOutsideMaharashtra() {
+    final state = _stateController.text.trim().toLowerCase();
+    if (state.isEmpty) return false;
+    return !(state == 'maharashtra' ||
+        state == 'mh' ||
+        state.contains('maharashtra'));
+  }
+
+  /// Delivery slab:
+  /// - Free at or above ₹1000
+  /// - Pune: ₹19
+  /// - Maharashtra (non-Pune): ₹30
+  /// - Outside Maharashtra: ₹49
   int _calculateDeliveryCharge(int itemTotal) {
-    if (_waiveDeliveryChargeTemporarily) {
-      return 0;
+    int regionalCharge() {
+      if (_isOutsideMaharashtra()) {
+        return _outsideMaharashtraDeliveryCharge;
+      }
+
+      if (_isPuneDelivery()) {
+        return _puneDeliveryCharge;
+      }
+
+      return _maharashtraDeliveryCharge;
     }
 
-    // Free delivery for orders >= ₹1000
+    final baseCharge = regionalCharge();
+
     if (itemTotal >= _freeDeliveryThreshold) {
       return 0;
     }
-    // Location-based delivery charge
-    return _isPuneDelivery() ? _puneDeliveryCharge : _otherDeliveryCharge;
+
+    final effectiveOrderValue = itemTotal + baseCharge;
+    if (effectiveOrderValue >= _freeDeliveryThreshold) {
+      return 0;
+    }
+
+    return baseCharge;
   }
 
   int _grandTotal(CartModel cart) {
