@@ -7,6 +7,7 @@ import 'package:purecuts/core/constants/app_constants.dart';
 import 'package:purecuts/core/constants/feature_flags.dart';
 import 'package:purecuts/core/models/product_model.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
+import 'package:purecuts/core/services/performance_trace_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeProvider extends ChangeNotifier {
@@ -617,141 +618,145 @@ class HomeProvider extends ChangeNotifier {
     if (_loading) return;
     if (!forceRefresh && _hasLoadedOnce) return;
 
-    final startupLite =
-        FeatureFlags.enableHomeStartupLite && !forceRefresh && !_hasLoadedOnce;
-    final canUseStartupCache =
-        FeatureFlags.enableHomeStartupCache && startupLite;
-    var hydratedFromCache = false;
+    await PerformanceTraceService.recordVoid('home_load_time', () async {
+      final startupLite =
+          FeatureFlags.enableHomeStartupLite &&
+          !forceRefresh &&
+          !_hasLoadedOnce;
+      final canUseStartupCache =
+          FeatureFlags.enableHomeStartupCache && startupLite;
+      var hydratedFromCache = false;
 
-    if (canUseStartupCache) {
-      hydratedFromCache = await _hydrateStartupCache();
-      if (hydratedFromCache) {
-        notifyListeners();
-      }
-    }
-
-    _loading = !hydratedFromCache;
-    _error = null;
-    notifyListeners();
-
-    try {
-      final targetPool = startupLite
-          ? FeatureFlags.homeStartupProductPool
-          : _homeMaxProductPool;
-      final fetched = <ProductModel>[];
-      DocumentSnapshot<Map<String, dynamic>>? cursor;
-      var hasMore = true;
-      final productsTimeout = Duration(
-        milliseconds: FeatureFlags.homeProductsPageTimeoutMs,
-      );
-
-      while (hasMore && fetched.length < targetPool) {
-        final remaining = targetPool - fetched.length;
-        if (remaining <= 0) break;
-        final page = await _service
-            .getProductsPage(
-              limit: remaining < _homeInitialProductLimit
-                  ? remaining
-                  : _homeInitialProductLimit,
-              startAfterDoc: cursor,
-            )
-            .timeout(productsTimeout);
-
-        fetched.addAll(page.products);
-        cursor = page.lastDocument;
-        hasMore = page.hasMore;
-      }
-
-      if (fetched.isEmpty) {
-        final fallback = await _fallbackProductsFetch(limit: 24);
-        if (fallback.isNotEmpty) {
-          fetched.addAll(fallback);
+      if (canUseStartupCache) {
+        hydratedFromCache = await _hydrateStartupCache();
+        if (hydratedFromCache) {
+          notifyListeners();
         }
       }
 
-      _hasAttemptedFullCatalogLoad =
-          forceRefresh ||
-          !startupLite ||
-          !hasMore ||
-          fetched.length >= _homeMaxProductPool;
+      _loading = !hydratedFromCache;
+      _error = null;
+      notifyListeners();
 
-      final deferTaxonomy =
-          FeatureFlags.enableDeferredHomeTaxonomy && startupLite;
-      final bannersTimeout = Duration(
-        milliseconds: FeatureFlags.homeBannersTimeoutMs,
-      );
-      final taxonomyTimeout = Duration(
-        milliseconds: FeatureFlags.homeTaxonomyTimeoutMs,
-      );
+      try {
+        final targetPool = startupLite
+            ? FeatureFlags.homeStartupProductPool
+            : _homeMaxProductPool;
+        final fetched = <ProductModel>[];
+        DocumentSnapshot<Map<String, dynamic>>? cursor;
+        var hasMore = true;
+        final productsTimeout = Duration(
+          milliseconds: FeatureFlags.homeProductsPageTimeoutMs,
+        );
 
-      final results = await Future.wait<List<Map<String, dynamic>>>([
-        _timedListFetch(
-          _service.getBanners(forceRefresh: forceRefresh),
-          bannersTimeout,
-        ),
-        if (deferTaxonomy)
-          Future.value(const <Map<String, dynamic>>[])
-        else
-          _timedListFetch(_service.getCategories(), taxonomyTimeout),
-        if (deferTaxonomy)
-          Future.value(const <Map<String, dynamic>>[])
-        else
-          _timedListFetch(_service.getSubCategories(), taxonomyTimeout),
-        if (deferTaxonomy)
-          Future.value(const <Map<String, dynamic>>[])
-        else
-          _timedListFetch(_service.getSubSubCategories(), taxonomyTimeout),
-        if (deferTaxonomy)
-          Future.value(const <Map<String, dynamic>>[])
-        else
-          _timedListFetch(_service.getBrands(), taxonomyTimeout),
-      ]);
-      if (fetched.isNotEmpty) {
-        _products = fetched;
-      }
-      _banners = results[0];
-      final cats = results[1];
-      final subCats = results[2];
-      final subSubCats = results[3];
-      final brands = results[4];
-      // If Firestore has categories, use them; otherwise fall back to constants
-      if (cats.isNotEmpty) _categories = cats;
-      if (subCats.isNotEmpty) _subCategories = subCats;
-      if (subSubCats.isNotEmpty) _subSubCategories = subSubCats;
-      if (brands.isNotEmpty) _brands = brands;
-      _hasLoadedOnce = true;
+        while (hasMore && fetched.length < targetPool) {
+          final remaining = targetPool - fetched.length;
+          if (remaining <= 0) break;
+          final page = await _service
+              .getProductsPage(
+                limit: remaining < _homeInitialProductLimit
+                    ? remaining
+                    : _homeInitialProductLimit,
+                startAfterDoc: cursor,
+              )
+              .timeout(productsTimeout);
 
-      if (deferTaxonomy) {
-        unawaited(_hydrateTaxonomyInBackground());
-      }
+          fetched.addAll(page.products);
+          cursor = page.lastDocument;
+          hasMore = page.hasMore;
+        }
 
-      unawaited(_persistStartupCache());
-    } on TimeoutException {
-      _error = 'Home data load timed out. Please pull to refresh.';
-      if (_products.isEmpty) {
-        final fallback = await _fallbackProductsFetch(limit: 24);
-        if (fallback.isNotEmpty) {
-          _products = fallback;
-          _error = null;
-          _hasLoadedOnce = true;
-          unawaited(_persistStartupCache());
+        if (fetched.isEmpty) {
+          final fallback = await _fallbackProductsFetch(limit: 24);
+          if (fallback.isNotEmpty) {
+            fetched.addAll(fallback);
+          }
+        }
+
+        _hasAttemptedFullCatalogLoad =
+            forceRefresh ||
+            !startupLite ||
+            !hasMore ||
+            fetched.length >= _homeMaxProductPool;
+
+        final deferTaxonomy =
+            FeatureFlags.enableDeferredHomeTaxonomy && startupLite;
+        final bannersTimeout = Duration(
+          milliseconds: FeatureFlags.homeBannersTimeoutMs,
+        );
+        final taxonomyTimeout = Duration(
+          milliseconds: FeatureFlags.homeTaxonomyTimeoutMs,
+        );
+
+        final results = await Future.wait<List<Map<String, dynamic>>>([
+          _timedListFetch(
+            _service.getBanners(forceRefresh: forceRefresh),
+            bannersTimeout,
+          ),
+          if (deferTaxonomy)
+            Future.value(const <Map<String, dynamic>>[])
+          else
+            _timedListFetch(_service.getCategories(), taxonomyTimeout),
+          if (deferTaxonomy)
+            Future.value(const <Map<String, dynamic>>[])
+          else
+            _timedListFetch(_service.getSubCategories(), taxonomyTimeout),
+          if (deferTaxonomy)
+            Future.value(const <Map<String, dynamic>>[])
+          else
+            _timedListFetch(_service.getSubSubCategories(), taxonomyTimeout),
+          if (deferTaxonomy)
+            Future.value(const <Map<String, dynamic>>[])
+          else
+            _timedListFetch(_service.getBrands(), taxonomyTimeout),
+        ]);
+        if (fetched.isNotEmpty) {
+          _products = fetched;
+        }
+        _banners = results[0];
+        final cats = results[1];
+        final subCats = results[2];
+        final subSubCats = results[3];
+        final brands = results[4];
+        // If Firestore has categories, use them; otherwise fall back to constants
+        if (cats.isNotEmpty) _categories = cats;
+        if (subCats.isNotEmpty) _subCategories = subCats;
+        if (subSubCats.isNotEmpty) _subSubCategories = subSubCats;
+        if (brands.isNotEmpty) _brands = brands;
+        _hasLoadedOnce = true;
+
+        if (deferTaxonomy) {
+          unawaited(_hydrateTaxonomyInBackground());
+        }
+
+        unawaited(_persistStartupCache());
+      } on TimeoutException {
+        _error = 'Home data load timed out. Please pull to refresh.';
+        if (_products.isEmpty) {
+          final fallback = await _fallbackProductsFetch(limit: 24);
+          if (fallback.isNotEmpty) {
+            _products = fallback;
+            _error = null;
+            _hasLoadedOnce = true;
+            unawaited(_persistStartupCache());
+          }
+        }
+      } catch (e) {
+        _error = e.toString();
+        if (_products.isEmpty) {
+          final fallback = await _fallbackProductsFetch(limit: 24);
+          if (fallback.isNotEmpty) {
+            _products = fallback;
+            _error = null;
+            _hasLoadedOnce = true;
+            unawaited(_persistStartupCache());
+          }
         }
       }
-    } catch (e) {
-      _error = e.toString();
-      if (_products.isEmpty) {
-        final fallback = await _fallbackProductsFetch(limit: 24);
-        if (fallback.isNotEmpty) {
-          _products = fallback;
-          _error = null;
-          _hasLoadedOnce = true;
-          unawaited(_persistStartupCache());
-        }
-      }
-    }
 
-    _loading = false;
-    notifyListeners();
+      _loading = false;
+      notifyListeners();
+    });
   }
 
   List<Map<String, dynamic>> filteredProducts({

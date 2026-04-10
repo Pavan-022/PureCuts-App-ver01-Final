@@ -36,6 +36,33 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
   int _visibleProductCount = _pageSize;
   int _currentFilteredProductCount = 0;
 
+  List<Map<String, dynamic>> _mergeUniqueProducts(
+    List<Map<String, dynamic>> primary,
+    List<Map<String, dynamic>> secondary,
+  ) {
+    final merged = <Map<String, dynamic>>[];
+    final seenIds = <String>{};
+
+    void addAllUnique(List<Map<String, dynamic>> source) {
+      for (final product in source) {
+        final id = _baseProductId((product['id'] ?? '').toString());
+        if (id.isNotEmpty) {
+          if (!seenIds.add(id)) continue;
+          merged.add(product);
+          continue;
+        }
+
+        final fingerprint = product.toString();
+        if (!seenIds.add(fingerprint)) continue;
+        merged.add(product);
+      }
+    }
+
+    addAllUnique(primary);
+    addAllUnique(secondary);
+    return merged;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -164,20 +191,16 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
     String category,
     String subCategory,
   ) {
-    final exact = home.filteredProducts(
+    final strict = home.filteredProducts(
       category: category,
       subCategory: subCategory,
     );
-    if (exact.isNotEmpty) return exact;
-
     final inCategory = home.filteredProducts(category: category);
     final needle = _normalize(subCategory);
 
-    return inCategory
+    final relaxed = inCategory
         .where((product) {
-          final productSub =
-              (product['subCategory'] ?? product['subcategory'] ?? '')
-                  .toString();
+          final productSub = home.productSubCategory(product);
           if (_normalize(productSub) == needle) return true;
 
           final tags = product['tags'];
@@ -186,10 +209,18 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
             if (_normalize(joined).contains(needle)) return true;
           }
 
+          final pathNames = product['categoryPathNames'];
+          if (pathNames is List) {
+            final joined = pathNames.map((e) => e.toString()).join(' ');
+            if (_normalize(joined).contains(needle)) return true;
+          }
+
           final name = (product['name'] ?? '').toString();
           return _normalize(name).contains(needle);
         })
         .toList(growable: false);
+
+    return _mergeUniqueProducts(strict, relaxed);
   }
 
   List<Map<String, dynamic>> _productsForSelection(
@@ -203,14 +234,12 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
       return home.filteredProducts(category: category, query: query);
     }
 
-    final exact = home.filteredProducts(
+    final strict = home.filteredProducts(
       category: category,
       subCategory: subCategory,
       subSubCategory: subSubCategory,
       query: query,
     );
-    if (exact.isNotEmpty) return exact;
-
     var subProducts = _productsForSubCategory(home, category, subCategory!);
 
     if ((subSubCategory ?? '').trim().isNotEmpty) {
@@ -234,11 +263,13 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
     }
 
     final q = _normalize(query);
-    if (q.isEmpty) return subProducts;
+    if (q.isEmpty) return _mergeUniqueProducts(strict, subProducts);
 
-    return subProducts
+    final relaxed = subProducts
         .where((product) => _matchesSearchQuery(product, q))
         .toList(growable: false);
+
+    return _mergeUniqueProducts(strict, relaxed);
   }
 
   @override

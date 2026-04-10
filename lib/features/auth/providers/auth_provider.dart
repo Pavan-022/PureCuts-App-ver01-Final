@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:purecuts/core/models/user_model.dart';
 import 'package:purecuts/core/services/auth_service.dart';
+import 'package:purecuts/core/services/payu_payment_service.dart';
 import 'package:purecuts/core/services/push_notification_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -388,6 +389,7 @@ class AuthProvider extends ChangeNotifier {
 
   Future<void> signOut() async {
     await _service.signOut();
+    await PayUPaymentService.clearPendingTransaction();
     _user = null;
     _status = AuthStatus.unauthenticated;
     unawaited(_clearCachedHeaderUser());
@@ -412,6 +414,7 @@ class AuthProvider extends ChangeNotifier {
     required Map<String, dynamic> contactDetails,
     List<Map<String, dynamic>>? addresses,
     int? selectedAddressIndex,
+    bool allowEmptyAddresses = false,
   }) async {
     final uid = _service.currentUser?.uid;
     if (uid == null) return false;
@@ -444,7 +447,17 @@ class AuthProvider extends ChangeNotifier {
           .trim(),
     };
 
-    final normalizedAddresses = (addresses ?? <Map<String, dynamic>>[])
+    final existingDeliveryDetails = _user?.deliveryDetails;
+    final existingAddresses = (existingDeliveryDetails?['addresses'] is List)
+        ? (existingDeliveryDetails!['addresses'] as List)
+              .whereType<Map>()
+              .map((entry) => Map<String, dynamic>.from(entry))
+              .toList(growable: false)
+        : const <Map<String, dynamic>>[];
+
+    final incomingAddresses = addresses ?? existingAddresses;
+
+    final normalizedAddresses = incomingAddresses
         .map((entry) {
           final rawAddress = (entry['deliveryAddress'] is Map)
               ? Map<String, dynamic>.from(entry['deliveryAddress'] as Map)
@@ -482,24 +495,47 @@ class AuthProvider extends ChangeNotifier {
         )
         .toList(growable: true);
 
-    if (normalizedAddresses.isEmpty) {
+    if (normalizedAddresses.isEmpty && !allowEmptyAddresses) {
       normalizedAddresses.add({
         'deliveryAddress': normalizedDelivery,
         'contactDetails': normalizedContact,
       });
     }
 
-    var safeSelectedIndex = (selectedAddressIndex ?? 0);
-    if (safeSelectedIndex < 0 ||
-        safeSelectedIndex >= normalizedAddresses.length) {
-      safeSelectedIndex = 0;
-    }
+    final existingSelectedIndex =
+        (existingDeliveryDetails?['selectedAddressIndex'] as num?)?.toInt();
+    var safeSelectedIndex =
+        (selectedAddressIndex ?? existingSelectedIndex ?? 0);
+    Map<String, dynamic> selectedAddress;
+    Map<String, dynamic> selectedContact;
 
-    final selectedEntry = normalizedAddresses[safeSelectedIndex];
-    final selectedAddress =
-        selectedEntry['deliveryAddress'] as Map<String, dynamic>;
-    final selectedContact =
-        selectedEntry['contactDetails'] as Map<String, dynamic>;
+    if (normalizedAddresses.isEmpty) {
+      safeSelectedIndex = 0;
+      selectedAddress = {
+        'line1': '',
+        'line2': '',
+        'landmark': '',
+        'city': '',
+        'state': '',
+        'pincode': '',
+        'country': 'India',
+        'mapLink': '',
+      };
+      selectedContact = {
+        'receiverName': '',
+        'phone': (_user?.phone ?? '').toString().trim(),
+      };
+    } else {
+      if (safeSelectedIndex < 0 ||
+          safeSelectedIndex >= normalizedAddresses.length) {
+        safeSelectedIndex = 0;
+      }
+
+      final selectedEntry = normalizedAddresses[safeSelectedIndex];
+      selectedAddress =
+          selectedEntry['deliveryAddress'] as Map<String, dynamic>;
+      selectedContact = selectedEntry['contactDetails'] as Map<String, dynamic>;
+    }
 
     final normalizedDeliveryDetails = {
       'deliveryAddress': selectedAddress,

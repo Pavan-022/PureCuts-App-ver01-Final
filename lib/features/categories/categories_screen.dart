@@ -435,7 +435,9 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   }
 
   Future<void> _refreshCategories() async {
-    await context.read<HomeProvider>().loadData(forceRefresh: true);
+    final home = context.read<HomeProvider>();
+    await home.loadData(forceRefresh: true);
+    await home.ensureVisibilityCatalogLoaded();
   }
 
   @override

@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:purecuts/core/models/product_model.dart';
 import 'package:purecuts/core/models/user_model.dart';
 import 'package:purecuts/core/constants/feature_flags.dart';
+import 'package:purecuts/core/services/performance_trace_service.dart';
 import 'package:purecuts/features/products/detail/product_models.dart';
 
 class FirestoreService {
@@ -142,55 +143,57 @@ class FirestoreService {
     int limit = _defaultProductPageBatch,
     DocumentSnapshot<Map<String, dynamic>>? startAfterDoc,
   }) async {
-    final safeLimit = _clampLimit(
-      value: limit,
-      fallback: _defaultProductPageBatch,
-      max: FeatureFlags.maxProductPageSize,
-    );
-    final collected = <ProductModel>[];
-    var cursor = startAfterDoc;
-    var hasMore = true;
-    final sw = Stopwatch()..start();
+    return PerformanceTraceService.record('api_network_request_time', () async {
+      final safeLimit = _clampLimit(
+        value: limit,
+        fallback: _defaultProductPageBatch,
+        max: FeatureFlags.maxProductPageSize,
+      );
+      final collected = <ProductModel>[];
+      var cursor = startAfterDoc;
+      var hasMore = true;
+      final sw = Stopwatch()..start();
 
-    while (collected.length < safeLimit && hasMore) {
-      Query<Map<String, dynamic>> query = _db
-          .collection(_productsCollection)
-          .orderBy(FieldPath.documentId)
-          .limit(safeLimit);
+      while (collected.length < safeLimit && hasMore) {
+        Query<Map<String, dynamic>> query = _db
+            .collection(_productsCollection)
+            .orderBy(FieldPath.documentId)
+            .limit(safeLimit);
 
-      if (cursor != null) {
-        query = query.startAfterDocument(cursor);
+        if (cursor != null) {
+          query = query.startAfterDocument(cursor);
+        }
+
+        final snap = await query.get();
+        if (snap.docs.isEmpty) {
+          hasMore = false;
+          break;
+        }
+
+        cursor = snap.docs.last;
+        for (final doc in snap.docs) {
+          if (!_isPublishedProduct(doc.data())) continue;
+          collected.add(ProductModel.fromMap(doc.data(), doc.id));
+          if (collected.length >= safeLimit) break;
+        }
+
+        if (snap.docs.length < safeLimit) {
+          hasMore = false;
+        }
       }
 
-      final snap = await query.get();
-      if (snap.docs.isEmpty) {
-        hasMore = false;
-        break;
-      }
-
-      cursor = snap.docs.last;
-      for (final doc in snap.docs) {
-        if (!_isPublishedProduct(doc.data())) continue;
-        collected.add(ProductModel.fromMap(doc.data(), doc.id));
-        if (collected.length >= safeLimit) break;
-      }
-
-      if (snap.docs.length < safeLimit) {
-        hasMore = false;
-      }
-    }
-
-    _traceQuery(
-      'getProductsPage',
-      sw,
-      details: {
-        'requestedLimit': limit,
-        'appliedLimit': safeLimit,
-        'returned': collected.length,
-        'hasMore': hasMore,
-      },
-    );
-    return (products: collected, lastDocument: cursor, hasMore: hasMore);
+      _traceQuery(
+        'getProductsPage',
+        sw,
+        details: {
+          'requestedLimit': limit,
+          'appliedLimit': safeLimit,
+          'returned': collected.length,
+          'hasMore': hasMore,
+        },
+      );
+      return (products: collected, lastDocument: cursor, hasMore: hasMore);
+    });
   }
 
   Future<
@@ -570,16 +573,18 @@ class FirestoreService {
   }
 
   Future<List<ProductVariant>> getProductVariants(String productId) async {
-    final snap = await _db
-        .collection('products')
-        .doc(productId)
-        .collection('variants')
-        .orderBy('createdAt')
-        .get();
+    return PerformanceTraceService.record('api_network_request_time', () async {
+      final snap = await _db
+          .collection('products')
+          .doc(productId)
+          .collection('variants')
+          .orderBy('createdAt')
+          .get();
 
-    return snap.docs
-        .map((doc) => ProductVariant.fromMap(doc.id, doc.data()))
-        .toList();
+      return snap.docs
+          .map((doc) => ProductVariant.fromMap(doc.id, doc.data()))
+          .toList();
+    });
   }
 
   // ── Fetch products by category ────────────────────────────────────────────

@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:payu_checkoutpro_flutter/PayUConstantKeys.dart';
 import 'package:payu_checkoutpro_flutter/payu_checkoutpro_flutter.dart';
 import 'package:purecuts/core/constants/feature_flags.dart';
+import 'package:purecuts/core/services/performance_trace_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Production-safe PayU service:
@@ -190,64 +191,72 @@ class PayUPaymentService implements PayUCheckoutProProtocol {
   Future<Map<String, dynamic>> _requestHash(
     Map<String, dynamic> payload,
   ) async {
-    final uri = Uri.parse('$_backendBaseUrl/generate-hash');
-    final response = await http.post(
-      uri,
-      headers: const {'Content-Type': 'application/json'},
-      body: jsonEncode(payload),
-    );
+    return PerformanceTraceService.record('api_network_request_time', () async {
+      final uri = Uri.parse('$_backendBaseUrl/generate-hash');
+      final response = await http.post(
+        uri,
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      );
 
-    final map = _decodeJson(response.body);
-    if (response.statusCode < 200 ||
-        response.statusCode >= 300 ||
-        map['ok'] != true) {
-      throw Exception(map['error']?.toString() ?? 'Unable to generate hash.');
-    }
+      final map = _decodeJson(response.body);
+      if (response.statusCode < 200 ||
+          response.statusCode >= 300 ||
+          map['ok'] != true) {
+        throw Exception(map['error']?.toString() ?? 'Unable to generate hash.');
+      }
 
-    return map;
+      return map;
+    });
   }
 
   Future<Map<String, dynamic>> _verifyPayment(
     Map<String, dynamic> payload,
   ) async {
-    final uri = Uri.parse('$_backendBaseUrl/verify-payment');
-    final response = await http.post(
-      uri,
-      headers: const {'Content-Type': 'application/json'},
-      body: jsonEncode(payload),
-    );
+    return PerformanceTraceService.record('api_network_request_time', () async {
+      final uri = Uri.parse('$_backendBaseUrl/verify-payment');
+      final response = await http.post(
+        uri,
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      );
 
-    final map = _decodeJson(response.body);
-    if (response.statusCode < 200 ||
-        response.statusCode >= 300 ||
-        map['ok'] != true) {
-      throw Exception(map['error']?.toString() ?? 'Unable to verify payment.');
-    }
+      final map = _decodeJson(response.body);
+      if (response.statusCode < 200 ||
+          response.statusCode >= 300 ||
+          map['ok'] != true) {
+        throw Exception(
+          map['error']?.toString() ?? 'Unable to verify payment.',
+        );
+      }
 
-    return map;
+      return map;
+    });
   }
 
   Future<Map<String, dynamic>> _syncPaymentStatus({
     required String txnid,
     required String userId,
   }) async {
-    final uri = Uri.parse('$_backendBaseUrl/sync-payment-status');
-    final response = await http.post(
-      uri,
-      headers: const {'Content-Type': 'application/json'},
-      body: jsonEncode({'txnid': txnid, 'userId': userId}),
-    );
-
-    final map = _decodeJson(response.body);
-    if (response.statusCode < 200 ||
-        response.statusCode >= 300 ||
-        map['ok'] != true) {
-      throw Exception(
-        map['error']?.toString() ?? 'Unable to sync payment status.',
+    return PerformanceTraceService.record('api_network_request_time', () async {
+      final uri = Uri.parse('$_backendBaseUrl/sync-payment-status');
+      final response = await http.post(
+        uri,
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({'txnid': txnid, 'userId': userId}),
       );
-    }
 
-    return map;
+      final map = _decodeJson(response.body);
+      if (response.statusCode < 200 ||
+          response.statusCode >= 300 ||
+          map['ok'] != true) {
+        throw Exception(
+          map['error']?.toString() ?? 'Unable to sync payment status.',
+        );
+      }
+
+      return map;
+    });
   }
 
   Map<String, dynamic> _decodeJson(String source) {

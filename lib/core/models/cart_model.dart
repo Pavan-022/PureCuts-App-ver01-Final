@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
+import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:purecuts/core/utils/product_image_contract.dart';
 
@@ -50,6 +52,7 @@ class CartItem {
 class CartModel extends ChangeNotifier {
   static const String _storageKey = 'purecuts_cart_items_v1';
   static const String _storageListKey = 'purecuts_cart_items_v1_list';
+  static const String _storageUserMetaKey = 'purecuts_cart_last_user_v1';
   static const int _maxPreviewItems = 3;
   static Future<SharedPreferences>? _prefsFuture;
   final List<CartItem> _items;
@@ -57,27 +60,33 @@ class CartModel extends ChangeNotifier {
   int _addEventTick = 0;
   String? _lastAddedProductId;
   String? _lastAddedImage;
+  String _activeUserKey = 'guest';
+  StreamSubscription<fb_auth.User?>? _authSub;
 
   CartModel._(this._items) {
     _rebuildPreviewFromItems();
+    _bindAuthChanges();
   }
 
   factory CartModel.empty() => CartModel._(<CartItem>[]);
 
   static Future<CartModel> create() async {
-    var items = await _loadFromStorage();
+    final userKey = _userStorageKey();
+    var items = await _loadFromStorage(userKey: userKey);
 
     // On some hot-restart cycles plugins may not be fully ready on first read.
     // Retry once shortly after to avoid returning a false-empty cart state.
     if (items.isEmpty) {
       await Future<void>.delayed(const Duration(milliseconds: 220));
-      final retried = await _loadFromStorage();
+      final retried = await _loadFromStorage(userKey: userKey);
       if (retried.isNotEmpty) {
         items = retried;
       }
     }
 
-    return CartModel._(items);
+    final model = CartModel._(items);
+    model._activeUserKey = userKey;
+    return model;
   }
 
   static Future<SharedPreferences> _prefs() {
@@ -165,13 +174,48 @@ class CartModel extends ChangeNotifier {
   }
 
   Future<void> reloadFromStorage() async {
-    final items = await _loadFromStorage();
+    final items = await _loadFromStorage(userKey: _activeUserKey);
     _items
       ..clear()
       ..addAll(items);
     _rebuildPreviewFromItems();
     notifyListeners();
   }
+
+  void _bindAuthChanges() {
+    _authSub?.cancel();
+    _authSub = fb_auth.FirebaseAuth.instance.authStateChanges().listen((user) {
+      final nextUserKey = _userStorageKey(user: user);
+      if (nextUserKey == _activeUserKey) return;
+      unawaited(_switchUserCart(nextUserKey));
+    });
+  }
+
+  Future<void> _switchUserCart(String nextUserKey) async {
+    _activeUserKey = nextUserKey;
+    final items = await _loadFromStorage(userKey: nextUserKey);
+    _items
+      ..clear()
+      ..addAll(items);
+    _rebuildPreviewFromItems();
+    notifyListeners();
+  }
+
+  static String _sanitizeUserKey(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return 'guest';
+    return normalized.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+  }
+
+  static String _userStorageKey({fb_auth.User? user}) {
+    final uid = (user ?? fb_auth.FirebaseAuth.instance.currentUser)?.uid ?? '';
+    return _sanitizeUserKey(uid);
+  }
+
+  static String _scopedStorageKey(String userKey) => '${_storageKey}_$userKey';
+
+  static String _scopedStorageListKey(String userKey) =>
+      '${_storageListKey}_$userKey';
 
   void _touchPreview(String productId) {
     _previewOrder.remove(productId);
@@ -204,21 +248,26 @@ class CartModel extends ChangeNotifier {
       final prefs = await _prefs();
       final rows = _items.map((e) => e.toMap()).toList(growable: false);
       final encoded = jsonEncode(rows);
-      await prefs.setString(_storageKey, encoded);
+      await prefs.setString(_scopedStorageKey(_activeUserKey), encoded);
       await prefs.setStringList(
-        _storageListKey,
+        _scopedStorageListKey(_activeUserKey),
         rows.map((e) => jsonEncode(e)).toList(growable: false),
       );
+      await prefs.setString(_storageUserMetaKey, _activeUserKey);
     } catch (e, st) {
       debugPrint('[CartModel] Persist failed: $e\n$st');
       // Ignore persistence failures so cart interactions remain functional.
     }
   }
 
-  static Future<List<CartItem>> _loadFromStorage() async {
+  static Future<List<CartItem>> _loadFromStorage({
+    required String userKey,
+  }) async {
     try {
       final prefs = await _prefs();
-      final raw = prefs.getString(_storageKey);
+      final scopedKey = _scopedStorageKey(userKey);
+      final scopedListKey = _scopedStorageListKey(userKey);
+      final raw = prefs.getString(scopedKey);
       if (raw != null && raw.trim().isNotEmpty) {
         final decoded = jsonDecode(raw);
         if (decoded is List) {
@@ -232,7 +281,7 @@ class CartModel extends ChangeNotifier {
       }
 
       // Fallback for older/corrupted JSON snapshots.
-      final rawList = prefs.getStringList(_storageListKey);
+      final rawList = prefs.getStringList(scopedListKey);
       if (rawList != null && rawList.isNotEmpty) {
         final parsed = rawList
             .map((entry) {
@@ -252,11 +301,44 @@ class CartModel extends ChangeNotifier {
         if (parsed.isNotEmpty) return parsed;
       }
 
+      // One-time legacy migration for guest only.
+      if (userKey == 'guest') {
+        final legacyRaw = prefs.getString(_storageKey);
+        if (legacyRaw != null && legacyRaw.trim().isNotEmpty) {
+          final decoded = jsonDecode(legacyRaw);
+          if (decoded is List) {
+            final parsed = decoded
+                .whereType<Map>()
+                .map((e) => CartItem.fromMap(Map<String, dynamic>.from(e)))
+                .where((e) => e.id.trim().isNotEmpty && e.quantity > 0)
+                .toList(growable: true);
+            if (parsed.isNotEmpty) {
+              await prefs.setString(scopedKey, legacyRaw);
+              await prefs.setStringList(
+                scopedListKey,
+                parsed
+                    .map((e) => jsonEncode(e.toMap()))
+                    .toList(growable: false),
+              );
+              await prefs.remove(_storageKey);
+              await prefs.remove(_storageListKey);
+              return parsed;
+            }
+          }
+        }
+      }
+
       return <CartItem>[];
     } catch (e, st) {
       debugPrint('[CartModel] Load failed: $e\n$st');
       // Ignore bad cached payload; cart will continue with empty state.
       return <CartItem>[];
     }
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
   }
 }

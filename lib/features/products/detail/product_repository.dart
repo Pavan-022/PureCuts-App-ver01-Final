@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'package:purecuts/core/services/performance_trace_service.dart';
 import 'product_models.dart';
 
 class ProductRepository {
@@ -16,95 +17,104 @@ class ProductRepository {
     String productId, {
     String? currentUserId,
   }) async {
-    final productRef = _db.collection('products').doc(productId);
+    return PerformanceTraceService.record('product_detail_load_time', () async {
+      final productRef = _db.collection('products').doc(productId);
 
-    final productDoc = await productRef.get();
-    if (!productDoc.exists || productDoc.data() == null) {
-      throw StateError('Product $productId not found');
-    }
+      final productDoc = await productRef.get();
+      if (!productDoc.exists || productDoc.data() == null) {
+        throw StateError('Product $productId not found');
+      }
 
-    QuerySnapshot<Map<String, dynamic>>? variantSnap;
-    QuerySnapshot<Map<String, dynamic>>? approvedByStatusSnap;
-    QuerySnapshot<Map<String, dynamic>>? approvedByFlagSnap;
-    DocumentSnapshot<Map<String, dynamic>>? ownReviewDoc;
+      QuerySnapshot<Map<String, dynamic>>? variantSnap;
+      QuerySnapshot<Map<String, dynamic>>? approvedByStatusSnap;
+      QuerySnapshot<Map<String, dynamic>>? approvedByFlagSnap;
+      DocumentSnapshot<Map<String, dynamic>>? ownReviewDoc;
 
-    try {
-      variantSnap = await productRef.collection('variants').get();
-    } catch (_) {
-      variantSnap = null;
-    }
-
-    try {
-      approvedByStatusSnap = await productRef
-          .collection('reviews')
-          .where('status', isEqualTo: 'approved')
-          .limit(20)
-          .get();
-    } catch (_) {
-      approvedByStatusSnap = null;
-    }
-
-    try {
-      approvedByFlagSnap = await productRef
-          .collection('reviews')
-          .where('approved', isEqualTo: true)
-          .limit(20)
-          .get();
-    } catch (_) {
-      approvedByFlagSnap = null;
-    }
-
-    final normalizedUid = (currentUserId ?? '').trim();
-    if (normalizedUid.isNotEmpty) {
       try {
-        ownReviewDoc = await productRef.collection('reviews').doc(normalizedUid).get();
+        variantSnap = await productRef.collection('variants').get();
       } catch (_) {
-        ownReviewDoc = null;
+        variantSnap = null;
       }
-    }
 
-    final variants =
-        (variantSnap?.docs ??
-                const <QueryDocumentSnapshot<Map<String, dynamic>>>[])
-            .map((doc) => ProductVariant.fromMap(doc.id, doc.data()))
-            .toList();
-
-    final mergedReviewDocs = <String, QueryDocumentSnapshot<Map<String, dynamic>>>{};
-    for (final doc in (approvedByStatusSnap?.docs ??
-        const <QueryDocumentSnapshot<Map<String, dynamic>>>[])) {
-      mergedReviewDocs[doc.id] = doc;
-    }
-    for (final doc in (approvedByFlagSnap?.docs ??
-        const <QueryDocumentSnapshot<Map<String, dynamic>>>[])) {
-      mergedReviewDocs[doc.id] = doc;
-    }
-
-    final reviews = mergedReviewDocs.values
-        .map((doc) => ReviewModel.fromMap(doc.id, doc.data()))
-        .toList(growable: true)
-      ..sort((a, b) {
-        final aTime = a.createdAt?.millisecondsSinceEpoch ?? 0;
-        final bTime = b.createdAt?.millisecondsSinceEpoch ?? 0;
-        return bTime.compareTo(aTime);
-      });
-
-    final ownDoc = ownReviewDoc;
-    if (ownDoc?.exists == true && ownDoc?.data() != null) {
-      final ownReview = ReviewModel.fromMap(ownDoc!.id, ownDoc.data()!);
-      final existingIndex = reviews.indexWhere((r) => r.id == ownReview.id);
-      if (existingIndex >= 0) {
-        reviews[existingIndex] = ownReview;
-      } else {
-        reviews.insert(0, ownReview);
+      try {
+        approvedByStatusSnap = await productRef
+            .collection('reviews')
+            .where('status', isEqualTo: 'approved')
+            .limit(20)
+            .get();
+      } catch (_) {
+        approvedByStatusSnap = null;
       }
-    }
 
-    return Product.fromMap(
-      productDoc.id,
-      productDoc.data()!,
-      variants: variants,
-      reviews: reviews,
-    );
+      try {
+        approvedByFlagSnap = await productRef
+            .collection('reviews')
+            .where('approved', isEqualTo: true)
+            .limit(20)
+            .get();
+      } catch (_) {
+        approvedByFlagSnap = null;
+      }
+
+      final normalizedUid = (currentUserId ?? '').trim();
+      if (normalizedUid.isNotEmpty) {
+        try {
+          ownReviewDoc = await productRef
+              .collection('reviews')
+              .doc(normalizedUid)
+              .get();
+        } catch (_) {
+          ownReviewDoc = null;
+        }
+      }
+
+      final variants =
+          (variantSnap?.docs ??
+                  const <QueryDocumentSnapshot<Map<String, dynamic>>>[])
+              .map((doc) => ProductVariant.fromMap(doc.id, doc.data()))
+              .toList();
+
+      final mergedReviewDocs =
+          <String, QueryDocumentSnapshot<Map<String, dynamic>>>{};
+      for (final doc
+          in (approvedByStatusSnap?.docs ??
+              const <QueryDocumentSnapshot<Map<String, dynamic>>>[])) {
+        mergedReviewDocs[doc.id] = doc;
+      }
+      for (final doc
+          in (approvedByFlagSnap?.docs ??
+              const <QueryDocumentSnapshot<Map<String, dynamic>>>[])) {
+        mergedReviewDocs[doc.id] = doc;
+      }
+
+      final reviews =
+          mergedReviewDocs.values
+              .map((doc) => ReviewModel.fromMap(doc.id, doc.data()))
+              .toList(growable: true)
+            ..sort((a, b) {
+              final aTime = a.createdAt?.millisecondsSinceEpoch ?? 0;
+              final bTime = b.createdAt?.millisecondsSinceEpoch ?? 0;
+              return bTime.compareTo(aTime);
+            });
+
+      final ownDoc = ownReviewDoc;
+      if (ownDoc?.exists == true && ownDoc?.data() != null) {
+        final ownReview = ReviewModel.fromMap(ownDoc!.id, ownDoc.data()!);
+        final existingIndex = reviews.indexWhere((r) => r.id == ownReview.id);
+        if (existingIndex >= 0) {
+          reviews[existingIndex] = ownReview;
+        } else {
+          reviews.insert(0, ownReview);
+        }
+      }
+
+      return Product.fromMap(
+        productDoc.id,
+        productDoc.data()!,
+        variants: variants,
+        reviews: reviews,
+      );
+    });
   }
 
   /// Returns up to [limit] recommended products, filtered by [brand] when

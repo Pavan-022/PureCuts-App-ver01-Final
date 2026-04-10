@@ -1,4 +1,9 @@
+import 'dart:async';
+import 'dart:ui';
+
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_performance/firebase_performance.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -45,16 +50,42 @@ class _SlideLeftPageTransitionsBuilder extends PageTransitionsBuilder {
   }
 }
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  try {
-    _initialCartModel = await CartModel.create();
-  } catch (_) {
-    _initialCartModel = CartModel.empty();
-  }
-  runApp(const PureCutsApp());
+void main() {
+  runZonedGuarded(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+
+      final crashlytics = FirebaseCrashlytics.instance;
+      final performance = FirebasePerformance.instance;
+
+      await performance.setPerformanceCollectionEnabled(true);
+
+      FlutterError.onError = (details) {
+        FlutterError.presentError(details);
+        crashlytics.recordFlutterFatalError(details);
+      };
+
+      PlatformDispatcher.instance.onError = (error, stack) {
+        crashlytics.recordError(error, stack, fatal: true);
+        return true;
+      };
+
+      try {
+        _initialCartModel = await CartModel.create();
+      } catch (_) {
+        _initialCartModel = CartModel.empty();
+      }
+
+      runApp(const PureCutsApp());
+    },
+    (error, stack) async {
+      await FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+    },
+  );
 }
 
 class PureCutsApp extends StatefulWidget {
@@ -80,7 +111,14 @@ class _PureCutsAppState extends State<PureCutsApp> {
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider<CartModel>.value(value: _initialCartModel),
         ChangeNotifierProvider(create: (_) => HomeProvider()),
-        ChangeNotifierProvider(create: (_) => OrderProvider()),
+        ChangeNotifierProxyProvider<AuthProvider, OrderProvider>(
+          create: (_) => OrderProvider(),
+          update: (_, auth, orders) {
+            final resolved = orders ?? OrderProvider();
+            resolved.syncAuthUid(auth.user?.uid);
+            return resolved;
+          },
+        ),
       ],
       child: MaterialApp(
         navigatorKey: appNavigatorKey,

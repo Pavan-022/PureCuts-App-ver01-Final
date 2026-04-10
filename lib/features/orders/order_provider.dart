@@ -25,6 +25,7 @@ class OrderProvider extends ChangeNotifier {
   DocumentSnapshot<Map<String, dynamic>>? _ordersCursor;
   String? _ordersLoadedUid;
   String? _ordersError;
+  String _activeAuthUid = '';
 
   List<Map<String, dynamic>> get boughtProducts =>
       _boughtProducts.values.toList();
@@ -37,6 +38,18 @@ class OrderProvider extends ChangeNotifier {
   String? get ordersError => _ordersError;
 
   bool hasBought(String productId) => _boughtProducts.containsKey(productId);
+
+  void syncAuthUid(String? uid) {
+    final nextUid = (uid ?? '').trim();
+    if (nextUid == _activeAuthUid) return;
+
+    final shouldClear = _activeAuthUid.isNotEmpty && nextUid != _activeAuthUid;
+    _activeAuthUid = nextUid;
+
+    if (nextUid.isEmpty || shouldClear) {
+      clear();
+    }
+  }
 
   String _baseProductId(String value) {
     final id = value.trim();

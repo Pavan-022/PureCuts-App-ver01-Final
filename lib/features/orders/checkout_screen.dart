@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
+import 'package:firebase_performance/firebase_performance.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/models/cart_model.dart';
@@ -10,12 +11,12 @@ import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/services/image_bandwidth_telemetry.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/theme/spacing.dart';
+import 'package:purecuts/core/services/performance_trace_service.dart';
 import 'package:purecuts/core/utils/product_image_contract.dart';
 import 'package:purecuts/core/services/payu_payment_service.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/orders/order_confirm_screen.dart';
-import 'package:purecuts/features/orders/payu_payment_screen.dart';
 import 'package:purecuts/features/products/product_detail_screen.dart';
 
 class CheckoutScreen extends StatefulWidget {
@@ -38,7 +39,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   static const int _puneDeliveryCharge = 19;
   static const int _maharashtraDeliveryCharge = 30;
-  static const int _outsideMaharashtraDeliveryCharge = 49;
+  static const int _outsideMaharashtraDeliveryCharge = 89;
   static const int _freeDeliveryThreshold = 1000;
 
   static const Set<String> _punePincodes = {
@@ -120,6 +121,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String? _recoveredSuccessfulPayuTxnId;
   bool _checkingRecoveredPayment = false;
   bool _autoFinalizeAttempted = false;
+  Trace? _checkoutLoadTrace;
+
+  void _startCheckoutLoadTrace() {
+    if (_checkoutLoadTrace != null) return;
+    final trace = FirebasePerformance.instance.newTrace('checkout_load_time');
+    _checkoutLoadTrace = trace;
+    unawaited(trace.start());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_stopCheckoutLoadTrace());
+    });
+  }
+
+  Future<void> _stopCheckoutLoadTrace() async {
+    final trace = _checkoutLoadTrace;
+    _checkoutLoadTrace = null;
+    if (trace != null) {
+      await trace.stop();
+    }
+  }
 
   String _friendlyPaymentNotCompletedMessage(String reasonRaw) {
     final reason = reasonRaw.trim().toLowerCase();
@@ -221,6 +241,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   @override
   void initState() {
     super.initState();
+    _startCheckoutLoadTrace();
 
     final auth = context.read<AuthProvider>();
     _hydrateAddressesFromUser(auth);
@@ -252,6 +273,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   @override
   void dispose() {
+    unawaited(_stopCheckoutLoadTrace());
     _line1Controller.dispose();
     _line2Controller.dispose();
     _landmarkController.dispose();
@@ -317,34 +339,50 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   int _itemTotal(CartModel cart) => cart.totalPrice;
 
-  bool _isPuneDelivery() {
-    final city = _cityController.text.trim().toLowerCase();
-    final pincode = _pincodeController.text.trim();
+  Map<String, dynamic> _activeDeliveryAddress() {
+    if (_savedAddresses.isNotEmpty &&
+        _selectedAddressIndex >= 0 &&
+        _selectedAddressIndex < _savedAddresses.length) {
+      final selected = _savedAddresses[_selectedAddressIndex];
+      final selectedAddress = selected['deliveryAddress'];
+      if (selectedAddress is Map) {
+        return Map<String, dynamic>.from(selectedAddress);
+      }
+    }
+    return _deliveryAddressMap();
+  }
+
+  bool _isPuneDelivery(Map<String, dynamic> deliveryAddress) {
+    final city = (deliveryAddress['city'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final pincode = (deliveryAddress['pincode'] ?? '').toString().trim();
     return city == 'pune' ||
         city.contains('pune') ||
         _punePincodes.contains(pincode);
   }
 
-  bool _isOutsideMaharashtra() {
-    final state = _stateController.text.trim().toLowerCase();
+  bool _isOutsideMaharashtra(Map<String, dynamic> deliveryAddress) {
+    final state = (deliveryAddress['state'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
     if (state.isEmpty) return false;
     return !(state == 'maharashtra' ||
         state == 'mh' ||
         state.contains('maharashtra'));
   }
 
-  /// Delivery slab:
-  /// - Free at or above ₹1000
-  /// - Pune: ₹19
-  /// - Maharashtra (non-Pune): ₹30
-  /// - Outside Maharashtra: ₹49
   int _calculateDeliveryCharge(int itemTotal) {
     int regionalCharge() {
-      if (_isOutsideMaharashtra()) {
+      final deliveryAddress = _activeDeliveryAddress();
+
+      if (_isOutsideMaharashtra(deliveryAddress)) {
         return _outsideMaharashtraDeliveryCharge;
       }
 
-      if (_isPuneDelivery()) {
+      if (_isPuneDelivery(deliveryAddress)) {
         return _puneDeliveryCharge;
       }
 
@@ -379,6 +417,114 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       _recoveredPayuStatus = null;
       _recoveredSuccessfulPayuTxnId = null;
     });
+  }
+
+  Future<Map<String, dynamic>> _startPayUCheckoutDirect({
+    required String amount,
+    required String productInfo,
+    required Map<String, dynamic> orderDraft,
+  }) async {
+    final paymentService = PayUPaymentService();
+    StreamSubscription<Map<String, dynamic>>? eventSub;
+    final completer = Completer<Map<String, dynamic>>();
+    String txnId = '';
+
+    void completeOnce(Map<String, dynamic> result) {
+      if (!completer.isCompleted) {
+        completer.complete(result);
+      }
+    }
+
+    eventSub = paymentService.events.listen((event) {
+      final type = (event['type'] ?? '').toString();
+
+      if (type == 'cancel') {
+        completeOnce({
+          'status': 'cancelled',
+          'txnid': txnId,
+          'reason': 'payment-cancelled',
+          'orderRef': '',
+        });
+        return;
+      }
+
+      if (type == 'error') {
+        completeOnce({
+          'status': 'failure',
+          'txnid': txnId,
+          'reason': 'payment-error',
+          'orderRef': '',
+        });
+        return;
+      }
+
+      if (type == 'sync' || type == 'verify') {
+        final status = (event['status'] ?? '').toString().toLowerCase();
+
+        if (status == 'success') {
+          completeOnce({
+            'status': 'success',
+            'txnid': (event['txnid'] ?? txnId).toString(),
+            'reason': '',
+            'orderRef': (event['orderRef'] ?? '').toString(),
+          });
+          return;
+        }
+
+        if (status == 'failure' || status == 'cancelled') {
+          completeOnce({
+            'status': status,
+            'txnid': (event['txnid'] ?? txnId).toString(),
+            'reason': 'sync-$status',
+            'orderRef': '',
+          });
+        }
+      }
+    });
+
+    try {
+      final auth = context.read<AuthProvider>();
+      final user = auth.user;
+      final uid = (user?.uid ?? '').trim();
+      final firstName = (user?.ownerName ?? user?.name ?? 'PureCuts User')
+          .trim();
+      final email = (user?.email ?? '').trim().isNotEmpty
+          ? user!.email.trim()
+          : 'customer@purecuts.app';
+      final phone = (user?.phone ?? '9999999999').replaceAll(RegExp(r'\D'), '');
+
+      txnId = await paymentService.startCheckout(
+        userId: uid,
+        amount: amount,
+        productInfo: productInfo,
+        firstName: firstName,
+        email: email,
+        phone: phone,
+        orderDraft: orderDraft,
+      );
+
+      final result = await completer.future.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () => {
+          'status': 'failure',
+          'txnid': txnId,
+          'reason': 'payment-timeout',
+          'orderRef': '',
+        },
+      );
+
+      return result;
+    } catch (error) {
+      return {
+        'status': 'failure',
+        'txnid': txnId,
+        'reason': 'payment-error',
+        'orderRef': '',
+      };
+    } finally {
+      await eventSub.cancel();
+      paymentService.dispose();
+    }
   }
 
   Future<String?> _waitForBackendPayuOrderRef(
@@ -750,6 +896,27 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     keyboardType: TextInputType.phone,
                   ),
                   const SizedBox(height: AppSpacing.lg),
+                  if (editIndex != null &&
+                      editIndex >= 0 &&
+                      editIndex < _savedAddresses.length)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            Navigator.of(sheetContext).pop();
+                            await _deleteAddress(editIndex);
+                          },
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text('Delete this address'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.error,
+                            side: const BorderSide(color: AppColors.error),
+                          ),
+                        ),
+                      ),
+                    ),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
@@ -819,6 +986,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             ..clear()
                             ..addAll(updatedList);
                           _selectedAddressIndex = selectedIdx;
+                          _applyAddressEntry(_savedAddresses[selectedIdx]);
                         });
                         Navigator.of(sheetContext).pop();
                         ScaffoldMessenger.of(this.context).showSnackBar(
@@ -863,6 +1031,109 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     });
   }
 
+  Future<void> _deleteAddress(int index) async {
+    if (index < 0 || index >= _savedAddresses.length) return;
+
+    final confirmed =
+        await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Delete address?'),
+            content: const Text(
+              'This address will be removed from your saved checkout addresses.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!confirmed) return;
+
+    final updatedList = List<Map<String, dynamic>>.from(_savedAddresses)
+      ..removeAt(index);
+
+    final auth = context.read<AuthProvider>();
+    bool saved = false;
+    var nextSelectedIndex = 0;
+
+    if (updatedList.isEmpty) {
+      saved = await auth.updateCheckoutDeliveryDetails(
+        deliveryAddress: const <String, dynamic>{},
+        contactDetails: const <String, dynamic>{},
+        addresses: const <Map<String, dynamic>>[],
+        selectedAddressIndex: 0,
+        allowEmptyAddresses: true,
+      );
+    } else {
+      if (_selectedAddressIndex > index) {
+        nextSelectedIndex = _selectedAddressIndex - 1;
+      } else if (_selectedAddressIndex == index) {
+        nextSelectedIndex = index.clamp(0, updatedList.length - 1);
+      } else {
+        nextSelectedIndex = _selectedAddressIndex;
+      }
+
+      final selectedEntry = updatedList[nextSelectedIndex];
+      saved = await auth.updateCheckoutDeliveryDetails(
+        deliveryAddress:
+            selectedEntry['deliveryAddress'] as Map<String, dynamic>? ??
+            const <String, dynamic>{},
+        contactDetails:
+            selectedEntry['contactDetails'] as Map<String, dynamic>? ??
+            const <String, dynamic>{},
+        addresses: updatedList,
+        selectedAddressIndex: nextSelectedIndex,
+      );
+    }
+
+    if (!mounted) return;
+
+    if (!saved) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Unable to delete address right now. Please try again.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _savedAddresses
+        ..clear()
+        ..addAll(updatedList);
+      _selectedAddressIndex = updatedList.isEmpty ? 0 : nextSelectedIndex;
+
+      if (updatedList.isEmpty) {
+        _line1Controller.clear();
+        _line2Controller.clear();
+        _landmarkController.clear();
+        _cityController.clear();
+        _stateController.clear();
+        _pincodeController.clear();
+        _mapLinkController.clear();
+        _receiverNameController.clear();
+        _phoneController.text = (auth.user?.phone ?? '').toString();
+      } else {
+        _applyAddressEntry(_savedAddresses[_selectedAddressIndex]);
+      }
+    });
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Address deleted.')));
+  }
+
   Widget _textField(
     TextEditingController controller,
     String hint, {
@@ -904,444 +1175,453 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     });
 
     try {
-      if (_isDeliveryOrContactMissing()) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Please add delivery/contact details before placing order.',
+      await PerformanceTraceService.recordVoid('place_order_time', () async {
+        if (_isDeliveryOrContactMissing()) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Please add delivery/contact details before placing order.',
+              ),
             ),
-          ),
-        );
-        return;
-      }
+          );
+          return;
+        }
 
-      final itemTotal = _itemTotal(cart);
-      final deliveryCharge = _calculateDeliveryCharge(itemTotal);
-      final grandTotal = _grandTotal(cart);
+        final itemTotal = _itemTotal(cart);
+        final deliveryCharge = _calculateDeliveryCharge(itemTotal);
+        final grandTotal = _grandTotal(cart);
 
-      bool confirmed = true;
-      // ── Confirmation dialog ──────────────────────────────────────────────────
-      if (!skipConfirmation) {
-        if (!mounted) return;
-        confirmed =
-            await showDialog<bool>(
-              context: context,
-              builder: (dialogContext) => AlertDialog(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.xl),
-                ),
-                title: const Text(
-                  'Confirm order',
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 18,
+        bool confirmed = true;
+        // ── Confirmation dialog ──────────────────────────────────────────────────
+        if (!skipConfirmation) {
+          if (!mounted) return;
+          confirmed =
+              await showDialog<bool>(
+                context: context,
+                builder: (dialogContext) => AlertDialog(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.xl),
                   ),
-                ),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Please review your order before placing it.',
-                      style: TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 13,
-                      ),
+                  title: const Text(
+                    'Confirm order',
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 18,
                     ),
-                    const SizedBox(height: AppSpacing.md),
-                    // Summary box
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(AppSpacing.md),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8F2FF),
-                        borderRadius: BorderRadius.circular(AppRadius.lg),
-                        border: Border.all(color: const Color(0xFFE3D4F4)),
+                  ),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Please review your order before placing it.',
+                        style: TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 13,
+                        ),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Item count
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                'Items',
-                                style: TextStyle(
-                                  color: AppColors.textSecondary,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              Text(
-                                '${cart.items.length} item${cart.items.length == 1 ? '' : 's'}',
-                                style: const TextStyle(
-                                  color: AppColors.textPrimary,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          // Delivery charge row
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                'Delivery',
-                                style: TextStyle(
-                                  color: AppColors.textSecondary,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              Text(
-                                deliveryCharge == 0
-                                    ? 'FREE'
-                                    : '₹$deliveryCharge',
-                                style: TextStyle(
-                                  color: deliveryCharge == 0
-                                      ? Colors.green
-                                      : AppColors.textPrimary,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(
-                              vertical: AppSpacing.sm,
-                            ),
-                            child: Divider(height: 1),
-                          ),
-                          // Grand total
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                'Total',
-                                style: TextStyle(
-                                  color: AppColors.textPrimary,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              Text(
-                                '₹$grandTotal',
-                                style: const TextStyle(
-                                  color: AppColors.textPrimary,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: AppSpacing.sm),
-                          // Payment method
-                          Row(
-                            children: [
-                              const Expanded(
-                                flex: 3,
-                                child: Text(
-                                  'Payment',
+                      const SizedBox(height: AppSpacing.md),
+                      // Summary box
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(AppSpacing.md),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8F2FF),
+                          borderRadius: BorderRadius.circular(AppRadius.lg),
+                          border: Border.all(color: const Color(0xFFE3D4F4)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Item count
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Items',
                                   style: TextStyle(
                                     color: AppColors.textSecondary,
                                     fontSize: 13,
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                flex: 5,
-                                child: Text(
-                                  _selectedPaymentMethod,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  textAlign: TextAlign.right,
+                                Text(
+                                  '${cart.items.length} item${cart.items.length == 1 ? '' : 's'}',
                                   style: const TextStyle(
                                     color: AppColors.textPrimary,
                                     fontWeight: FontWeight.w600,
                                     fontSize: 13,
                                   ),
                                 ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            // Delivery charge row
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Delivery',
+                                  style: TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                Text(
+                                  deliveryCharge == 0
+                                      ? 'FREE'
+                                      : '₹$deliveryCharge',
+                                  style: TextStyle(
+                                    color: deliveryCharge == 0
+                                        ? Colors.green
+                                        : AppColors.textPrimary,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(
+                                vertical: AppSpacing.sm,
                               ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                actionsPadding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  0,
-                  AppSpacing.md,
-                  AppSpacing.md,
-                ),
-                actions: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            side: const BorderSide(color: AppColors.primary),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(AppRadius.xl),
+                              child: Divider(height: 1),
                             ),
-                          ),
-                          onPressed: () =>
-                              Navigator.of(dialogContext).pop(false),
-                          child: const Text(
-                            'Go back',
-                            style: TextStyle(
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.w700,
+                            // Grand total
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Total',
+                                  style: TextStyle(
+                                    color: AppColors.textPrimary,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                Text(
+                                  '₹$grandTotal',
+                                  style: const TextStyle(
+                                    color: AppColors.textPrimary,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.md),
-                      Expanded(
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(AppRadius.xl),
+                            const SizedBox(height: AppSpacing.sm),
+                            // Payment method
+                            Row(
+                              children: [
+                                const Expanded(
+                                  flex: 3,
+                                  child: Text(
+                                    'Payment',
+                                    style: TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  flex: 5,
+                                  child: Text(
+                                    _selectedPaymentMethod,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.right,
+                                    style: const TextStyle(
+                                      color: AppColors.textPrimary,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                          onPressed: () =>
-                              Navigator.of(dialogContext).pop(true),
-                          child: const Text(
-                            'Confirm',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
+                          ],
                         ),
                       ),
                     ],
                   ),
-                ],
-              ),
-            ) ??
-            false;
-      }
-
-      // User cancelled — do nothing
-      if (confirmed != true || !mounted) return;
-      // ── End confirmation dialog ──────────────────────────────────────────────
-
-      final auth = context.read<AuthProvider>();
-      final uid =
-          auth.user?.uid ?? FirebaseAuth.instance.currentUser?.uid ?? '';
-      final deliveryAddress = _deliveryAddressMap();
-      final contactDetails = _contactDetailsMap();
-
-      unawaited(
-        auth
-            .updateCheckoutDeliveryDetails(
-              deliveryAddress: deliveryAddress,
-              contactDetails: contactDetails,
-            )
-            .then((saved) {
-              if (!saved || !mounted) return;
-            })
-            .catchError((_) {
-              // Best-effort pre-save only. Order persistence still happens on confirmation.
-            }),
-      );
-
-      final allProducts = home.productMaps;
-      final productById = <String, Map<String, dynamic>>{
-        for (final p in allProducts)
-          _baseProductId((p['id'] ?? '').toString()): p,
-      };
-
-      final orderedItems = cart.items
-          .map((item) {
-            final product =
-                productById[_baseProductId(item.id)] ??
-                const <String, dynamic>{};
-            return {
-              'id': item.id,
-              'name': item.name,
-              'brand': item.brand,
-              'image': item.image,
-              'price': item.price,
-              'originalPrice': (product['originalPrice'] ?? item.price),
-              'size': (product['size'] ?? '').toString(),
-              'tag': (product['tag'] ?? '').toString(),
-              'tags': (product['tags'] is List)
-                  ? List<String>.from(product['tags'])
-                  : <String>[],
-              'category': (product['category'] ?? '').toString(),
-              'subCategory': (product['subCategory'] ?? '').toString(),
-              'quantity': item.quantity,
-            };
-          })
-          .toList(growable: false);
-
-      final deliveryChargeValue = _calculateDeliveryCharge(itemTotal);
-      var successfulPaymentTxnId = (_recoveredSuccessfulPayuTxnId ?? '').trim();
-      String? orderRef;
-
-      if (_selectedPaymentMethod == _payuPaymentMethod) {
-        if ((_recoveredSuccessfulPayuTxnId ?? '').trim().isEmpty) {
-          final authUser = context.read<AuthProvider>().user;
-          final draftCustomerName =
-              (authUser?.ownerName ?? authUser?.name ?? '').trim();
-          final draftCustomerEmail = (authUser?.email ?? '').trim();
-          final draftCustomerPhone = (contactDetails['phone'] ?? '')
-              .toString()
-              .trim();
-
-          final paymentResult = await Navigator.push<Map<String, dynamic>>(
-            context,
-            MaterialPageRoute(
-              builder: (_) => PayUPaymentScreen(
-                amount: grandTotal.toString(),
-                productInfo: 'PureCuts Order',
-                orderDraft: {
-                  'uid': uid,
-                  'userId': uid,
-                  'customerId': uid,
-                  'items': orderedItems,
-                  'deliveryAddress': deliveryAddress,
-                  'contactDetails': contactDetails,
-                  'paymentMethod': _selectedPaymentMethod,
-                  'itemTotal': itemTotal,
-                  'deliveryCharge': deliveryChargeValue,
-                  'handlingCharge': 0,
-                  'grandTotal': grandTotal,
-                  'customerName': draftCustomerName,
-                  'customerEmail': draftCustomerEmail,
-                  'customerPhone': draftCustomerPhone,
-                },
-              ),
-            ),
-          );
-
-          if (!mounted) return;
-
-          final paymentStatus = (paymentResult?['status'] ?? '')
-              .toString()
-              .toLowerCase();
-          if (paymentStatus != 'success') {
-            final reason = (paymentResult?['reason'] ?? '').toString();
-            final message = _friendlyPaymentNotCompletedMessage(reason);
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text(message)));
-            return;
-          }
-
-          final resolvedOrderRef = (paymentResult?['orderRef'] ?? '')
-              .toString()
-              .trim();
-          if (resolvedOrderRef.isNotEmpty) {
-            orderRef = resolvedOrderRef;
-          }
-
-          successfulPaymentTxnId = (paymentResult?['txnid'] ?? '')
-              .toString()
-              .trim();
+                  actionsPadding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    0,
+                    AppSpacing.md,
+                    AppSpacing.md,
+                  ),
+                  actions: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              side: const BorderSide(color: AppColors.primary),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.xl,
+                                ),
+                              ),
+                            ),
+                            onPressed: () =>
+                                Navigator.of(dialogContext).pop(false),
+                            child: const Text(
+                              'Go back',
+                              style: TextStyle(
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.md),
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.xl,
+                                ),
+                              ),
+                            ),
+                            onPressed: () =>
+                                Navigator.of(dialogContext).pop(true),
+                            child: const Text(
+                              'Confirm',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ) ??
+              false;
         }
-      }
 
-      if (uid.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Session expired. Please login again to place order.',
-            ),
-          ),
+        // User cancelled — do nothing
+        if (confirmed != true || !mounted) return;
+        // ── End confirmation dialog ──────────────────────────────────────────────
+
+        final auth = context.read<AuthProvider>();
+        final uid =
+            auth.user?.uid ?? FirebaseAuth.instance.currentUser?.uid ?? '';
+        final deliveryAddress = _deliveryAddressMap();
+        final contactDetails = _contactDetailsMap();
+
+        unawaited(
+          auth
+              .updateCheckoutDeliveryDetails(
+                deliveryAddress: deliveryAddress,
+                contactDetails: contactDetails,
+              )
+              .then((saved) {
+                if (!saved || !mounted) return;
+              })
+              .catchError((_) {
+                // Best-effort pre-save only. Order persistence still happens on confirmation.
+              }),
         );
-        return;
-      }
 
-      try {
+        final allProducts = home.productMaps;
+        final productById = <String, Map<String, dynamic>>{
+          for (final p in allProducts)
+            _baseProductId((p['id'] ?? '').toString()): p,
+        };
+
+        final orderedItems = cart.items
+            .map((item) {
+              final product =
+                  productById[_baseProductId(item.id)] ??
+                  const <String, dynamic>{};
+              return {
+                'id': item.id,
+                'name': item.name,
+                'brand': item.brand,
+                'image': item.image,
+                'price': item.price,
+                'originalPrice': (product['originalPrice'] ?? item.price),
+                'size': (product['size'] ?? '').toString(),
+                'tag': (product['tag'] ?? '').toString(),
+                'tags': (product['tags'] is List)
+                    ? List<String>.from(product['tags'])
+                    : <String>[],
+                'category': (product['category'] ?? '').toString(),
+                'subCategory': (product['subCategory'] ?? '').toString(),
+                'quantity': item.quantity,
+              };
+            })
+            .toList(growable: false);
+
+        final deliveryChargeValue = _calculateDeliveryCharge(itemTotal);
+        var successfulPaymentTxnId = (_recoveredSuccessfulPayuTxnId ?? '')
+            .trim();
+        String? orderRef;
+
         if (_selectedPaymentMethod == _payuPaymentMethod) {
-          if (successfulPaymentTxnId.isEmpty) {
-            throw StateError('Missing payment transaction id.');
-          }
+          if ((_recoveredSuccessfulPayuTxnId ?? '').trim().isEmpty) {
+            final authUser = context.read<AuthProvider>().user;
+            final draftCustomerName =
+                (authUser?.ownerName ?? authUser?.name ?? '').trim();
+            final draftCustomerEmail = (authUser?.email ?? '').trim();
+            final draftCustomerPhone = (contactDetails['phone'] ?? '')
+                .toString()
+                .trim();
 
+            final paymentResult = await PerformanceTraceService.record(
+              'payment_time',
+              () async {
+                return _startPayUCheckoutDirect(
+                  amount: grandTotal.toString(),
+                  productInfo: 'PureCuts Order',
+                  orderDraft: {
+                    'uid': uid,
+                    'userId': uid,
+                    'customerId': uid,
+                    'items': orderedItems,
+                    'deliveryAddress': deliveryAddress,
+                    'contactDetails': contactDetails,
+                    'paymentMethod': _selectedPaymentMethod,
+                    'itemTotal': itemTotal,
+                    'deliveryCharge': deliveryChargeValue,
+                    'handlingCharge': 0,
+                    'grandTotal': grandTotal,
+                    'customerName': draftCustomerName,
+                    'customerEmail': draftCustomerEmail,
+                    'customerPhone': draftCustomerPhone,
+                  },
+                );
+              },
+            );
+
+            if (!mounted) return;
+
+            final paymentStatus = (paymentResult['status'] ?? '')
+                .toString()
+                .toLowerCase();
+            if (paymentStatus != 'success') {
+              final reason = (paymentResult['reason'] ?? '').toString();
+              final message = _friendlyPaymentNotCompletedMessage(reason);
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(message)));
+              return;
+            }
+
+            final resolvedOrderRef = (paymentResult['orderRef'] ?? '')
+                .toString()
+                .trim();
+            if (resolvedOrderRef.isNotEmpty) {
+              orderRef = resolvedOrderRef;
+            }
+
+            successfulPaymentTxnId = (paymentResult['txnid'] ?? '')
+                .toString()
+                .trim();
+          }
+        }
+
+        if (uid.trim().isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Payment received. Finalizing your order...'),
-              duration: Duration(seconds: 2),
+              content: Text(
+                'Session expired. Please login again to place order.',
+              ),
             ),
           );
-
-          orderRef = await _waitForBackendPayuOrderRef(successfulPaymentTxnId);
-        } else {
-          orderRef = await _firestoreService.registerUserPurchase(
-            uid: uid,
-            items: orderedItems,
-            total: grandTotal,
-            deliveryAddress: deliveryAddress,
-            contactDetails: contactDetails,
-            paymentMethod: _selectedPaymentMethod,
-            paymentTxnId: successfulPaymentTxnId,
-            billDetails: {
-              'itemTotal': itemTotal,
-              'deliveryCharge': deliveryChargeValue,
-              'handlingCharge': 0,
-              'grandTotal': grandTotal,
-            },
-            userProfile: auth.user?.toMap(),
-          );
+          return;
         }
-      } catch (error) {
+
+        try {
+          if (_selectedPaymentMethod == _payuPaymentMethod) {
+            if (successfulPaymentTxnId.isEmpty) {
+              throw StateError('Missing payment transaction id.');
+            }
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Payment received. Finalizing your order...'),
+                duration: Duration(seconds: 2),
+              ),
+            );
+
+            orderRef = await _waitForBackendPayuOrderRef(
+              successfulPaymentTxnId,
+            );
+          } else {
+            orderRef = await _firestoreService.registerUserPurchase(
+              uid: uid,
+              items: orderedItems,
+              total: grandTotal,
+              deliveryAddress: deliveryAddress,
+              contactDetails: contactDetails,
+              paymentMethod: _selectedPaymentMethod,
+              paymentTxnId: successfulPaymentTxnId,
+              billDetails: {
+                'itemTotal': itemTotal,
+                'deliveryCharge': deliveryChargeValue,
+                'handlingCharge': 0,
+                'grandTotal': grandTotal,
+              },
+              userProfile: auth.user?.toMap(),
+            );
+          }
+        } catch (error) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Order could not be saved right now. Please try again.',
+              ),
+            ),
+          );
+          return;
+        }
+
+        if ((orderRef ?? '').trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Order could not be placed. Please try again.'),
+            ),
+          );
+          return;
+        }
+
+        if (_selectedPaymentMethod == _payuPaymentMethod) {
+          await _clearPendingOnlinePaymentMarkers();
+        }
+
+        // Clear cart only after confirmed order persistence.
+        cart.clear();
+
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Order could not be saved right now. Please try again.',
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => OrderConfirmScreen(
+              total: grandTotal,
+              orderedItems: orderedItems,
+              deliveryAddress: deliveryAddress,
+              contactDetails: contactDetails,
+              paymentMethod: _selectedPaymentMethod,
+              alreadyPlacedOrderRef: orderRef,
+              persistOrder: _selectedPaymentMethod != _payuPaymentMethod,
+              billDetails: {
+                'itemTotal': itemTotal,
+                'deliveryCharge': deliveryChargeValue,
+                'handlingCharge': 0,
+                'grandTotal': grandTotal,
+              },
             ),
           ),
         );
-        return;
-      }
-
-      if ((orderRef ?? '').trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Order could not be placed. Please try again.'),
-          ),
-        );
-        return;
-      }
-
-      if (_selectedPaymentMethod == _payuPaymentMethod) {
-        await _clearPendingOnlinePaymentMarkers();
-      }
-
-      // Clear cart only after confirmed order persistence.
-      cart.clear();
-
-      if (!mounted) return;
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => OrderConfirmScreen(
-            total: grandTotal,
-            orderedItems: orderedItems,
-            deliveryAddress: deliveryAddress,
-            contactDetails: contactDetails,
-            paymentMethod: _selectedPaymentMethod,
-            alreadyPlacedOrderRef: orderRef,
-            persistOrder: _selectedPaymentMethod != _payuPaymentMethod,
-            billDetails: {
-              'itemTotal': itemTotal,
-              'deliveryCharge': deliveryChargeValue,
-              'handlingCharge': 0,
-              'grandTotal': grandTotal,
-            },
-          ),
-        ),
-      );
+      });
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2096,15 +2376,30 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                         ],
                                       ),
                                     ),
-                                    IconButton(
-                                      onPressed: () => _openDetailsBottomSheet(
-                                        editIndex: index,
-                                      ),
-                                      icon: const Icon(
-                                        Icons.edit_outlined,
-                                        size: 18,
-                                        color: AppColors.textSecondary,
-                                      ),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          onPressed: () =>
+                                              _openDetailsBottomSheet(
+                                                editIndex: index,
+                                              ),
+                                          icon: const Icon(
+                                            Icons.edit_outlined,
+                                            size: 18,
+                                            color: AppColors.textSecondary,
+                                          ),
+                                        ),
+                                        IconButton(
+                                          onPressed: () =>
+                                              _deleteAddress(index),
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                            size: 18,
+                                            color: AppColors.error,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ],
                                 ),

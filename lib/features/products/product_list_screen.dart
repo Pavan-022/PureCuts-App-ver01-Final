@@ -1337,7 +1337,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
               children: [
                 Text(
                   (_isSearchHydrating || _isEmergencyHydrating)
-                      ? '${displayedProducts.length} products • searching full catalog...'
+                      ? '${displayedProducts.length} products • loading more products...'
                       : '${displayedProducts.length} products',
                   style: const TextStyle(
                     color: AppColors.textSecondary,
