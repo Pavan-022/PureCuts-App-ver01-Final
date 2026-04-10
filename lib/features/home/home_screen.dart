@@ -864,8 +864,11 @@ class _HomeScreenState extends State<HomeScreen>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      final hp = context.read<HomeProvider>();
       Future.wait([
-        context.read<HomeProvider>().loadData(),
+        // Load the startup-lite pool first, then hydrate the full visibility
+        // catalog so category and search sections never render partial data.
+        hp.loadData().then((_) => hp.ensureVisibilityCatalogLoaded()),
         _resolveOrderHistory(force: true),
         _resolvePayuRecoveryAction(force: true),
       ]).then((_) {

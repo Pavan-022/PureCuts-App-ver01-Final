@@ -248,6 +248,29 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
     final home = context.watch<HomeProvider>();
     final subCategories = home.subCategoriesFor(widget.categoryName);
 
+    // Show a loading indicator until the full catalog is ready so that
+    // newly-published products (outside the startup-lite pool) are not missed.
+    if (home.loading || !home.fullCatalogReady) {
+      return Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          titleSpacing: 0,
+          title: Text(
+            widget.categoryName,
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
     final subCategoryNameByKey = <String, String>{
       for (final s in subCategories)
         if ((s['name'] ?? '').toString().trim().isNotEmpty)

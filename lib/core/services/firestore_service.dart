@@ -175,43 +175,39 @@ class FirestoreService {
         fallback: _defaultProductPageBatch,
         max: FeatureFlags.maxProductPageSize,
       );
-      final collected = <ProductModel>[];
-      var cursor = startAfterDoc;
-      var hasMore = true;
       final sw = Stopwatch()..start();
 
-      while (collected.length < safeLimit && hasMore) {
-        Query<Map<String, dynamic>> query = _db
-            .collection(_productsCollection)
-            .orderBy(FieldPath.documentId)
-            .limit(safeLimit);
+      // Single Firestore query per call. The cursor always advances past every
+      // raw document (published or not) so the outer loadData loop can paginate
+      // without gaps. The previous inner-while approach corrupted the cursor
+      // when breaking early due to safeLimit, causing products beyond the break
+      // point to be silently skipped.
+      Query<Map<String, dynamic>> query = _db
+          .collection(_productsCollection)
+          .orderBy(FieldPath.documentId)
+          .limit(safeLimit);
 
-        if (cursor != null) {
-          query = query.startAfterDocument(cursor);
-        }
+      if (startAfterDoc != null) {
+        query = query.startAfterDocument(startAfterDoc);
+      }
 
-        final snap = await query.get();
-        if (snap.docs.isEmpty) {
-          hasMore = false;
-          break;
-        }
+      final snap = await query.get();
+      final collected = <ProductModel>[];
 
-        cursor = snap.docs.last;
-        for (final doc in snap.docs) {
-          if (!_isPublishedProduct(doc.data())) continue;
-          try {
-            collected.add(ProductModel.fromMap(doc.data(), doc.id));
-          } catch (_) {
-            // Skip malformed docs instead of aborting the whole page.
-            continue;
-          }
-          if (collected.length >= safeLimit) break;
-        }
-
-        if (snap.docs.length < safeLimit) {
-          hasMore = false;
+      for (final doc in snap.docs) {
+        if (!_isPublishedProduct(doc.data())) continue;
+        try {
+          collected.add(ProductModel.fromMap(doc.data(), doc.id));
+        } catch (_) {
+          // Skip malformed docs instead of aborting the whole page.
         }
       }
+
+      // hasMore is true when the Firestore page was full – there may be more.
+      final hasMore = snap.docs.length >= safeLimit;
+      // Cursor = last raw doc so the next call correctly starts after it,
+      // even if some docs in this page were filtered out as unpublished.
+      final cursor = snap.docs.isEmpty ? startAfterDoc : snap.docs.last;
 
       _traceQuery(
         'getProductsPage',
@@ -219,6 +215,7 @@ class FirestoreService {
         details: {
           'requestedLimit': limit,
           'appliedLimit': safeLimit,
+          'rawDocs': snap.docs.length,
           'returned': collected.length,
           'hasMore': hasMore,
         },
@@ -247,49 +244,40 @@ class FirestoreService {
       fallback: _defaultProductPageBatch,
       max: FeatureFlags.maxProductPageSize,
     );
-    final collected = <ProductModel>[];
-    var cursor = startAfterDoc;
-    var hasMore = true;
     final sw = Stopwatch()..start();
 
-    while (collected.length < safeLimit && hasMore) {
-      Query<Map<String, dynamic>> query = _db
-          .collection(_productsCollection)
-          .orderBy(FieldPath.documentId)
-          .limit(safeLimit);
+    // Single Firestore query per call – same fix as getProductsPage.
+    // The inner-while loop caused cursor corruption when docs were filtered
+    // client-side, silently skipping products beyond the safeLimit break.
+    Query<Map<String, dynamic>> query = _db
+        .collection(_productsCollection)
+        .orderBy(FieldPath.documentId)
+        .limit(safeLimit);
 
-      if (cleanCategory.isNotEmpty) {
-        query = query.where('category', isEqualTo: cleanCategory);
-      }
-      if (cleanBrand.isNotEmpty) {
-        query = query.where('brand', isEqualTo: cleanBrand);
-      }
-      if (cursor != null) {
-        query = query.startAfterDocument(cursor);
-      }
+    if (cleanCategory.isNotEmpty) {
+      query = query.where('category', isEqualTo: cleanCategory);
+    }
+    if (cleanBrand.isNotEmpty) {
+      query = query.where('brand', isEqualTo: cleanBrand);
+    }
+    if (startAfterDoc != null) {
+      query = query.startAfterDocument(startAfterDoc);
+    }
 
-      final snap = await query.get();
-      if (snap.docs.isEmpty) {
-        hasMore = false;
-        break;
-      }
+    final snap = await query.get();
+    final collected = <ProductModel>[];
 
-      cursor = snap.docs.last;
-      for (final doc in snap.docs) {
-        if (!_isPublishedProduct(doc.data())) continue;
-        try {
-          collected.add(ProductModel.fromMap(doc.data(), doc.id));
-        } catch (_) {
-          // Skip malformed docs instead of aborting the whole page.
-          continue;
-        }
-        if (collected.length >= safeLimit) break;
-      }
-
-      if (snap.docs.length < safeLimit) {
-        hasMore = false;
+    for (final doc in snap.docs) {
+      if (!_isPublishedProduct(doc.data())) continue;
+      try {
+        collected.add(ProductModel.fromMap(doc.data(), doc.id));
+      } catch (_) {
+        // Skip malformed docs instead of aborting the whole page.
       }
     }
+
+    final hasMore = snap.docs.length >= safeLimit;
+    final cursor = snap.docs.isEmpty ? startAfterDoc : snap.docs.last;
 
     _traceQuery(
       'getProductsPageFiltered',
@@ -299,6 +287,7 @@ class FirestoreService {
         'appliedLimit': safeLimit,
         'category': cleanCategory,
         'brand': cleanBrand,
+        'rawDocs': snap.docs.length,
         'returned': collected.length,
         'hasMore': hasMore,
       },

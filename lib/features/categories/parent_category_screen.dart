@@ -242,7 +242,7 @@ class _ParentCategoryScreenState extends State<ParentCategoryScreen> {
           ),
         ),
       ),
-      body: home.loading
+      body: (home.loading || !home.fullCatalogReady)
           ? const Center(child: CircularProgressIndicator())
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
