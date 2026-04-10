@@ -22,7 +22,7 @@ class FeatureFlags {
   /// Hard caps to prevent accidental high-cost reads.
   static const int maxProductPageSize = int.fromEnvironment(
     'MAX_PRODUCT_PAGE_SIZE',
-    defaultValue: 60,
+    defaultValue: 200,
   );
 
   static const int defaultOrdersPageSize = int.fromEnvironment(

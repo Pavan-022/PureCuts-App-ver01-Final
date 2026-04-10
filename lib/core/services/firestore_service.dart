@@ -66,13 +66,28 @@ class FirestoreService {
       return (value ?? '').toString().trim().toLowerCase();
     }
 
+    bool? boolLike(dynamic value) {
+      if (value is bool) return value;
+      if (value is num) return value != 0;
+      final text = normalize(value);
+      if (text.isEmpty) return null;
+      if (text == 'true' || text == '1' || text == 'yes' || text == 'on') {
+        return true;
+      }
+      if (text == 'false' || text == '0' || text == 'no' || text == 'off') {
+        return false;
+      }
+      return null;
+    }
+
     final visibility = normalize(data['visibility']);
     final status = normalize(data['status']);
     final publishState = normalize(
       data['publishStatus'] ?? data['productStatus'] ?? data['state'],
     );
-    final isPublishedFlag = data['isPublished'];
-    final isActiveFlag = data['isActive'];
+    final isPublishedFlag = boolLike(data['isPublished']);
+    final isActiveFlag = boolLike(data['isActive']);
+    final activeFlag = boolLike(data['active']);
 
     const positiveStates = {
       'publish',
@@ -83,10 +98,15 @@ class FirestoreService {
       'live',
     };
 
-    if (isPublishedFlag is bool) return isPublishedFlag;
-    if (isActiveFlag is bool && isActiveFlag == false) return false;
+    // Dashboard product visibility is controlled primarily via visibility.
+    // Honor it first to match admin behavior exactly.
+    if (visibility.isNotEmpty) {
+      if (visibility == 'draft') return false;
+      if (positiveStates.contains(visibility)) return true;
+    }
 
-    if (positiveStates.contains(visibility)) return true;
+    if (isPublishedFlag != null) return isPublishedFlag;
+
     if (positiveStates.contains(status)) return true;
     if (positiveStates.contains(publishState)) return true;
 
@@ -101,9 +121,15 @@ class FirestoreService {
       'trash',
     };
 
-    if (negativeStates.contains(visibility) ||
-        negativeStates.contains(status) ||
+    if (negativeStates.contains(status) ||
         negativeStates.contains(publishState)) {
+      return false;
+    }
+
+    // Treat explicit inactive flags as hidden only when no explicit publish
+    // signal exists; this avoids suppressing records that are Published in
+    // dashboard but carry legacy active fields.
+    if (isActiveFlag == false || activeFlag == false) {
       return false;
     }
 
@@ -173,7 +199,12 @@ class FirestoreService {
         cursor = snap.docs.last;
         for (final doc in snap.docs) {
           if (!_isPublishedProduct(doc.data())) continue;
-          collected.add(ProductModel.fromMap(doc.data(), doc.id));
+          try {
+            collected.add(ProductModel.fromMap(doc.data(), doc.id));
+          } catch (_) {
+            // Skip malformed docs instead of aborting the whole page.
+            continue;
+          }
           if (collected.length >= safeLimit) break;
         }
 
@@ -246,7 +277,12 @@ class FirestoreService {
       cursor = snap.docs.last;
       for (final doc in snap.docs) {
         if (!_isPublishedProduct(doc.data())) continue;
-        collected.add(ProductModel.fromMap(doc.data(), doc.id));
+        try {
+          collected.add(ProductModel.fromMap(doc.data(), doc.id));
+        } catch (_) {
+          // Skip malformed docs instead of aborting the whole page.
+          continue;
+        }
         if (collected.length >= safeLimit) break;
       }
 

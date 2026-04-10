@@ -83,17 +83,84 @@ class ProductModel {
       return text;
     }
 
-    List<String> toStringList(dynamic raw) {
-      if (raw is! Iterable) return <String>[];
-      try {
-        return raw
-            .where((e) => e != null)
-            .map((e) => e.toString().trim())
-            .where((e) => e.isNotEmpty)
-            .toList(growable: false);
-      } catch (_) {
-        return <String>[];
+    String firstText(dynamic raw, {List<String> preferredKeys = const []}) {
+      String pick(dynamic value) {
+        if (value == null) return '';
+        if (value is String || value is num || value is bool) {
+          return value.toString().trim();
+        }
+        if (value is Map) {
+          if (preferredKeys.isNotEmpty) {
+            for (final key in preferredKeys) {
+              if (!value.containsKey(key)) continue;
+              final nested = pick(value[key]);
+              if (nested.isNotEmpty) return nested;
+            }
+          }
+
+          for (final entry in value.entries) {
+            final nested = pick(entry.value);
+            if (nested.isNotEmpty) return nested;
+          }
+          return '';
+        }
+        if (value is Iterable) {
+          for (final item in value) {
+            final nested = pick(item);
+            if (nested.isNotEmpty) return nested;
+          }
+        }
+        return '';
       }
+
+      return pick(raw);
+    }
+
+    List<String> toStringList(
+      dynamic raw, {
+      List<String> preferredKeys = const ['name', 'title', 'label', 'value'],
+    }) {
+      final values = <String>{};
+
+      void collect(dynamic value) {
+        if (value == null) return;
+
+        if (value is String) {
+          final text = value.trim();
+          if (text.isNotEmpty) values.add(text);
+          return;
+        }
+
+        if (value is num || value is bool) {
+          final text = value.toString().trim();
+          if (text.isNotEmpty) values.add(text);
+          return;
+        }
+
+        if (value is Map) {
+          for (final key in preferredKeys) {
+            if (!value.containsKey(key)) continue;
+            collect(value[key]);
+          }
+
+          // If preferred keys did not yield values, fall back to scanning all.
+          if (values.isEmpty) {
+            for (final entry in value.entries) {
+              collect(entry.value);
+            }
+          }
+          return;
+        }
+
+        if (value is Iterable) {
+          for (final item in value) {
+            collect(item);
+          }
+        }
+      }
+
+      collect(raw);
+      return values.toList(growable: false);
     }
 
     bool boolValue(dynamic value, {bool fallback = false}) {
@@ -113,7 +180,26 @@ class ProductModel {
       if (value is num) return value.toInt();
       final text = (value ?? '').toString().trim();
       if (text.isEmpty) return fallback;
-      return int.tryParse(text) ?? fallback;
+      final direct = int.tryParse(text);
+      if (direct != null) return direct;
+
+      final sanitized = text.replaceAll(RegExp(r'[^0-9.-]'), '');
+      if (sanitized.isEmpty) return fallback;
+      final parsed = double.tryParse(sanitized);
+      return parsed?.toInt() ?? fallback;
+    }
+
+    double doubleValue(dynamic value, {double fallback = 0.0}) {
+      if (value is num) return value.toDouble();
+      final text = (value ?? '').toString().trim();
+      if (text.isEmpty) return fallback;
+
+      final direct = double.tryParse(text);
+      if (direct != null) return direct;
+
+      final sanitized = text.replaceAll(RegExp(r'[^0-9.-]'), '');
+      if (sanitized.isEmpty) return fallback;
+      return double.tryParse(sanitized) ?? fallback;
     }
 
     List<String> parseTagValues(dynamic raw) {
@@ -139,8 +225,14 @@ class ProductModel {
       return single.isEmpty ? <String>[] : <String>[single];
     }
 
-    final additionalImages = toStringList(map['additionalImages']);
-    final images = toStringList(map['images']);
+    final additionalImages = toStringList(
+      map['additionalImages'],
+      preferredKeys: const ['url', 'image', 'imageUrl', 'src', 'path', 'name'],
+    );
+    final images = toStringList(
+      map['images'],
+      preferredKeys: const ['url', 'image', 'imageUrl', 'src', 'path', 'name'],
+    );
     final parsedTags = parseTagValues(map['tags']);
     final singleTag = stringValue(map['tag']);
     final tags = <String>{...parsedTags};
@@ -173,23 +265,66 @@ class ProductModel {
             map['stockCount'],
       ),
       manageStock: boolValue(map['manageStock'], fallback: true),
-      category: stringValue(map['category'] ?? map['categoryName']),
-      categoryName: stringValue(map['categoryName'] ?? map['category']),
-      parentCategory: stringValue(map['parentCategory']),
-      subCategory: stringValue(
-        map['subCategory'] ?? map['subcategory'] ?? map['sub_category'],
+      category: firstText(
+        map['category'] ?? map['categoryName'],
+        preferredKeys: const ['name', 'title', 'label', 'value'],
       ),
-      subSubCategory: stringValue(
+      categoryName: firstText(
+        map['categoryName'] ?? map['category'],
+        preferredKeys: const ['name', 'title', 'label', 'value'],
+      ),
+      parentCategory: firstText(
+        map['parentCategory'],
+        preferredKeys: const ['name', 'title', 'label', 'value'],
+      ),
+      subCategory: firstText(
+        map['subCategory'] ??
+            map['subcategory'] ??
+            map['sub_category'] ??
+            map['selectedSubCategory'] ??
+            map['subCategoryName'],
+        preferredKeys: const ['name', 'title', 'label', 'value'],
+      ),
+      subSubCategory: firstText(
         map['subSubCategory'] ??
             map['subsubCategory'] ??
-            map['sub_sub_category'],
+            map['sub_sub_category'] ??
+            map['selectedSubSubCategory'] ??
+            map['subSubCategoryName'],
+        preferredKeys: const ['name', 'title', 'label', 'value'],
       ),
-      selectedCategories: toStringList(map['selectedCategories']),
-      categoryPathNames: toStringList(map['categoryPathNames']),
-      price: (map['price'] as num?)?.toInt() ?? 0,
-      originalPrice: (map['originalPrice'] as num?)?.toInt() ?? 0,
-      rating: (map['rating'] as num?)?.toDouble() ?? 0.0,
-      reviews: (map['reviews'] as num?)?.toInt() ?? 0,
+      selectedCategories: toStringList(
+        map['selectedCategories'],
+        preferredKeys: const [
+          'name',
+          'title',
+          'label',
+          'value',
+          'category',
+          'categoryName',
+          'parentCategory',
+          'subCategory',
+          'subSubCategory',
+        ],
+      ),
+      categoryPathNames: toStringList(
+        map['categoryPathNames'],
+        preferredKeys: const [
+          'name',
+          'title',
+          'label',
+          'value',
+          'category',
+          'categoryName',
+          'parentCategory',
+          'subCategory',
+          'subSubCategory',
+        ],
+      ),
+      price: intValue(map['price']),
+      originalPrice: intValue(map['originalPrice']),
+      rating: doubleValue(map['rating']),
+      reviews: intValue(map['reviews']),
       image: listImage,
       thumbnailUrl: thumbnail,
       fullImageUrl: fullImage,
@@ -209,12 +344,12 @@ class ProductModel {
       homeSection: stringValue(
         map['homeSection'] ?? map['home_section'] ?? map['section'],
       ),
-      isPopular: map['isPopular'] ?? false,
-      isRecommended: map['isRecommended'] ?? false,
-      showInStartFirstOrder: map['showInStartFirstOrder'] ?? false,
-      showInRecommendedSalon: map['showInRecommendedSalon'] ?? false,
-      showInMostBought: map['showInMostBought'] ?? false,
-      showInPopularProducts: map['showInPopularProducts'] ?? false,
+      isPopular: boolValue(map['isPopular']),
+      isRecommended: boolValue(map['isRecommended']),
+      showInStartFirstOrder: boolValue(map['showInStartFirstOrder']),
+      showInRecommendedSalon: boolValue(map['showInRecommendedSalon']),
+      showInMostBought: boolValue(map['showInMostBought']),
+      showInPopularProducts: boolValue(map['showInPopularProducts']),
     );
   }
 

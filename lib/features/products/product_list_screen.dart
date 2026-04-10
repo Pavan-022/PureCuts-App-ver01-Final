@@ -318,6 +318,60 @@ class _ProductListScreenState extends State<ProductListScreen> {
     return value.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
   }
 
+  List<String> _extractStringValues(dynamic raw) {
+    final values = <String>{};
+
+    void collect(dynamic node) {
+      if (node == null) return;
+
+      if (node is String) {
+        final value = node.trim();
+        if (value.isNotEmpty) values.add(value);
+        return;
+      }
+
+      if (node is num || node is bool) {
+        final value = node.toString().trim();
+        if (value.isNotEmpty) values.add(value);
+        return;
+      }
+
+      if (node is Map) {
+        const preferredKeys = [
+          'name',
+          'title',
+          'label',
+          'category',
+          'categoryName',
+          'parentCategory',
+          'subCategory',
+          'subSubCategory',
+          'value',
+        ];
+
+        for (final key in preferredKeys) {
+          if (node.containsKey(key)) collect(node[key]);
+        }
+
+        for (final entry in node.entries) {
+          final entryKey = entry.key.toString();
+          if (preferredKeys.contains(entryKey)) continue;
+          collect(entry.value);
+        }
+        return;
+      }
+
+      if (node is Iterable) {
+        for (final item in node) {
+          collect(item);
+        }
+      }
+    }
+
+    collect(raw);
+    return values.toList(growable: false);
+  }
+
   bool _matchesSelectedCategory(Map<String, dynamic> product) {
     if (_selectedCategory == 'All') return true;
 
@@ -331,20 +385,10 @@ class _ProductListScreenState extends State<ProductListScreen> {
     };
 
     final rawSelectedCategories = product['selectedCategories'];
-    if (rawSelectedCategories is List) {
-      for (final item in rawSelectedCategories) {
-        final value = item.toString().trim();
-        if (value.isNotEmpty) categoryCandidates.add(value);
-      }
-    }
+    categoryCandidates.addAll(_extractStringValues(rawSelectedCategories));
 
     final rawCategoryPath = product['categoryPathNames'];
-    if (rawCategoryPath is List) {
-      for (final item in rawCategoryPath) {
-        final value = item.toString().trim();
-        if (value.isNotEmpty) categoryCandidates.add(value);
-      }
-    }
+    categoryCandidates.addAll(_extractStringValues(rawCategoryPath));
 
     for (final candidate in categoryCandidates) {
       final key = _normalizeCategoryKey(candidate);
@@ -1009,7 +1053,13 @@ class _ProductListScreenState extends State<ProductListScreen> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      unawaited(context.read<HomeProvider>().loadData(forceRefresh: true));
+      final home = context.read<HomeProvider>();
+      unawaited(
+        Future<void>(() async {
+          await home.loadData(forceRefresh: true);
+          await home.ensureVisibilityCatalogLoaded();
+        }),
+      );
       _loadFirstPage();
       if (_searchQuery.trim().isNotEmpty) {
         unawaited(_hydrateFullCatalogEmergency());

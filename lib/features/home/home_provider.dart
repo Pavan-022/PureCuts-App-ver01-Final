@@ -12,7 +12,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeProvider extends ChangeNotifier {
   static const int _homeInitialProductLimit = 24;
-  static const int _homeMaxProductPool = 1200;
+  static const int _homeFullCatalogPageSize = 180;
+  static const int _homeMaxProductPool = 20000;
   static const String _homeCacheKey = 'purecuts_home_bootstrap_cache_v1';
   static const Set<String> _hiddenCategoryNames = {
     'nail',
@@ -157,6 +158,59 @@ class HomeProvider extends ChangeNotifier {
     } catch (_) {
       return const <ProductModel>[];
     }
+  }
+
+  Future<bool> _hydrateFullCatalogFromServer() async {
+    final merged = <String, ProductModel>{
+      for (final product in _products)
+        if (product.id.trim().isNotEmpty) product.id.trim(): product,
+    };
+
+    DocumentSnapshot<Map<String, dynamic>>? cursor;
+    var hasMore = true;
+    String? lastCursorId;
+    var fetchedAny = false;
+
+    while (hasMore && merged.length < _homeMaxProductPool) {
+      final remaining = _homeMaxProductPool - merged.length;
+      if (remaining <= 0) break;
+
+      final page = await _service.getProductsPageFiltered(
+        limit: remaining < _homeFullCatalogPageSize
+            ? remaining
+            : _homeFullCatalogPageSize,
+        startAfterDoc: cursor,
+        category: null,
+        brand: null,
+      );
+
+      for (final product in page.products) {
+        final id = product.id.trim();
+        if (id.isEmpty) continue;
+        merged[id] = product;
+      }
+
+      fetchedAny = fetchedAny || page.products.isNotEmpty;
+      final nextCursor = page.lastDocument;
+      final nextCursorId = nextCursor?.id;
+      final cursorStalled =
+          nextCursorId != null && nextCursorId == lastCursorId;
+
+      cursor = nextCursor;
+      hasMore = page.hasMore && cursor != null && !cursorStalled;
+      lastCursorId = nextCursorId;
+
+      if (page.products.isEmpty && !hasMore) break;
+    }
+
+    if (merged.isEmpty) return false;
+
+    _products = merged.values.toList(growable: false);
+    _hasLoadedOnce = true;
+    _hasAttemptedFullCatalogLoad =
+        !hasMore || merged.length >= _homeMaxProductPool;
+
+    return fetchedAny;
   }
 
   String _safeString(dynamic value, {String fallback = ''}) {
@@ -362,33 +416,121 @@ class HomeProvider extends ChangeNotifier {
   }
 
   List<String> _stringList(dynamic raw) {
-    if (raw == null) return const <String>[];
-    if (raw is Iterable) {
-      return raw
-          .map((item) => item.toString().trim())
-          .where((item) => item.isNotEmpty)
-          .toList(growable: false);
+    final values = <String>{};
+
+    void collect(dynamic node) {
+      if (node == null) return;
+
+      if (node is String) {
+        for (final item in node.split(RegExp(r'[,|/&;>]+'))) {
+          final value = item.trim();
+          if (value.isNotEmpty) values.add(value);
+        }
+        return;
+      }
+
+      if (node is num || node is bool) {
+        final value = node.toString().trim();
+        if (value.isNotEmpty) values.add(value);
+        return;
+      }
+
+      if (node is Map) {
+        const preferredKeys = [
+          'name',
+          'title',
+          'label',
+          'category',
+          'categoryName',
+          'parentCategory',
+          'subCategory',
+          'subSubCategory',
+          'value',
+        ];
+
+        for (final key in preferredKeys) {
+          if (node.containsKey(key)) collect(node[key]);
+        }
+
+        for (final entry in node.entries) {
+          final entryKey = entry.key.toString();
+          if (preferredKeys.contains(entryKey)) continue;
+          collect(entry.value);
+        }
+        return;
+      }
+
+      if (node is Iterable) {
+        for (final item in node) {
+          collect(item);
+        }
+        return;
+      }
+
+      final value = node.toString().trim();
+      if (value.isNotEmpty) values.add(value);
     }
-    if (raw is String) {
-      return raw
-          .split(RegExp(r'[,|/&;>]+'))
-          .map((item) => item.trim())
-          .where((item) => item.isNotEmpty)
-          .toList(growable: false);
-    }
-    final value = raw.toString().trim();
-    return value.isEmpty ? const <String>[] : <String>[value];
+
+    collect(raw);
+    return values.toList(growable: false);
   }
 
   List<String> _categoryCandidates(Map<String, dynamic> product) {
-    final values = <String>{
-      _safeString(product['category']),
-      _safeString(product['categoryName']),
-      _safeString(product['parentCategory']),
-    };
+    final values = <String>{};
+
+    values.addAll(_stringList(product['category']));
+    values.addAll(_stringList(product['categoryName']));
+    values.addAll(_stringList(product['parentCategory']));
 
     values.addAll(_stringList(product['selectedCategories']));
     values.addAll(_stringList(product['categoryPathNames']));
+
+    return values.where((value) => value.trim().isNotEmpty).toList();
+  }
+
+  List<String> productSubCategoryCandidates(Map<String, dynamic> product) {
+    final values = <String>{};
+
+    values.addAll(_stringList(product['subCategory']));
+    values.addAll(_stringList(product['subcategory']));
+    values.addAll(_stringList(product['sub_category']));
+
+    values.addAll(_stringList(product['selectedSubCategory']));
+    values.addAll(_stringList(product['selectedSubcategory']));
+    values.addAll(_stringList(product['subCategoryName']));
+    values.addAll(_stringList(product['sub_category_name']));
+
+    values.addAll(_stringList(product['selectedSubCategories']));
+    values.addAll(_stringList(product['selectedSubCategoryNames']));
+
+    final path = _stringList(product['categoryPathNames']);
+    if (path.length >= 2) values.add(path[1]);
+
+    final selectedCategories = _stringList(product['selectedCategories']);
+    if (selectedCategories.length >= 2) values.add(selectedCategories[1]);
+
+    return values.where((value) => value.trim().isNotEmpty).toList();
+  }
+
+  List<String> productSubSubCategoryCandidates(Map<String, dynamic> product) {
+    final values = <String>{};
+
+    values.addAll(_stringList(product['subSubCategory']));
+    values.addAll(_stringList(product['subsubCategory']));
+    values.addAll(_stringList(product['sub_sub_category']));
+
+    values.addAll(_stringList(product['selectedSubSubCategory']));
+    values.addAll(_stringList(product['selectedSubsubcategory']));
+    values.addAll(_stringList(product['subSubCategoryName']));
+    values.addAll(_stringList(product['sub_sub_category_name']));
+
+    values.addAll(_stringList(product['selectedSubSubCategories']));
+
+    final path = _stringList(product['categoryPathNames']);
+    if (path.length >= 3) values.add(path[2]);
+
+    final selectedCategories = _stringList(product['selectedCategories']);
+    if (selectedCategories.length >= 3) values.add(selectedCategories[2]);
 
     return values.where((value) => value.trim().isNotEmpty).toList();
   }
@@ -403,6 +545,37 @@ class HomeProvider extends ChangeNotifier {
       final key = _normalizedKey(candidate);
       if (key.isEmpty) continue;
       if (key == selected) return true;
+    }
+
+    // Fallback: infer parent category from taxonomy when products miss direct
+    // category fields but still carry valid sub-category metadata.
+    for (final productSubCategory in productSubCategoryCandidates(product)) {
+      final productSubCategoryKey = _normalizedKey(productSubCategory);
+      if (productSubCategoryKey.isEmpty) continue;
+      for (final sub in subCategories) {
+        final subNameKey = _normalizedKey(_safeString(sub['name']));
+        if (subNameKey.isEmpty || subNameKey != productSubCategoryKey) {
+          continue;
+        }
+        final parentKey = _normalizedKey(_safeString(sub['parentCategory']));
+        if (parentKey == selected) return true;
+      }
+    }
+
+    for (final productSubSubCategory in productSubSubCategoryCandidates(
+      product,
+    )) {
+      final productSubSubCategoryKey = _normalizedKey(productSubSubCategory);
+      if (productSubSubCategoryKey.isEmpty) continue;
+      for (final subSub in subSubCategories) {
+        final subSubNameKey = _normalizedKey(_safeString(subSub['name']));
+        if (subSubNameKey.isEmpty ||
+            subSubNameKey != productSubSubCategoryKey) {
+          continue;
+        }
+        final parentKey = _normalizedKey(_safeString(subSub['parentCategory']));
+        if (parentKey == selected) return true;
+      }
     }
 
     return false;
@@ -530,33 +703,92 @@ class HomeProvider extends ChangeNotifier {
   }
 
   String productSubCategory(Map<String, dynamic> product) {
-    final direct =
-        (product['subCategory'] ??
-                product['subcategory'] ??
-                product['sub_category'] ??
-                '')
-            .toString()
-            .trim();
+    String fromKeys(Map<String, dynamic> source, List<String> keys) {
+      for (final key in keys) {
+        final values = _stringList(source[key]);
+        if (values.isNotEmpty) return values.first;
+      }
+      return '';
+    }
+
+    final directCandidates = <String>[
+      ..._stringList(product['subCategory']),
+      ..._stringList(product['subcategory']),
+      ..._stringList(product['sub_category']),
+    ];
+    final direct = directCandidates.firstWhere(
+      (value) => value.trim().isNotEmpty,
+      orElse: () => '',
+    );
     if (direct.isNotEmpty) return direct;
+
+    final mapDirect = fromKeys(product, const [
+      'selectedSubCategory',
+      'selectedSubcategory',
+      'subCategoryName',
+      'sub_category_name',
+    ]);
+    if (mapDirect.isNotEmpty) return mapDirect;
+
+    final selectedSubCategories = _stringList(product['selectedSubCategories']);
+    if (selectedSubCategories.isNotEmpty) return selectedSubCategories.first;
+
+    final selectedSubCategoryNames = _stringList(
+      product['selectedSubCategoryNames'],
+    );
+    if (selectedSubCategoryNames.isNotEmpty) {
+      return selectedSubCategoryNames.first;
+    }
 
     final path = _stringList(product['categoryPathNames']);
     if (path.length >= 2) return path[1];
+
+    final selectedCategories = _stringList(product['selectedCategories']);
+    if (selectedCategories.length >= 2) return selectedCategories[1];
 
     return '';
   }
 
   String productSubSubCategory(Map<String, dynamic> product) {
-    final direct =
-        (product['subSubCategory'] ??
-                product['subsubCategory'] ??
-                product['sub_sub_category'] ??
-                '')
-            .toString()
-            .trim();
+    String fromKeys(Map<String, dynamic> source, List<String> keys) {
+      for (final key in keys) {
+        final values = _stringList(source[key]);
+        if (values.isNotEmpty) return values.first;
+      }
+      return '';
+    }
+
+    final directCandidates = <String>[
+      ..._stringList(product['subSubCategory']),
+      ..._stringList(product['subsubCategory']),
+      ..._stringList(product['sub_sub_category']),
+    ];
+    final direct = directCandidates.firstWhere(
+      (value) => value.trim().isNotEmpty,
+      orElse: () => '',
+    );
     if (direct.isNotEmpty) return direct;
+
+    final mapDirect = fromKeys(product, const [
+      'selectedSubSubCategory',
+      'selectedSubsubcategory',
+      'subSubCategoryName',
+      'sub_sub_category_name',
+    ]);
+    if (mapDirect.isNotEmpty) return mapDirect;
+
+    final selectedSubSubCategories = _stringList(
+      product['selectedSubSubCategories'],
+    );
+    if (selectedSubSubCategories.isNotEmpty) {
+      return selectedSubSubCategories.first;
+    }
 
     final path = _stringList(product['categoryPathNames']);
     if (path.length >= 3) return path[2];
+
+    final selectedCategories = _stringList(product['selectedCategories']);
+    if (selectedCategories.length >= 3) return selectedCategories[2];
 
     return '';
   }
@@ -564,7 +796,24 @@ class HomeProvider extends ChangeNotifier {
   Future<void> ensureVisibilityCatalogLoaded() async {
     if (_loading) return;
     if (_hasAttemptedFullCatalogLoad) return;
-    await loadData(forceRefresh: true);
+
+    // Retry a few times because large catalogs can hit transient network delays.
+    for (var attempt = 0; attempt < 3; attempt++) {
+      await loadData(forceRefresh: true);
+      if (_hasAttemptedFullCatalogLoad) return;
+      if (_loading) return;
+    }
+
+    try {
+      final hydrated = await _hydrateFullCatalogFromServer();
+      if (hydrated) {
+        _error = null;
+        notifyListeners();
+        unawaited(_persistStartupCache());
+      }
+    } catch (_) {
+      // Keep visibility flow resilient; existing pool remains usable.
+    }
   }
 
   /// Returns all products as the legacy Map format (for widgets that expect Map)
@@ -638,13 +887,15 @@ class HomeProvider extends ChangeNotifier {
       _error = null;
       notifyListeners();
 
+      final targetPool = startupLite
+          ? FeatureFlags.homeStartupProductPool
+          : _homeMaxProductPool;
+      final fetched = <ProductModel>[];
+      DocumentSnapshot<Map<String, dynamic>>? cursor;
+      var hasMore = true;
+      var timedOut = false;
+
       try {
-        final targetPool = startupLite
-            ? FeatureFlags.homeStartupProductPool
-            : _homeMaxProductPool;
-        final fetched = <ProductModel>[];
-        DocumentSnapshot<Map<String, dynamic>>? cursor;
-        var hasMore = true;
         final productsTimeout = Duration(
           milliseconds: FeatureFlags.homeProductsPageTimeoutMs,
         );
@@ -652,18 +903,26 @@ class HomeProvider extends ChangeNotifier {
         while (hasMore && fetched.length < targetPool) {
           final remaining = targetPool - fetched.length;
           if (remaining <= 0) break;
-          final page = await _service
-              .getProductsPage(
-                limit: remaining < _homeInitialProductLimit
-                    ? remaining
-                    : _homeInitialProductLimit,
-                startAfterDoc: cursor,
-              )
-              .timeout(productsTimeout);
+          final pageSize = startupLite
+              ? _homeInitialProductLimit
+              : _homeFullCatalogPageSize;
 
-          fetched.addAll(page.products);
-          cursor = page.lastDocument;
-          hasMore = page.hasMore;
+          try {
+            final pageFuture = _service.getProductsPage(
+              limit: remaining < pageSize ? remaining : pageSize,
+              startAfterDoc: cursor,
+            );
+            final page = startupLite
+                ? await pageFuture.timeout(productsTimeout)
+                : await pageFuture;
+
+            fetched.addAll(page.products);
+            cursor = page.lastDocument;
+            hasMore = page.hasMore;
+          } on TimeoutException {
+            timedOut = true;
+            break;
+          }
         }
 
         if (fetched.isEmpty) {
@@ -673,11 +932,10 @@ class HomeProvider extends ChangeNotifier {
           }
         }
 
-        _hasAttemptedFullCatalogLoad =
-            forceRefresh ||
-            !startupLite ||
-            !hasMore ||
-            fetched.length >= _homeMaxProductPool;
+        final fullLoadRequested = forceRefresh || !startupLite;
+        final fullCatalogComplete =
+            !timedOut && (!hasMore || fetched.length >= _homeMaxProductPool);
+        _hasAttemptedFullCatalogLoad = fullLoadRequested && fullCatalogComplete;
 
         final deferTaxonomy =
             FeatureFlags.enableDeferredHomeTaxonomy && startupLite;
@@ -712,6 +970,7 @@ class HomeProvider extends ChangeNotifier {
         ]);
         if (fetched.isNotEmpty) {
           _products = fetched;
+          _hasLoadedOnce = true;
         }
         _banners = results[0];
         final cats = results[1];
@@ -723,7 +982,10 @@ class HomeProvider extends ChangeNotifier {
         if (subCats.isNotEmpty) _subCategories = subCats;
         if (subSubCats.isNotEmpty) _subSubCategories = subSubCats;
         if (brands.isNotEmpty) _brands = brands;
-        _hasLoadedOnce = true;
+
+        if (timedOut && !_hasAttemptedFullCatalogLoad) {
+          _error = 'Home data load timed out. Retrying in background...';
+        }
 
         if (deferTaxonomy) {
           unawaited(_hydrateTaxonomyInBackground());
@@ -732,6 +994,11 @@ class HomeProvider extends ChangeNotifier {
         unawaited(_persistStartupCache());
       } on TimeoutException {
         _error = 'Home data load timed out. Please pull to refresh.';
+        if (fetched.isNotEmpty) {
+          _products = fetched;
+          _hasLoadedOnce = true;
+        }
+        _hasAttemptedFullCatalogLoad = false;
         if (_products.isEmpty) {
           final fallback = await _fallbackProductsFetch(limit: 24);
           if (fallback.isNotEmpty) {
@@ -743,6 +1010,11 @@ class HomeProvider extends ChangeNotifier {
         }
       } catch (e) {
         _error = e.toString();
+        if (fetched.isNotEmpty) {
+          _products = fetched;
+          _hasLoadedOnce = true;
+        }
+        _hasAttemptedFullCatalogLoad = false;
         if (_products.isEmpty) {
           final fallback = await _fallbackProductsFetch(limit: 24);
           if (fallback.isNotEmpty) {
@@ -766,35 +1038,33 @@ class HomeProvider extends ChangeNotifier {
     String query = '',
     String sort = 'popular',
   }) {
-    var list = List<Map<String, dynamic>>.from(productMaps);
+    final allProducts = List<Map<String, dynamic>>.from(productMaps);
+    var list = List<Map<String, dynamic>>.from(allProducts);
 
     list = list
         .where((product) => _matchesCategory(product, category))
         .toList();
 
-    final hasStructuredSubCategories = list.any(
-      (product) => productSubCategory(product).trim().isNotEmpty,
-    );
-    if ((subCategory ?? '').trim().isNotEmpty && hasStructuredSubCategories) {
+    if ((subCategory ?? '').trim().isNotEmpty) {
+      final selectedSubCategoryKey = _normalizedKey(subCategory);
       list = list
           .where(
-            (product) =>
-                _normalizedKey(productSubCategory(product)) ==
-                _normalizedKey(subCategory),
+            (product) => productSubCategoryCandidates(product).any(
+              (candidate) =>
+                  _normalizedKey(candidate) == selectedSubCategoryKey,
+            ),
           )
           .toList();
     }
 
-    final hasStructuredSubSubCategories = list.any(
-      (product) => productSubSubCategory(product).trim().isNotEmpty,
-    );
-    if ((subSubCategory ?? '').trim().isNotEmpty &&
-        hasStructuredSubSubCategories) {
+    if ((subSubCategory ?? '').trim().isNotEmpty) {
+      final selectedSubSubCategoryKey = _normalizedKey(subSubCategory);
       list = list
           .where(
-            (product) =>
-                _normalizedKey(productSubSubCategory(product)) ==
-                _normalizedKey(subSubCategory),
+            (product) => productSubSubCategoryCandidates(product).any(
+              (candidate) =>
+                  _normalizedKey(candidate) == selectedSubSubCategoryKey,
+            ),
           )
           .toList();
     }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/services.dart';
@@ -23,7 +25,13 @@ class _BrandsScreenState extends State<BrandsScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<HomeProvider>().loadData();
+      final home = context.read<HomeProvider>();
+      unawaited(
+        Future<void>(() async {
+          await home.loadData();
+          await home.ensureVisibilityCatalogLoaded();
+        }),
+      );
     });
   }
 

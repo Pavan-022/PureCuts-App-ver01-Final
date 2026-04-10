@@ -89,7 +89,9 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
     _visibleProductCount = _pageSize;
   }
 
-  String _normalize(String value) => value.trim().toLowerCase();
+  String _normalize(String value) {
+    return value.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+  }
 
   String _normalizeToken(String value) {
     return value
@@ -178,14 +180,6 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
     return id.substring(0, sep);
   }
 
-  String _productSubSubCategory(Map<String, dynamic> product) {
-    return (product['subSubCategory'] ??
-            product['subsubCategory'] ??
-            product['sub_sub_category'] ??
-            '')
-        .toString();
-  }
-
   List<Map<String, dynamic>> _productsForSubCategory(
     HomeProvider home,
     String category,
@@ -195,28 +189,14 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
       category: category,
       subCategory: subCategory,
     );
-    final inCategory = home.filteredProducts(category: category);
+    final fullPool = home.filteredProducts(category: 'All');
     final needle = _normalize(subCategory);
 
-    final relaxed = inCategory
+    final relaxed = fullPool
         .where((product) {
-          final productSub = home.productSubCategory(product);
-          if (_normalize(productSub) == needle) return true;
-
-          final tags = product['tags'];
-          if (tags is List) {
-            final joined = tags.map((e) => e.toString()).join(' ');
-            if (_normalize(joined).contains(needle)) return true;
-          }
-
-          final pathNames = product['categoryPathNames'];
-          if (pathNames is List) {
-            final joined = pathNames.map((e) => e.toString()).join(' ');
-            if (_normalize(joined).contains(needle)) return true;
-          }
-
-          final name = (product['name'] ?? '').toString();
-          return _normalize(name).contains(needle);
+          return home
+              .productSubCategoryCandidates(product)
+              .any((candidate) => _normalize(candidate) == needle);
         })
         .toList(growable: false);
 
@@ -246,18 +226,9 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
       final needle = _normalize(subSubCategory!);
       subProducts = subProducts
           .where((product) {
-            final direct =
-                _normalize(_productSubSubCategory(product)) == needle;
-            if (direct) return true;
-
-            final haystack = [
-              product['name'],
-              product['description'],
-              product['shortDescription'],
-              product['tag'],
-              product['tags'],
-            ].map((v) => v?.toString().toLowerCase() ?? '').join(' ');
-            return haystack.contains(needle);
+            return home
+                .productSubSubCategoryCandidates(product)
+                .any((candidate) => _normalize(candidate) == needle);
           })
           .toList(growable: false);
     }
