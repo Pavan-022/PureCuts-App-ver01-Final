@@ -1,6 +1,7 @@
 // lib/core/models/order_provider.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:purecuts/core/constants/feature_flags.dart';
 import 'package:purecuts/core/models/order_model.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
@@ -47,7 +48,10 @@ class OrderProvider extends ChangeNotifier {
     _activeAuthUid = nextUid;
 
     if (nextUid.isEmpty || shouldClear) {
-      clear();
+      // Defer clear to avoid setState during build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        clear();
+      });
     }
   }
 

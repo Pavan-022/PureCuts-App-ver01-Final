@@ -38,6 +38,13 @@ class PayUPaymentService implements PayUCheckoutProProtocol {
 
   Stream<Map<String, dynamic>> get events => _eventsController.stream;
 
+  /// Safe wrapper to prevent adding events to a closed stream
+  void _safeAddEvent(Map<String, dynamic> event) {
+    if (!_eventsController.isClosed) {
+      _eventsController.add(event);
+    }
+  }
+
   static Future<String?> getPendingTxnIdForUser(String userId) async {
     final cleanUid = userId.trim();
     if (cleanUid.isEmpty) return null;
@@ -169,7 +176,7 @@ class PayUPaymentService implements PayUCheckoutProProtocol {
             payUCheckoutProConfig: payUCheckoutProConfig,
           )
           .catchError((error) {
-            _eventsController.add({
+            _safeAddEvent({
               'type': 'error',
               'txnid': txnId,
               'message': error.toString(),
@@ -350,7 +357,7 @@ class PayUPaymentService implements PayUCheckoutProProtocol {
           : (txn['txnid'] ?? '').toString();
       final resolvedUserId = (txn['userId'] ?? '').toString();
 
-      _eventsController.add({
+      _safeAddEvent({
         'type': 'pending',
         'txnid': resolvedTxnId,
         'message':
@@ -361,7 +368,7 @@ class PayUPaymentService implements PayUCheckoutProProtocol {
         unawaited(
           _syncPaymentStatus(txnid: resolvedTxnId, userId: resolvedUserId)
               .then((syncResult) async {
-                _eventsController.add({
+                _safeAddEvent({
                   'type': 'sync',
                   'txnid': resolvedTxnId,
                   ...syncResult,
@@ -376,7 +383,7 @@ class PayUPaymentService implements PayUCheckoutProProtocol {
                 }
               })
               .catchError((error) {
-                _eventsController.add({
+                _safeAddEvent({
                   'type': 'pending',
                   'txnid': resolvedTxnId,
                   'message': 'Confirmation sync failed once: $error',
@@ -423,14 +430,10 @@ class PayUPaymentService implements PayUCheckoutProProtocol {
 
     try {
       final verifyResult = await _verifyPayment(verifyPayload);
-      _eventsController.add({
-        'type': 'verify',
-        'txnid': txn['txnid'],
-        ...verifyResult,
-      });
+      _safeAddEvent({'type': 'verify', 'txnid': txn['txnid'], ...verifyResult});
       await clearPendingTransaction();
     } catch (error) {
-      _eventsController.add({
+      _safeAddEvent({
         'type': 'error',
         'txnid': txn['txnid'],
         'message': error.toString(),
@@ -494,7 +497,7 @@ class PayUPaymentService implements PayUCheckoutProProtocol {
         );
       }
     } catch (error) {
-      _eventsController.add({
+      _safeAddEvent({
         'type': 'error',
         'txnid': txn['txnid'],
         'message': 'Hash generation failed: $error',
@@ -532,7 +535,7 @@ class PayUPaymentService implements PayUCheckoutProProtocol {
     final txn = _activeTxn;
     if (txn == null) return;
 
-    _eventsController.add({
+    _safeAddEvent({
       'type': 'cancel',
       'txnid': txn['txnid'],
       'message': 'Payment cancelled by user.',
@@ -547,7 +550,7 @@ class PayUPaymentService implements PayUCheckoutProProtocol {
   @override
   Future<void> onError(Map? response) async {
     final txn = _activeTxn;
-    _eventsController.add({
+    _safeAddEvent({
       'type': 'error',
       'txnid': txn?['txnid'] ?? '',
       'message': response?.toString() ?? 'Unknown PayU error',
