@@ -37,6 +37,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   static const String _payuPaymentMethod =
       'Pay Online (UPI/Card/NetBanking/Wallet)';
 
+  // Temporary test override: Pune deliveries are free.
   static const int _puneDeliveryCharge = 19;
   static const int _maharashtraDeliveryCharge = 30;
   static const int _outsideMaharashtraDeliveryCharge = 89;
