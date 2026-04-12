@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/services/image_bandwidth_telemetry.dart';
 import 'package:purecuts/core/utils/product_image_contract.dart';
+import 'package:purecuts/core/utils/tier_pricing.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/models/cart_model.dart';
 import '../../features/auth/providers/auth_provider.dart';
@@ -217,6 +218,40 @@ class _ProductCardState extends State<ProductCard> {
     );
   }
 
+  void _openProductDetailForBulkOrder(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+            ProductDetailScreen(product: product, autoOpenBulkOrderSheet: true),
+      ),
+    );
+  }
+
+  int? _bulkTriggerQty(Map<String, dynamic> p) {
+    final basePrice = ((p['basePrice'] as num?) ?? (p['price'] as num?) ?? 0)
+        .toInt();
+    final tiers = parsePricingTiers(p['pricingTiers']);
+    for (final tier in tiers) {
+      if (tier.price < basePrice) return tier.minQty;
+    }
+
+    final variableTierMode = (p['variableTierMode'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (variableTierMode == 'universal') {
+      final percentageTiers = parsePercentagePricingTiers(
+        p['variableUniversalTiers'],
+      );
+      for (final tier in percentageTiers) {
+        if (tier.percentOff > 0) return tier.minQty;
+      }
+    }
+
+    return null;
+  }
+
   void _openSimilarProducts(BuildContext context) {
     final tag = (product['tag'] ?? '').toString().trim();
     final brand = (product['brand'] ?? '').toString().trim();
@@ -316,9 +351,13 @@ class _ProductCardState extends State<ProductCard> {
 
   @override
   Widget build(BuildContext context) {
+    final productId = (product['id'] ?? '').toString();
     final qty = context.select<CartModel, int>(
-      (cart) => cart.quantityOf(product['id']),
+      (cart) => cart.quantityOf(productId),
     );
+    final bulkTriggerQty = _bulkTriggerQty(product);
+    final bulkReached =
+        bulkTriggerQty != null && qty >= bulkTriggerQty && qty > 0;
 
     final hasDiscount =
         (product['originalPrice'] as num? ?? 0) >
@@ -545,6 +584,28 @@ class _ProductCardState extends State<ProductCard> {
                             ),
                           ),
                         )
+                      : bulkReached
+                      ? GestureDetector(
+                          onTap: () => _openProductDetailForBulkOrder(context),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Text(
+                              'BULK',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        )
                       : Container(
                           decoration: BoxDecoration(
                             color: AppColors.primary,
@@ -554,9 +615,8 @@ class _ProductCardState extends State<ProductCard> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               GestureDetector(
-                                onTap: () => context.read<CartModel>().remove(
-                                  product['id'],
-                                ),
+                                onTap: () =>
+                                    context.read<CartModel>().remove(productId),
                                 child: const Padding(
                                   padding: EdgeInsets.symmetric(
                                     horizontal: 6,
@@ -578,7 +638,13 @@ class _ProductCardState extends State<ProductCard> {
                                 ),
                               ),
                               GestureDetector(
-                                onTap: () => _handleAddToCart(context),
+                                onTap: () {
+                                  _handleAddToCart(context);
+                                  if (bulkTriggerQty != null &&
+                                      qty + 1 >= bulkTriggerQty) {
+                                    _openProductDetailForBulkOrder(context);
+                                  }
+                                },
                                 child: const Padding(
                                   padding: EdgeInsets.symmetric(
                                     horizontal: 6,

@@ -1,4 +1,5 @@
 import 'package:purecuts/core/utils/product_image_contract.dart';
+import 'package:purecuts/core/utils/tier_pricing.dart';
 
 class ProductModel {
   final String id;
@@ -16,6 +17,10 @@ class ProductModel {
   final List<String> categoryPathNames;
   final int price;
   final int originalPrice;
+  final String? _pricingType;
+  final List<PricingTier>? _pricingTiers;
+  final String? _variableTierMode;
+  final List<PercentagePricingTier>? _variableUniversalTiers;
   final double rating;
   final int reviews;
   final String image;
@@ -38,6 +43,12 @@ class ProductModel {
   final bool showInMostBought;
   final bool showInPopularProducts;
 
+  String get pricingType => _pricingType ?? '';
+  List<PricingTier> get pricingTiers => _pricingTiers ?? const <PricingTier>[];
+  String get variableTierMode => _variableTierMode ?? '';
+  List<PercentagePricingTier> get variableUniversalTiers =>
+      _variableUniversalTiers ?? const <PercentagePricingTier>[];
+
   const ProductModel({
     required this.id,
     required this.name,
@@ -54,6 +65,10 @@ class ProductModel {
     this.categoryPathNames = const [],
     required this.price,
     required this.originalPrice,
+    String? pricingType,
+    List<PricingTier>? pricingTiers,
+    String? variableTierMode,
+    List<PercentagePricingTier>? variableUniversalTiers,
     required this.rating,
     required this.reviews,
     required this.image,
@@ -75,7 +90,10 @@ class ProductModel {
     this.showInRecommendedSalon = false,
     this.showInMostBought = false,
     this.showInPopularProducts = false,
-  });
+  }) : _pricingType = pricingType,
+       _pricingTiers = pricingTiers,
+       _variableTierMode = variableTierMode,
+       _variableUniversalTiers = variableUniversalTiers;
 
   factory ProductModel.fromMap(Map<String, dynamic> map, String id) {
     String stringValue(dynamic value, {String fallback = ''}) {
@@ -323,6 +341,12 @@ class ProductModel {
       ),
       price: intValue(map['price']),
       originalPrice: intValue(map['originalPrice']),
+      pricingType: stringValue(map['pricingType']),
+      pricingTiers: parsePricingTiers(map['pricingTiers']),
+      variableTierMode: stringValue(map['variableTierMode']),
+      variableUniversalTiers: parsePercentagePricingTiers(
+        map['variableUniversalTiers'],
+      ),
       rating: doubleValue(map['rating']),
       reviews: intValue(map['reviews']),
       image: listImage,
@@ -371,6 +395,14 @@ class ProductModel {
       'categoryPathNames': categoryPathNames,
       'price': price,
       'originalPrice': originalPrice,
+      'pricingType': pricingType,
+      'pricingTiers': pricingTiers
+          .map((tier) => tier.toMap())
+          .toList(growable: false),
+      'variableTierMode': variableTierMode,
+      'variableUniversalTiers': variableUniversalTiers
+          .map((tier) => tier.toMap())
+          .toList(growable: false),
       'rating': rating,
       'reviews': reviews,
       'image': image,
@@ -419,6 +451,14 @@ class ProductModel {
       'categoryPathNames': categoryPathNames,
       'price': price,
       'originalPrice': originalPrice,
+      'pricingType': pricingType,
+      'pricingTiers': pricingTiers
+          .map((tier) => tier.toMap())
+          .toList(growable: false),
+      'variableTierMode': variableTierMode,
+      'variableUniversalTiers': variableUniversalTiers
+          .map((tier) => tier.toMap())
+          .toList(growable: false),
       'rating': rating,
       'reviews': reviews,
       'image': image,

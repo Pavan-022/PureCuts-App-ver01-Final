@@ -1,7 +1,9 @@
 import 'dart:typed_data';
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -18,11 +20,17 @@ import 'package:purecuts/features/products/detail/product_models.dart';
 import 'package:purecuts/features/products/detail/product_repository.dart';
 import 'package:purecuts/features/products/product_list_screen.dart';
 import 'package:purecuts/features/support_chat/widgets/support_chat_fab.dart';
+import 'package:purecuts/core/utils/tier_pricing.dart';
 
 class ProductDetailScreen extends StatefulWidget {
   final Map<String, dynamic> product;
+  final bool autoOpenBulkOrderSheet;
 
-  const ProductDetailScreen({super.key, required this.product});
+  const ProductDetailScreen({
+    super.key,
+    required this.product,
+    this.autoOpenBulkOrderSheet = false,
+  });
 
   @override
   State<ProductDetailScreen> createState() => _ProductDetailScreenState();
@@ -42,12 +50,32 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   bool _checkingReviewEligibility = false;
   bool _canReview = false;
   bool _submittingReview = false;
+  late final ConfettiController _tierConfettiController;
+  bool _showBulkHint = false;
+  bool _hasShownBulkHintOnce = false;
+  int _bulkHintMessageIndex = 0;
+  String? _bulkConfirmedCartItemId;
+  int _bulkConfirmedQty = 0;
+  Map<String, dynamic> _resolvedProductMap = <String, dynamic>{};
+  bool _didAutoOpenBulkOrderSheet = false;
+  Timer? _bulkHintHideTimer;
+  Timer? _bulkHintRotateTimer;
+
+  static const List<String> _bulkHintMessages = [
+    'Buy in bulk to unlock discount 💜',
+    'Add more, pay less per piece ✨',
+    'Smart buy: bigger qty, better price 🔥',
+  ];
 
   String get _currentUserId => context.read<AuthProvider>().user?.uid ?? '';
 
   @override
   void initState() {
     super.initState();
+    _resolvedProductMap = Map<String, dynamic>.from(widget.product);
+    _tierConfettiController = ConfettiController(
+      duration: const Duration(milliseconds: 800),
+    );
     _productState = ProductState(product: _fallbackProduct(widget.product));
     _productState!.addListener(_onProductStateChanged);
     _loadWishlistState();
@@ -60,6 +88,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     _productState?.removeListener(_onProductStateChanged);
     _productState?.dispose();
     _pageController.dispose();
+    _tierConfettiController.dispose();
+    _bulkHintHideTimer?.cancel();
+    _bulkHintRotateTimer?.cancel();
     super.dispose();
   }
 
@@ -108,6 +139,25 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         currentUserId: uid,
       );
 
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('products')
+            .doc(productId)
+            .get();
+        final data = doc.data();
+        if (mounted && data != null) {
+          setState(() {
+            _resolvedProductMap = {
+              ..._resolvedProductMap,
+              ...data,
+              'id': productId,
+            };
+          });
+        }
+      } catch (_) {
+        // Keep PDP resilient when metadata refresh fails.
+      }
+
       if (allowVariantFallback && product.variants.isEmpty) {
         try {
           final fallbackVariants = await _firestoreService.getProductVariants(
@@ -131,10 +181,44 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
       if (!mounted || _productState == null) return;
       _productState!.replaceProduct(product);
+      _migrateBaseCartQuantityToSelectedVariantIfNeeded();
+      _maybeAutoOpenBulkOrderSheet();
     } catch (e) {
     } finally {
       if (mounted) setState(() => _loadingDetail = false);
     }
+  }
+
+  void _migrateBaseCartQuantityToSelectedVariantIfNeeded() {
+    if (!mounted) return;
+
+    final selectedCartId = _cartItemId;
+    final baseId = _baseProductId(selectedCartId);
+    if (selectedCartId.isEmpty || baseId.isEmpty || selectedCartId == baseId) {
+      return;
+    }
+
+    final cart = context.read<CartModel>();
+    final variantQty = cart.quantityOf(selectedCartId);
+    if (variantQty > 0) return;
+
+    final baseQty = cart.quantityOf(baseId);
+    if (baseQty <= 0) return;
+
+    cart.setQuantity(_cartPayload, baseQty);
+    cart.setQuantity({'id': baseId}, 0);
+  }
+
+  void _maybeAutoOpenBulkOrderSheet() {
+    if (!widget.autoOpenBulkOrderSheet) return;
+    if (_didAutoOpenBulkOrderSheet) return;
+    if (!_hasTierPricing) return;
+
+    _didAutoOpenBulkOrderSheet = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _onBulkOrderPressed();
+    });
   }
 
   Product get _product => _productState!.product;
@@ -169,7 +253,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       'brand': _product.brand,
       'image': _displayImage,
       'price': _currentPrice,
-      'category': (widget.product['category'] ?? '').toString(),
+      'category': (_resolvedProductMap['category'] ?? '').toString(),
     };
   }
 
@@ -1343,41 +1427,104 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   List<Map<String, dynamic>> _recommendedItems(List<Map<String, dynamic>> all) {
-    final currentId = _product.id;
-    final currentCategory = _normalizeKey(
-      (widget.product['category'] ?? '').toString(),
-    );
-    final currentBrand = _normalizeKey(_product.brand);
-    final candidates = all
-        .where((p) => (p['id'] ?? '').toString() != currentId)
-        .toList();
-    final explicit = candidates.where((p) {
-      final section = _normalizeKey(
-        (p['homeSection'] ?? p['home_section'] ?? p['section'] ?? '')
-            .toString(),
-      );
-      final tag = _normalizeKey((p['tag'] ?? '').toString());
-      return section == 'recommended_salon' ||
-          section == 'recommended' ||
-          tag == 'recommended';
-    }).toList();
-    if (explicit.isNotEmpty) return explicit.take(6).toList();
-    final scored = List<Map<String, dynamic>>.from(candidates)
-      ..sort((a, b) {
-        int score(Map<String, dynamic> p) {
-          var s = 0;
-          final cat = _normalizeKey((p['category'] ?? '').toString());
-          final br = _normalizeKey((p['brand'] ?? '').toString());
-          if (cat.isNotEmpty && cat == currentCategory) s += 200;
-          if (br.isNotEmpty && br == currentBrand) s += 120;
-          s += (((p['rating'] as num?) ?? 0) * 10).round();
-          s += (((p['reviews'] as num?) ?? 0) / 25).round();
-          return s;
-        }
+    if (all.isEmpty) return const [];
 
-        return score(b).compareTo(score(a));
-      });
-    return scored.take(6).toList();
+    final currentProductId = _baseProductId(_product.id);
+    final currentCategory = (_resolvedProductMap['category'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+
+    final currentTags = <String>{};
+    final currentTag = (_resolvedProductMap['tag'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (currentTag.isNotEmpty) currentTags.add(currentTag);
+
+    final tags = _resolvedProductMap['tags'];
+    if (tags is List) {
+      for (final t in tags) {
+        final normalized = t.toString().trim().toLowerCase();
+        if (normalized.isNotEmpty) currentTags.add(normalized);
+      }
+    }
+
+    int scoreOf(Map<String, dynamic> product) {
+      final productTagSet = <String>{};
+      final single = (product['tag'] ?? '').toString().trim().toLowerCase();
+      if (single.isNotEmpty) productTagSet.add(single);
+
+      final productTags = product['tags'];
+      if (productTags is List) {
+        for (final t in productTags) {
+          final normalized = t.toString().trim().toLowerCase();
+          if (normalized.isNotEmpty) productTagSet.add(normalized);
+        }
+      }
+
+      final category = (product['category'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+
+      final tagMatches = productTagSet.where(currentTags.contains).length;
+      final categoryMatch =
+          currentCategory.isNotEmpty && currentCategory == category ? 1 : 0;
+      final rating = (product['rating'] as num?)?.toDouble() ?? 0;
+      final reviews = (product['reviews'] as num?)?.toInt() ?? 0;
+
+      return (tagMatches * 10000) +
+          (categoryMatch * 1000) +
+          (rating * 100).round() +
+          reviews;
+    }
+
+    final candidates = all
+        .where(
+          (p) => _baseProductId((p['id'] ?? '').toString()) != currentProductId,
+        )
+        .toList(growable: false);
+
+    if (candidates.isEmpty) return const [];
+
+    final sorted = List<Map<String, dynamic>>.from(candidates)
+      ..sort((a, b) => scoreOf(b).compareTo(scoreOf(a)));
+
+    final primary = sorted
+        .where((p) {
+          final category = (p['category'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          final tag = (p['tag'] ?? '').toString().trim().toLowerCase();
+          final tags = p['tags'] is List
+              ? (p['tags'] as List)
+                    .map((e) => e.toString().trim().toLowerCase())
+                    .toSet()
+              : <String>{};
+          final tagMatch =
+              currentTags.contains(tag) || tags.any(currentTags.contains);
+          final categoryMatch =
+              currentCategory.isNotEmpty && currentCategory == category;
+          return tagMatch || categoryMatch;
+        })
+        .take(6)
+        .toList(growable: true);
+
+    if (primary.length < 6) {
+      final already = primary
+          .map((e) => _baseProductId((e['id'] ?? '').toString()))
+          .toSet();
+      for (final candidate in sorted) {
+        final id = _baseProductId((candidate['id'] ?? '').toString());
+        if (already.contains(id)) continue;
+        primary.add(candidate);
+        if (primary.length >= 6) break;
+      }
+    }
+
+    return primary.take(6).toList(growable: false);
   }
 
   int _compareVariantAscending(ProductVariant a, ProductVariant b) {
@@ -1414,10 +1561,489 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     return aText.toLowerCase().compareTo(bText.toLowerCase());
   }
 
+  String get _variableTierMode {
+    return (_resolvedProductMap['variableTierMode'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+  }
+
+  List<PercentagePricingTier> get _variableUniversalPercentageTiers {
+    return parsePercentagePricingTiers(
+      _resolvedProductMap['variableUniversalTiers'],
+    );
+  }
+
+  int get _selectedVariantBasePrice {
+    return (_selectedVariant?.price ?? 0) > 0
+        ? (_selectedVariant?.price ?? 0)
+        : ((_resolvedProductMap['price'] as num?) ?? 0).toInt();
+  }
+
+  String get _effectivePricingType {
+    final variantType = (_selectedVariant?.pricingType ?? '').trim();
+    if (variantType.isNotEmpty) return variantType;
+
+    final variantHasExplicitTiers =
+        _selectedVariant != null && _selectedVariant!.pricingTiers.isNotEmpty;
+    if (variantHasExplicitTiers) return 'tier';
+
+    if (_variableTierMode == 'universal' &&
+        _variableUniversalPercentageTiers.isNotEmpty) {
+      return 'tier';
+    }
+
+    return (_resolvedProductMap['pricingType'] ?? '').toString().trim();
+  }
+
+  List<PricingTier> get _effectivePricingTiers {
+    if (_selectedVariant != null && _selectedVariant!.pricingTiers.isNotEmpty) {
+      return normalizePricingTiers(_selectedVariant!.pricingTiers);
+    }
+
+    if (_variableTierMode == 'universal' &&
+        _variableUniversalPercentageTiers.isNotEmpty) {
+      return derivePricingTiersFromPercentage(
+        basePrice: _selectedVariantBasePrice,
+        percentageTiers: _variableUniversalPercentageTiers,
+      );
+    }
+
+    return parsePricingTiers(_resolvedProductMap['pricingTiers']);
+  }
+
+  bool get _hasTierPricing {
+    final tiers = _effectivePricingTiers;
+    if (tiers.isEmpty) return false;
+
+    final type = _effectivePricingType.toLowerCase();
+    return type.isEmpty || type == 'tier';
+  }
+
+  int _tierUnitPriceForQuantity(int quantity) {
+    final basePrice = _selectedVariantBasePrice;
+
+    if (!_hasTierPricing) return basePrice;
+
+    return unitPriceForQuantity(
+      quantity: quantity,
+      basePrice: basePrice,
+      pricingTiers: _effectivePricingTiers,
+    );
+  }
+
+  String _tierLabel(PricingTier tier) => 'Buy ${tierRangeLabel(tier)}';
+
+  int _tierIndex(List<PricingTier> tiers, int quantity) {
+    return tierIndexForQuantity(quantity: quantity, pricingTiers: tiers);
+  }
+
+  String get _bulkHintText => _bulkHintMessages[_bulkHintMessageIndex];
+
+  void _onBulkOrderPressed() {
+    if (_showBulkHint) {
+      setState(() => _showBulkHint = false);
+    }
+    _bulkHintHideTimer?.cancel();
+    _bulkHintRotateTimer?.cancel();
+    _openTierPricingSheet();
+  }
+
+  void _invalidateBulkConfirmation() {
+    if (!mounted) return;
+    if (_bulkConfirmedCartItemId == null && _bulkConfirmedQty == 0) return;
+    setState(() {
+      _bulkConfirmedCartItemId = null;
+      _bulkConfirmedQty = 0;
+    });
+  }
+
+  void _maybeShowBulkOrderHint({required bool hasTierPricing}) {
+    if (!hasTierPricing || _hasShownBulkHintOnce) return;
+    _hasShownBulkHintOnce = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      setState(() => _showBulkHint = true);
+
+      _bulkHintRotateTimer?.cancel();
+      _bulkHintRotateTimer = Timer.periodic(const Duration(seconds: 2), (
+        timer,
+      ) {
+        if (!mounted || !_showBulkHint) {
+          timer.cancel();
+          return;
+        }
+
+        setState(() {
+          _bulkHintMessageIndex =
+              (_bulkHintMessageIndex + 1) % _bulkHintMessages.length;
+        });
+      });
+
+      _bulkHintHideTimer?.cancel();
+      _bulkHintHideTimer = Timer(const Duration(seconds: 8), () {
+        if (!mounted) return;
+        _bulkHintRotateTimer?.cancel();
+        setState(() => _showBulkHint = false);
+      });
+    });
+  }
+
+  Future<void> _openTierPricingSheet() async {
+    final tiers = _effectivePricingTiers;
+    if (tiers.isEmpty) return;
+    final cartModel = context.read<CartModel>();
+
+    final basePrice = _selectedVariantBasePrice;
+    final cartQty = cartModel.quantityOf(_cartItemId);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        var qty = cartQty > 0 ? cartQty : 1;
+
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            final unitPrice = unitPriceForQuantity(
+              quantity: qty,
+              basePrice: basePrice,
+              pricingTiers: tiers,
+            );
+            final total = unitPrice * qty;
+            final upcomingTier = nextPricingTier(
+              quantity: qty,
+              pricingTiers: tiers,
+            );
+            final activeIndex = _tierIndex(tiers, qty);
+            final hasExactRangeMatch = tiers.any(
+              (tier) =>
+                  qty >= tier.minQty &&
+                  (tier.maxQty == null || qty <= tier.maxQty!),
+            );
+            final savings = savingsForQuantity(
+              quantity: qty,
+              basePrice: basePrice,
+              unitPrice: unitPrice,
+            );
+
+            return SafeArea(
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 42,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE2E5ED),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Bulk Pricing Offers',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ...tiers.asMap().entries.map((entry) {
+                      final tier = entry.value;
+                      final index = entry.key;
+                      final isBest = entry.key == tiers.length - 1;
+                      final isActive = activeIndex == index;
+                      final rangeMatched =
+                          qty >= tier.minQty &&
+                          (tier.maxQty == null || qty <= tier.maxQty!);
+                      final isSelectedRange =
+                          rangeMatched || (!hasExactRangeMatch && isActive);
+                      final previousTierPrice = index > 0
+                          ? tiers[index - 1].price
+                          : basePrice;
+                      final showActiveStrike =
+                          isSelectedRange && previousTierPrice > tier.price;
+                      final perUnitSaved = showActiveStrike
+                          ? (previousTierPrice - tier.price)
+                          : 0;
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isActive
+                              ? const Color(0xFFEDE7FF)
+                              : (isBest
+                                    ? const Color(0xFFFFF7E6)
+                                    : const Color(0xFFF7F7FB)),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isActive
+                                ? const Color(0xFFBFA4FF)
+                                : (isBest
+                                      ? const Color(0xFFFFDFA4)
+                                      : const Color(0xFFE9EAF0)),
+                          ),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${_tierLabel(tier)} →',
+                                    style: const TextStyle(
+                                      color: AppColors.textPrimary,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  if (perUnitSaved > 0) ...[
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      'Save ₹${perUnitSaved * qty} at qty $qty',
+                                      style: const TextStyle(
+                                        color: Color(0xFF2D7A22),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            if (showActiveStrike)
+                              Row(
+                                children: [
+                                  Text(
+                                    '₹$previousTierPrice',
+                                    style: const TextStyle(
+                                      color: AppColors.textHint,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      decoration: TextDecoration.lineThrough,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                              ),
+                            Text(
+                              '₹${tier.price}',
+                              style: TextStyle(
+                                color: isActive
+                                    ? AppColors.primary
+                                    : AppColors.textPrimary,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            if (isBest)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 8, top: 2),
+                                child: const Text(
+                                  'Best Value 🔥',
+                                  style: TextStyle(
+                                    color: Color(0xFFB77700),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    }),
+                    const SizedBox(height: 6),
+                    Stack(
+                      alignment: Alignment.centerRight,
+                      children: [
+                        Row(
+                          children: [
+                            const Text(
+                              'Quantity',
+                              style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const Spacer(),
+                            Container(
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                children: [
+                                  IconButton(
+                                    onPressed: qty <= 1
+                                        ? null
+                                        : () => setSheetState(() => qty--),
+                                    icon: const Icon(
+                                      Icons.remove,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  Text(
+                                    '$qty',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    onPressed: () {
+                                      final before = _tierIndex(tiers, qty);
+                                      setSheetState(() => qty++);
+                                      final after = _tierIndex(tiers, qty);
+                                      if (after > before) {
+                                        _tierConfettiController.play();
+                                      }
+                                    },
+                                    icon: const Icon(
+                                      Icons.add,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        Positioned(
+                          right: 54,
+                          child: IgnorePointer(
+                            child: SizedBox(
+                              width: 90,
+                              height: 34,
+                              child: ConfettiWidget(
+                                confettiController: _tierConfettiController,
+                                blastDirectionality:
+                                    BlastDirectionality.explosive,
+                                shouldLoop: false,
+                                emissionFrequency: 0.03,
+                                numberOfParticles: 12,
+                                maxBlastForce: 8,
+                                minBlastForce: 4,
+                                gravity: 0.26,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF4F8FF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFD9E8FF)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Total ₹$total',
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            savings > 0
+                                ? 'Saved ₹$savings at this quantity'
+                                : (upcomingTier != null
+                                      ? 'Add ${upcomingTier.minQty - qty} more for ₹${upcomingTier.price} each'
+                                      : 'Best tier unlocked 🎉'),
+                            style: TextStyle(
+                              color: savings > 0
+                                  ? const Color(0xFF2D7A22)
+                                  : AppColors.textSecondary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          cartModel.setQuantity(_cartPayload, qty);
+                          if (mounted) {
+                            setState(() {
+                              _bulkConfirmedCartItemId = _cartItemId;
+                              _bulkConfirmedQty = qty;
+                            });
+                          }
+                          if (!mounted) return;
+                          Navigator.of(sheetContext).pop();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Saved quantity: $qty (₹$unitPrice each)',
+                              ),
+                              duration: const Duration(milliseconds: 1200),
+                            ),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        child: const Text(
+                          'Save',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   int get _currentPrice {
-    final v = _selectedVariant?.price ?? 0;
-    if (v > 0) return v;
-    return ((widget.product['price'] as num?) ?? 0).toInt();
+    return _tierUnitPriceForQuantity(1);
   }
 
   bool get _manageStockEnabled {
@@ -1504,12 +2130,17 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         ? baseName
         : '$baseName • $variantName';
     return {
-      ...widget.product,
+      ..._resolvedProductMap,
       'id': _cartItemId,
       'name': composedName,
       'brand': _product.brand,
       'image': _displayImage,
       'price': _currentPrice,
+      'basePrice': _selectedVariantBasePrice,
+      'pricingType': _effectivePricingType,
+      'pricingTiers': _effectivePricingTiers
+          .map((tier) => tier.toMap())
+          .toList(growable: false),
       'size': _displaySize,
       'variantId': (_selectedVariant?.id ?? '').trim(),
       'variantName': variantName,
@@ -1551,6 +2182,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               : ((widget.product['rating'] as num?) ?? 0).toDouble());
     final myReview = _myReview;
     final price = _currentPrice;
+    final effectiveTiers = _effectivePricingTiers;
+    final hasTierPricing = _hasTierPricing;
+    _maybeShowBulkOrderHint(hasTierPricing: hasTierPricing);
     final originalPrice = ((widget.product['originalPrice'] as num?) ?? 0)
         .toInt();
     final hasDiscount = originalPrice > price;
@@ -1624,7 +2258,14 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         cartItem: _cartPayload,
         displaySize: _displaySize,
         displayPrice: price,
+        basePrice: _selectedVariantBasePrice,
+        pricingType: _effectivePricingType,
+        pricingTiers: effectiveTiers,
         isOutOfStock: _isOutOfStock,
+        onBulkOrderTap: _onBulkOrderPressed,
+        onManualQuantityChange: _invalidateBulkConfirmation,
+        bulkConfirmedCartItemId: _bulkConfirmedCartItemId,
+        bulkConfirmedQty: _bulkConfirmedQty,
       ),
       floatingActionButton: const SupportChatFab(),
       body: SingleChildScrollView(
@@ -1742,6 +2383,121 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             fontWeight: FontWeight.w500,
                           ),
                         ),
+                        if (hasTierPricing) ...[
+                          const Spacer(),
+                          Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              FilledButton.icon(
+                                onPressed: _onBulkOrderPressed,
+                                icon: const Icon(
+                                  Icons.local_offer_rounded,
+                                  size: 16,
+                                ),
+                                label: const Text('Bulk order'),
+                                style:
+                                    FilledButton.styleFrom(
+                                      backgroundColor: const Color(0xFF6C2BFF),
+                                      foregroundColor: Colors.white,
+                                      shadowColor: const Color(0x806C2BFF),
+                                      elevation: 1.5,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 8,
+                                      ),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(11),
+                                      ),
+                                      textStyle: const TextStyle(
+                                        fontSize: 11.8,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: 0.1,
+                                      ),
+                                    ).copyWith(
+                                      overlayColor:
+                                          const MaterialStatePropertyAll(
+                                            Color(0x22FFFFFF),
+                                          ),
+                                    ),
+                              ),
+                              Positioned(
+                                top: -44,
+                                right: -2,
+                                child: IgnorePointer(
+                                  ignoring: true,
+                                  child: AnimatedOpacity(
+                                    duration: const Duration(milliseconds: 250),
+                                    opacity: _showBulkHint ? 1 : 0,
+                                    child: AnimatedSlide(
+                                      duration: const Duration(
+                                        milliseconds: 260,
+                                      ),
+                                      offset: _showBulkHint
+                                          ? Offset.zero
+                                          : const Offset(0.08, 0.12),
+                                      curve: Curves.easeOutCubic,
+                                      child: Container(
+                                        constraints: const BoxConstraints(
+                                          maxWidth: 190,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 7,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF2D1A63),
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          boxShadow: const [
+                                            BoxShadow(
+                                              color: Color(0x332D1A63),
+                                              blurRadius: 10,
+                                              offset: Offset(0, 4),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(
+                                              Icons.trending_down_rounded,
+                                              color: Color(0xFFE7D6FF),
+                                              size: 12,
+                                            ),
+                                            const SizedBox(width: 5),
+                                            Flexible(
+                                              child: Text(
+                                                _bulkHintText,
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 10.7,
+                                                  height: 1.15,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 4),
+                                            const Icon(
+                                              Icons.south_east_rounded,
+                                              color: Color(0xFFD7B8FF),
+                                              size: 12,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -3023,13 +3779,27 @@ class _BottomCartBar extends StatelessWidget {
   final Map<String, dynamic> cartItem;
   final String displaySize;
   final int displayPrice;
+  final int basePrice;
+  final String pricingType;
+  final List<PricingTier> pricingTiers;
   final bool isOutOfStock;
+  final VoidCallback? onBulkOrderTap;
+  final VoidCallback? onManualQuantityChange;
+  final String? bulkConfirmedCartItemId;
+  final int bulkConfirmedQty;
 
   const _BottomCartBar({
     required this.cartItem,
     required this.displaySize,
     required this.displayPrice,
+    required this.basePrice,
+    required this.pricingType,
+    required this.pricingTiers,
     required this.isOutOfStock,
+    this.onBulkOrderTap,
+    this.onManualQuantityChange,
+    this.bulkConfirmedCartItemId,
+    this.bulkConfirmedQty = 0,
   });
 
   @override
@@ -3041,6 +3811,36 @@ class _BottomCartBar extends StatelessWidget {
       child: Consumer<CartModel>(
         builder: (_, cart, __) {
           final qty = cart.quantityOf(cartId);
+          final normalizedPricingType = pricingType.trim().toLowerCase();
+          final hasTierPricing =
+              pricingTiers.isNotEmpty &&
+              (normalizedPricingType.isEmpty ||
+                  normalizedPricingType == 'tier');
+          int? discountedTierTriggerQty;
+          if (hasTierPricing) {
+            for (final tier in pricingTiers) {
+              if (tier.price < basePrice) {
+                discountedTierTriggerQty = tier.minQty;
+                break;
+              }
+            }
+          }
+          final bulkSelectionConfirmed =
+              bulkConfirmedCartItemId == cartId && bulkConfirmedQty == qty;
+          final requiresBulkSelection =
+              discountedTierTriggerQty != null &&
+              qty >= discountedTierTriggerQty &&
+              !bulkSelectionConfirmed;
+          final resolvedDisplayPrice = hasTierPricing
+              ? unitPriceForQuantity(
+                  quantity: qty > 0 ? qty : 1,
+                  basePrice: basePrice,
+                  pricingTiers: pricingTiers,
+                )
+              : displayPrice;
+          final displayAmount = qty > 0
+              ? (resolvedDisplayPrice * qty)
+              : resolvedDisplayPrice;
           return Container(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
             decoration: BoxDecoration(
@@ -3071,7 +3871,7 @@ class _BottomCartBar extends StatelessWidget {
                           ),
                         ),
                       Text(
-                        '₹$displayPrice',
+                        '₹$displayAmount',
                         style: const TextStyle(
                           color: AppColors.textPrimary,
                           fontSize: 26,
@@ -3127,7 +3927,10 @@ class _BottomCartBar extends StatelessWidget {
                           ),
                           onPressed: cartId.isEmpty
                               ? null
-                              : () => cart.add(cartItem),
+                              : () {
+                                  onManualQuantityChange?.call();
+                                  cart.add(cartItem);
+                                },
                           child: const Text(
                             'Add to cart',
                             style: TextStyle(
@@ -3148,7 +3951,10 @@ class _BottomCartBar extends StatelessWidget {
                                 children: [
                                   Expanded(
                                     child: IconButton(
-                                      onPressed: () => cart.remove(cartId),
+                                      onPressed: () {
+                                        onManualQuantityChange?.call();
+                                        cart.remove(cartId);
+                                      },
                                       icon: const Icon(
                                         Icons.remove,
                                         color: Colors.white,
@@ -3166,7 +3972,10 @@ class _BottomCartBar extends StatelessWidget {
                                   ),
                                   Expanded(
                                     child: IconButton(
-                                      onPressed: () => cart.add(cartItem),
+                                      onPressed: () {
+                                        onManualQuantityChange?.call();
+                                        cart.add(cartItem);
+                                      },
                                       icon: const Icon(
                                         Icons.add,
                                         color: Colors.white,
@@ -3180,14 +3989,17 @@ class _BottomCartBar extends StatelessWidget {
                             const SizedBox(width: 8),
                             Expanded(
                               child: ElevatedButton(
-                                onPressed: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => const CheckoutScreen(),
-                                    ),
-                                  );
-                                },
+                                onPressed: requiresBulkSelection
+                                    ? onBulkOrderTap
+                                    : () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                const CheckoutScreen(),
+                                          ),
+                                        );
+                                      },
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: AppColors.primary,
                                   foregroundColor: Colors.white,
@@ -3196,9 +4008,11 @@ class _BottomCartBar extends StatelessWidget {
                                     borderRadius: BorderRadius.circular(14),
                                   ),
                                 ),
-                                child: const Text(
-                                  'Checkout',
-                                  style: TextStyle(
+                                child: Text(
+                                  requiresBulkSelection
+                                      ? 'Bulk order'
+                                      : 'Checkout',
+                                  style: const TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.w700,
                                   ),

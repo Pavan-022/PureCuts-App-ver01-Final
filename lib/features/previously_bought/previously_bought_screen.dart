@@ -3,6 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/models/cart_model.dart';
+import 'package:purecuts/core/utils/tier_pricing.dart';
 import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
@@ -694,6 +695,30 @@ class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
 class _BoughtItem extends StatelessWidget {
   final Map<String, dynamic> product;
   const _BoughtItem({required this.product});
+  int? _bulkTriggerQty(Map<String, dynamic> product) {
+    final basePrice =
+        ((product['basePrice'] as num?) ?? (product['price'] as num?) ?? 0)
+            .toInt();
+    final tiers = parsePricingTiers(product['pricingTiers']);
+    for (final tier in tiers) {
+      if (tier.price < basePrice) return tier.minQty;
+    }
+
+    final variableTierMode = (product['variableTierMode'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (variableTierMode == 'universal') {
+      final percentageTiers = parsePercentagePricingTiers(
+        product['variableUniversalTiers'],
+      );
+      for (final tier in percentageTiers) {
+        if (tier.percentOff > 0) return tier.minQty;
+      }
+    }
+
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -794,6 +819,12 @@ class _BoughtItem extends StatelessWidget {
                 Consumer<CartModel>(
                   builder: (context, cart, _) {
                     final qty = id.isEmpty ? 0 : cart.quantityOf(id);
+                    final bulkTriggerQty = _bulkTriggerQty(product);
+                    final bulkReached =
+                        bulkTriggerQty != null &&
+                        qty >= bulkTriggerQty &&
+                        qty > 0;
+
                     if (qty == 0) {
                       return _AddButton(
                         onTap: () => context.read<CartModel>().add({
@@ -806,16 +837,47 @@ class _BoughtItem extends StatelessWidget {
                       );
                     }
 
+                    if (bulkReached) {
+                      return _AddButton(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ProductDetailScreen(
+                                product: product,
+                                autoOpenBulkOrderSheet: true,
+                              ),
+                            ),
+                          );
+                        },
+                        label: 'Bulk',
+                      );
+                    }
+
                     return _QtyControl(
                       qty: qty,
                       onMinus: () => context.read<CartModel>().remove(id),
-                      onPlus: () => context.read<CartModel>().add({
-                        'id': id,
-                        'name': name,
-                        'brand': brand,
-                        'image': imageUrl,
-                        'price': price,
-                      }),
+                      onPlus: () {
+                        context.read<CartModel>().add({
+                          'id': id,
+                          'name': name,
+                          'brand': brand,
+                          'image': imageUrl,
+                          'price': price,
+                        });
+                        if (bulkTriggerQty != null &&
+                            qty + 1 >= bulkTriggerQty) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ProductDetailScreen(
+                                product: product,
+                                autoOpenBulkOrderSheet: true,
+                              ),
+                            ),
+                          );
+                        }
+                      },
                     );
                   },
                 ),
@@ -830,7 +892,8 @@ class _BoughtItem extends StatelessWidget {
 
 class _AddButton extends StatelessWidget {
   final VoidCallback onTap;
-  const _AddButton({required this.onTap});
+  final String label;
+  const _AddButton({required this.onTap, this.label = 'Add'});
 
   @override
   Widget build(BuildContext context) {
@@ -842,8 +905,8 @@ class _AddButton extends StatelessWidget {
           color: AppColors.primary,
           borderRadius: BorderRadius.circular(10),
         ),
-        child: const Text(
-          'Add',
+        child: Text(
+          label,
           style: TextStyle(
             color: Colors.white,
             fontSize: 12,

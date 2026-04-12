@@ -295,6 +295,47 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     return id.substring(0, sep);
   }
 
+  int? _bulkTriggerQtyForCartItem(CartItem item) {
+    final tiers = item.pricingTiers;
+    if (tiers.isEmpty) return null;
+    final basePrice = item.basePrice > 0 ? item.basePrice : item.price;
+    for (final tier in tiers) {
+      if (tier.price < basePrice) return tier.minQty;
+    }
+    return null;
+  }
+
+  Map<String, dynamic> _productMapFromCartItem(CartItem item) {
+    return {
+      'id': _baseProductId(item.id),
+      'name': item.name,
+      'brand': item.brand,
+      'image': item.image,
+      'price': item.price,
+      'basePrice': item.basePrice,
+      'pricingType': item.pricingType,
+      'pricingTiers': item.pricingTiers
+          .map((tier) => tier.toMap())
+          .toList(growable: false),
+    };
+  }
+
+  void _openProductDetailFromCartItem(
+    BuildContext context,
+    CartItem item, {
+    bool autoOpenBulkOrderSheet = false,
+  }) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProductDetailScreen(
+          product: _productMapFromCartItem(item),
+          autoOpenBulkOrderSheet: autoOpenBulkOrderSheet,
+        ),
+      ),
+    );
+  }
+
   String _normalizedPhone(String value) {
     final cleaned = value.trim().replaceAll(RegExp(r'\D'), '');
     if (cleaned.length == 12 && cleaned.startsWith('91')) {
@@ -1876,141 +1917,198 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   title: 'Selected items',
                   child: Column(
                     children: cart.items.map((item) {
+                      final bulkTriggerQty = _bulkTriggerQtyForCartItem(item);
+                      final bulkReached =
+                          bulkTriggerQty != null &&
+                          item.quantity >= bulkTriggerQty;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: AppSpacing.md),
                         child: Column(
                           children: [
-                            Row(
-                              children: [
-                                Container(
-                                  width: 56,
-                                  height: 56,
-                                  decoration: BoxDecoration(
-                                    color: AppColors.surface,
-                                    borderRadius: BorderRadius.circular(
-                                      AppRadius.lg,
-                                    ),
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(
-                                      AppRadius.lg,
-                                    ),
-                                    child: CachedNetworkImage(
-                                      imageUrl: item.image,
-                                      fit: BoxFit.contain,
-                                      fadeInDuration: Duration.zero,
-                                      fadeOutDuration: Duration.zero,
-                                      memCacheWidth: 112,
-                                      maxWidthDiskCache: 112,
-                                      errorWidget: (_, __, ___) => const Icon(
-                                        Icons.image_outlined,
-                                        color: AppColors.textHint,
+                            InkWell(
+                              borderRadius: BorderRadius.circular(AppRadius.md),
+                              onTap: () =>
+                                  _openProductDetailFromCartItem(context, item),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 56,
+                                    height: 56,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.surface,
+                                      borderRadius: BorderRadius.circular(
+                                        AppRadius.lg,
                                       ),
                                     ),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        item.name,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          color: AppColors.textPrimary,
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 14,
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(
+                                        AppRadius.lg,
+                                      ),
+                                      child: CachedNetworkImage(
+                                        imageUrl: item.image,
+                                        fit: BoxFit.contain,
+                                        fadeInDuration: Duration.zero,
+                                        fadeOutDuration: Duration.zero,
+                                        memCacheWidth: 112,
+                                        maxWidthDiskCache: 112,
+                                        errorWidget: (_, __, ___) => const Icon(
+                                          Icons.image_outlined,
+                                          color: AppColors.textHint,
                                         ),
                                       ),
-                                      const SizedBox(height: AppSpacing.xs),
-                                      Text(
-                                        '₹${item.price} each',
-                                        style: const TextStyle(
-                                          color: AppColors.textSecondary,
-                                          fontSize: 13,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          item.name,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: AppColors.textPrimary,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 14,
+                                          ),
                                         ),
-                                      ),
-                                    ],
+                                        const SizedBox(height: AppSpacing.xs),
+                                        Text(
+                                          '₹${item.price} each',
+                                          style: const TextStyle(
+                                            color: AppColors.textSecondary,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                                Text(
-                                  '₹${item.price * item.quantity}',
-                                  style: const TextStyle(
-                                    color: AppColors.textPrimary,
-                                    fontWeight: FontWeight.w700,
+                                  Text(
+                                    '₹${item.price * item.quantity}',
+                                    style: const TextStyle(
+                                      color: AppColors.textPrimary,
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                             const SizedBox(height: 8),
                             Align(
                               alignment: Alignment.centerRight,
-                              child: Container(
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  color: AppColors.surface,
-                                  borderRadius: BorderRadius.circular(
-                                    AppRadius.md,
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    InkWell(
-                                      onTap: () => context
-                                          .read<CartModel>()
-                                          .remove(item.id),
-                                      borderRadius: BorderRadius.circular(
-                                        AppRadius.md,
-                                      ),
-                                      child: const SizedBox(
-                                        width: 34,
-                                        child: Icon(
-                                          Icons.remove_rounded,
-                                          color: AppColors.textSecondary,
-                                          size: 16,
+                              child: bulkReached
+                                  ? SizedBox(
+                                      height: 32,
+                                      child: ElevatedButton(
+                                        onPressed: () =>
+                                            _openProductDetailFromCartItem(
+                                              context,
+                                              item,
+                                              autoOpenBulkOrderSheet: true,
+                                            ),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: AppColors.primary,
+                                          foregroundColor: Colors.white,
+                                          elevation: 0,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              AppRadius.md,
+                                            ),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                          ),
+                                        ),
+                                        child: const Text(
+                                          'Bulk order',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                    SizedBox(
-                                      width: 24,
-                                      child: Text(
-                                        '${item.quantity}',
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(
-                                          color: AppColors.textPrimary,
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 12,
+                                    )
+                                  : Container(
+                                      height: 32,
+                                      decoration: BoxDecoration(
+                                        color: AppColors.surface,
+                                        borderRadius: BorderRadius.circular(
+                                          AppRadius.md,
                                         ),
                                       ),
-                                    ),
-                                    InkWell(
-                                      onTap: () =>
-                                          context.read<CartModel>().add({
-                                            'id': item.id,
-                                            'name': item.name,
-                                            'brand': item.brand,
-                                            'image': item.image,
-                                            'price': item.price,
-                                          }),
-                                      borderRadius: BorderRadius.circular(
-                                        AppRadius.md,
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          InkWell(
+                                            onTap: () => context
+                                                .read<CartModel>()
+                                                .remove(item.id),
+                                            borderRadius: BorderRadius.circular(
+                                              AppRadius.md,
+                                            ),
+                                            child: const SizedBox(
+                                              width: 34,
+                                              child: Icon(
+                                                Icons.remove_rounded,
+                                                color: AppColors.textSecondary,
+                                                size: 16,
+                                              ),
+                                            ),
+                                          ),
+                                          SizedBox(
+                                            width: 24,
+                                            child: Text(
+                                              '${item.quantity}',
+                                              textAlign: TextAlign.center,
+                                              style: const TextStyle(
+                                                color: AppColors.textPrimary,
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ),
+                                          InkWell(
+                                            onTap: () {
+                                              context.read<CartModel>().add({
+                                                'id': item.id,
+                                                'name': item.name,
+                                                'brand': item.brand,
+                                                'image': item.image,
+                                                'price': item.price,
+                                                'basePrice': item.basePrice,
+                                                'pricingType': item.pricingType,
+                                                'pricingTiers': item
+                                                    .pricingTiers
+                                                    .map((tier) => tier.toMap())
+                                                    .toList(growable: false),
+                                              });
+                                              if (bulkTriggerQty != null &&
+                                                  item.quantity + 1 >=
+                                                      bulkTriggerQty) {
+                                                _openProductDetailFromCartItem(
+                                                  context,
+                                                  item,
+                                                  autoOpenBulkOrderSheet: true,
+                                                );
+                                              }
+                                            },
+                                            borderRadius: BorderRadius.circular(
+                                              AppRadius.md,
+                                            ),
+                                            child: const SizedBox(
+                                              width: 34,
+                                              child: Icon(
+                                                Icons.add_rounded,
+                                                color: AppColors.textSecondary,
+                                                size: 16,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                      child: const SizedBox(
-                                        width: 34,
-                                        child: Icon(
-                                          Icons.add_rounded,
-                                          color: AppColors.textSecondary,
-                                          size: 16,
-                                        ),
-                                      ),
                                     ),
-                                  ],
-                                ),
-                              ),
                             ),
                           ],
                         ),

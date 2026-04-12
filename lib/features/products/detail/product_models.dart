@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:purecuts/core/utils/tier_pricing.dart';
 
 class ProductVariant {
   final String id;
@@ -11,6 +12,8 @@ class ProductVariant {
   final int price;
   final int regularPrice;
   final int salePrice;
+  final String pricingType;
+  final List<PricingTier> pricingTiers;
   final String image;
   final int stock;
   final bool hasExplicitStock;
@@ -26,6 +29,8 @@ class ProductVariant {
     required this.price,
     this.regularPrice = 0,
     this.salePrice = 0,
+    this.pricingType = '',
+    this.pricingTiers = const [],
     required this.image,
     this.stock = 0,
     this.hasExplicitStock = false,
@@ -69,6 +74,8 @@ class ProductVariant {
       price: (map['price'] as num?)?.toInt() ?? 0,
       regularPrice: (map['regularPrice'] as num?)?.toInt() ?? 0,
       salePrice: (map['salePrice'] as num?)?.toInt() ?? 0,
+      pricingType: (map['pricingType'] ?? '').toString().trim(),
+      pricingTiers: parsePricingTiers(map['pricingTiers']),
       image: (map['image'] ?? '').toString(),
       stock: parsedStock ?? 0,
       hasExplicitStock: hasExplicitStockField && parsedStock != null,

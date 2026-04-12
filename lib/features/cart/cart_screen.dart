@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/theme/spacing.dart';
 import 'package:purecuts/core/models/cart_model.dart';
+import 'package:purecuts/core/utils/tier_pricing.dart';
 import 'package:purecuts/features/orders/checkout_screen.dart';
+import 'package:purecuts/features/products/product_detail_screen.dart';
 
 class CartScreen extends StatelessWidget {
   const CartScreen({super.key});
@@ -382,8 +384,38 @@ class _CartItem extends StatelessWidget {
   final dynamic item;
   const _CartItem({required this.item});
 
+  int? _bulkTriggerQty() {
+    if (item.pricingTiers is! List<PricingTier>) return null;
+    final tiers = item.pricingTiers as List<PricingTier>;
+    if (tiers.isEmpty) return null;
+    final basePrice = (item.basePrice as int?) ?? (item.price as int?) ?? 0;
+    for (final tier in tiers) {
+      if (tier.price < basePrice) return tier.minQty;
+    }
+    return null;
+  }
+
+  Map<String, dynamic> _toProductMap() {
+    return {
+      'id': item.id,
+      'name': item.name,
+      'brand': item.brand,
+      'image': item.image,
+      'price': item.price,
+      'basePrice': item.basePrice,
+      'pricingType': item.pricingType,
+      'pricingTiers': (item.pricingTiers as List<PricingTier>)
+          .map((tier) => tier.toMap())
+          .toList(growable: false),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
+    final triggerQty = _bulkTriggerQty();
+    final bulkReached =
+        triggerQty != null && (item.quantity as int) >= triggerQty;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
@@ -478,45 +510,103 @@ class _CartItem extends StatelessWidget {
                           letterSpacing: -0.3,
                         ),
                       ),
-                      // Qty pill
-                      Container(
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: AppColors.surface,
-                          borderRadius: BorderRadius.circular(AppRadius.md),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _qtyBtn(
-                              Icons.remove,
-                              () => context.read<CartModel>().remove(item.id),
-                            ),
-                            SizedBox(
-                              width: 30,
-                              child: Text(
-                                '${item.quantity}',
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: AppColors.textPrimary,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 13,
+                      // Qty pill / bulk action
+                      bulkReached
+                          ? SizedBox(
+                              height: 32,
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.primary,
+                                  foregroundColor: Colors.white,
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(
+                                      AppRadius.md,
+                                    ),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                  ),
+                                  textStyle: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => ProductDetailScreen(
+                                        product: _toProductMap(),
+                                        autoOpenBulkOrderSheet: true,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: const Text('Bulk order'),
+                              ),
+                            )
+                          : Container(
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: AppColors.surface,
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.md,
                                 ),
                               ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _qtyBtn(
+                                    Icons.remove,
+                                    () => context.read<CartModel>().remove(
+                                      item.id,
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: 30,
+                                    child: Text(
+                                      '${item.quantity}',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: AppColors.textPrimary,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ),
+                                  _qtyBtn(Icons.add, () {
+                                    context.read<CartModel>().add({
+                                      'id': item.id,
+                                      'name': item.name,
+                                      'brand': item.brand,
+                                      'image': item.image,
+                                      'price': item.price,
+                                      'basePrice': item.basePrice,
+                                      'pricingType': item.pricingType,
+                                      'pricingTiers':
+                                          (item.pricingTiers
+                                                  as List<PricingTier>)
+                                              .map((tier) => tier.toMap())
+                                              .toList(growable: false),
+                                    });
+                                    if (triggerQty != null &&
+                                        (item.quantity as int) + 1 >=
+                                            triggerQty) {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => ProductDetailScreen(
+                                            product: _toProductMap(),
+                                            autoOpenBulkOrderSheet: true,
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  }),
+                                ],
+                              ),
                             ),
-                            _qtyBtn(
-                              Icons.add,
-                              () => context.read<CartModel>().add({
-                                'id': item.id,
-                                'name': item.name,
-                                'brand': item.brand,
-                                'image': item.image,
-                                'price': item.price,
-                              }),
-                            ),
-                          ],
-                        ),
-                      ),
                     ],
                   ),
                 ],

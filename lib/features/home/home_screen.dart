@@ -11,6 +11,7 @@ import 'package:purecuts/core/services/payu_payment_service.dart';
 import 'package:purecuts/core/services/push_notification_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/utils/product_image_contract.dart';
+import 'package:purecuts/core/utils/tier_pricing.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
 import 'package:purecuts/core/widgets/shimmer_widgets.dart';
 import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
@@ -314,10 +315,47 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _openProductDetail(Map<String, dynamic> product) {
+    _openProductDetailWithOptions(product);
+  }
+
+  void _openProductDetailWithOptions(
+    Map<String, dynamic> product, {
+    bool autoOpenBulkOrderSheet = false,
+  }) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => ProductDetailScreen(product: product)),
+      MaterialPageRoute(
+        builder: (_) => ProductDetailScreen(
+          product: product,
+          autoOpenBulkOrderSheet: autoOpenBulkOrderSheet,
+        ),
+      ),
     );
+  }
+
+  int? _bulkTriggerQty(Map<String, dynamic> product) {
+    final basePrice =
+        ((product['basePrice'] as num?) ?? (product['price'] as num?) ?? 0)
+            .toInt();
+    final tiers = parsePricingTiers(product['pricingTiers']);
+    for (final tier in tiers) {
+      if (tier.price < basePrice) return tier.minQty;
+    }
+
+    final variableTierMode = (product['variableTierMode'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (variableTierMode == 'universal') {
+      final percentageTiers = parsePercentagePricingTiers(
+        product['variableUniversalTiers'],
+      );
+      for (final tier in percentageTiers) {
+        if (tier.percentOff > 0) return tier.minQty;
+      }
+    }
+
+    return null;
   }
 
   void _openProductSearch({String? query}) {
@@ -569,6 +607,9 @@ class _HomeScreenState extends State<HomeScreen>
     return Consumer<CartModel>(
       builder: (_, cart, __) {
         final qty = cart.quantityOf((product['id'] ?? '').toString());
+        final bulkTriggerQty = _bulkTriggerQty(product);
+        final bulkReached =
+            bulkTriggerQty != null && qty >= bulkTriggerQty && qty > 0;
 
         if (qty == 0) {
           return GestureDetector(
@@ -587,6 +628,39 @@ class _HomeScreenState extends State<HomeScreen>
                 ],
               ),
               child: const Icon(Icons.add, color: AppColors.primary, size: 16),
+            ),
+          );
+        }
+
+        if (bulkReached) {
+          return GestureDetector(
+            onTap: () => _openProductDetailWithOptions(
+              product,
+              autoOpenBulkOrderSheet: true,
+            ),
+            child: Container(
+              height: 28,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.10),
+                    blurRadius: 6,
+                  ),
+                ],
+              ),
+              child: const Center(
+                child: Text(
+                  'BULK',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
             ),
           );
         }
@@ -620,7 +694,15 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               GestureDetector(
-                onTap: () => _addToCart(product),
+                onTap: () {
+                  _addToCart(product);
+                  if (bulkTriggerQty != null && qty + 1 >= bulkTriggerQty) {
+                    _openProductDetailWithOptions(
+                      product,
+                      autoOpenBulkOrderSheet: true,
+                    );
+                  }
+                },
                 child: const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 4),
                   child: Icon(Icons.add, color: Colors.white, size: 14),
@@ -637,6 +719,9 @@ class _HomeScreenState extends State<HomeScreen>
     return Consumer<CartModel>(
       builder: (_, cart, __) {
         final qty = cart.quantityOf((product['id'] ?? '').toString());
+        final bulkTriggerQty = _bulkTriggerQty(product);
+        final bulkReached =
+            bulkTriggerQty != null && qty >= bulkTriggerQty && qty > 0;
 
         if (qty == 0) {
           return SizedBox(
@@ -658,6 +743,33 @@ class _HomeScreenState extends State<HomeScreen>
               ),
               onPressed: () => _addToCart(product),
               child: const Text('Add to Cart'),
+            ),
+          );
+        }
+
+        if (bulkReached) {
+          return SizedBox(
+            width: double.infinity,
+            height: 30,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.zero,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+                elevation: 0,
+              ),
+              onPressed: () => _openProductDetailWithOptions(
+                product,
+                autoOpenBulkOrderSheet: true,
+              ),
+              child: const Text('Bulk order'),
             ),
           );
         }
@@ -689,7 +801,15 @@ class _HomeScreenState extends State<HomeScreen>
               ),
               Expanded(
                 child: GestureDetector(
-                  onTap: () => _addToCart(product),
+                  onTap: () {
+                    _addToCart(product);
+                    if (bulkTriggerQty != null && qty + 1 >= bulkTriggerQty) {
+                      _openProductDetailWithOptions(
+                        product,
+                        autoOpenBulkOrderSheet: true,
+                      );
+                    }
+                  },
                   child: const Center(
                     child: Icon(Icons.add, color: Colors.white, size: 16),
                   ),

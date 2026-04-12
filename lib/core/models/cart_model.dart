@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:purecuts/core/utils/product_image_contract.dart';
+import 'package:purecuts/core/utils/tier_pricing.dart';
 
 class CartItem {
   final String id;
@@ -11,6 +12,9 @@ class CartItem {
   final String brand;
   final String image;
   final int price;
+  final int basePrice;
+  final String pricingType;
+  final List<PricingTier> pricingTiers;
   int quantity;
 
   CartItem({
@@ -19,6 +23,9 @@ class CartItem {
     required this.brand,
     required this.image,
     required this.price,
+    this.basePrice = 0,
+    this.pricingType = '',
+    this.pricingTiers = const [],
     this.quantity = 1,
   });
 
@@ -29,6 +36,11 @@ class CartItem {
       'brand': brand,
       'image': image,
       'price': price,
+      'basePrice': basePrice,
+      'pricingType': pricingType,
+      'pricingTiers': pricingTiers
+          .map((tier) => tier.toMap())
+          .toList(growable: false),
       'quantity': quantity,
     };
   }
@@ -42,6 +54,14 @@ class CartItem {
       price: (map['price'] is num)
           ? (map['price'] as num).toInt()
           : int.tryParse((map['price'] ?? '0').toString()) ?? 0,
+      basePrice: (map['basePrice'] is num)
+          ? (map['basePrice'] as num).toInt()
+          : int.tryParse(
+                  (map['basePrice'] ?? map['price'] ?? '0').toString(),
+                ) ??
+                0,
+      pricingType: (map['pricingType'] ?? '').toString().trim(),
+      pricingTiers: parsePricingTiers(map['pricingTiers']),
       quantity: (map['quantity'] is num)
           ? (map['quantity'] as num).toInt()
           : int.tryParse((map['quantity'] ?? '1').toString()) ?? 1,
@@ -116,6 +136,32 @@ class CartModel extends ChangeNotifier {
 
   bool hasItem(String id) => _items.any((e) => e.id == id);
 
+  bool _isTierPricingEnabled(CartItem item) {
+    final type = item.pricingType.trim().toLowerCase();
+    return item.pricingTiers.isNotEmpty && (type.isEmpty || type == 'tier');
+  }
+
+  CartItem _repriceForQuantity(CartItem item) {
+    if (!_isTierPricingEnabled(item)) return item;
+    final unitPrice = unitPriceForQuantity(
+      quantity: item.quantity,
+      basePrice: item.basePrice,
+      pricingTiers: item.pricingTiers,
+    );
+
+    return CartItem(
+      id: item.id,
+      name: item.name,
+      brand: item.brand,
+      image: item.image,
+      price: unitPrice,
+      basePrice: item.basePrice,
+      pricingType: item.pricingType,
+      pricingTiers: item.pricingTiers,
+      quantity: item.quantity,
+    );
+  }
+
   int quantityOf(String id) {
     final idx = _items.indexWhere((e) => e.id == id);
     return idx >= 0 ? _items[idx].quantity : 0;
@@ -129,16 +175,95 @@ class CartModel extends ChangeNotifier {
 
     if (idx >= 0) {
       _items[idx].quantity++;
+      _items[idx] = _repriceForQuantity(_items[idx]);
     } else {
+      final rawPrice = (product['price'] is num)
+          ? (product['price'] as num).toInt()
+          : int.tryParse((product['price'] ?? '0').toString()) ?? 0;
+      final rawBasePrice = (product['basePrice'] is num)
+          ? (product['basePrice'] as num).toInt()
+          : int.tryParse((product['basePrice'] ?? rawPrice).toString()) ??
+                rawPrice;
+      final pricingType = (product['pricingType'] ?? '').toString().trim();
+      final pricingTiers = parsePricingTiers(product['pricingTiers']);
+      final initialPrice = unitPriceForQuantity(
+        quantity: 1,
+        basePrice: rawBasePrice,
+        pricingTiers: pricingTiers,
+      );
+
       _items.add(
         CartItem(
           id: productId,
           name: (product['name'] ?? '').toString(),
           brand: (product['brand'] ?? '').toString(),
           image: selectedImage,
-          price: (product['price'] is num)
-              ? (product['price'] as num).toInt()
-              : int.tryParse((product['price'] ?? '0').toString()) ?? 0,
+          price: initialPrice,
+          basePrice: rawBasePrice,
+          pricingType: pricingType,
+          pricingTiers: pricingTiers,
+        ),
+      );
+    }
+
+    _touchPreview(productId);
+    _lastAddedProductId = productId;
+    _lastAddedImage = selectedImage;
+    _addEventTick++;
+
+    _persist();
+    notifyListeners();
+  }
+
+  void setQuantity(Map<String, dynamic> product, int quantity) {
+    final productId = (product['id'] ?? '').toString().trim();
+    if (productId.isEmpty) return;
+
+    final safeQty = quantity < 0 ? 0 : quantity;
+    final idx = _items.indexWhere((e) => e.id == productId);
+
+    if (safeQty == 0) {
+      if (idx >= 0) {
+        _items.removeAt(idx);
+        _syncPreviewWithItems();
+        _persist();
+        notifyListeners();
+      }
+      return;
+    }
+
+    final selectedImage = resolveListImage(product);
+
+    if (idx >= 0) {
+      _items[idx].quantity = safeQty;
+      _items[idx] = _repriceForQuantity(_items[idx]);
+    } else {
+      final rawPrice = (product['price'] is num)
+          ? (product['price'] as num).toInt()
+          : int.tryParse((product['price'] ?? '0').toString()) ?? 0;
+      final rawBasePrice = (product['basePrice'] is num)
+          ? (product['basePrice'] as num).toInt()
+          : int.tryParse((product['basePrice'] ?? rawPrice).toString()) ??
+                rawPrice;
+      final pricingType = (product['pricingType'] ?? '').toString().trim();
+      final pricingTiers = parsePricingTiers(product['pricingTiers']);
+      final unitPrice = unitPriceForQuantity(
+        quantity: safeQty,
+        basePrice: rawBasePrice,
+        pricingTiers: pricingTiers,
+      );
+
+      _items.add(
+        CartItem(
+          id: productId,
+          name: (product['name'] ?? '').toString(),
+          brand: (product['brand'] ?? '').toString(),
+          image: selectedImage,
+          price: unitPrice,
+          basePrice: rawBasePrice,
+          pricingType: pricingType,
+          pricingTiers: pricingTiers,
+          quantity: safeQty,
         ),
       );
     }
@@ -157,6 +282,7 @@ class CartModel extends ChangeNotifier {
     if (idx >= 0) {
       if (_items[idx].quantity > 1) {
         _items[idx].quantity--;
+        _items[idx] = _repriceForQuantity(_items[idx]);
       } else {
         _items.removeAt(idx);
       }
