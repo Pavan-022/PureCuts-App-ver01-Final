@@ -41,6 +41,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   final ImagePicker _imagePicker = ImagePicker();
   final PageController _pageController = PageController();
+  final ScrollController _contentScrollController = ScrollController();
   final Map<int, bool> _detailsExpandedByTab = {0: false, 1: false, 2: false};
   ProductState? _productState;
   int _selectedDetailsTab = 0;
@@ -88,10 +89,22 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     _productState?.removeListener(_onProductStateChanged);
     _productState?.dispose();
     _pageController.dispose();
+    _contentScrollController.dispose();
     _tierConfettiController.dispose();
     _bulkHintHideTimer?.cancel();
     _bulkHintRotateTimer?.cancel();
     super.dispose();
+  }
+
+  void _scrollToImageSection() {
+    if (!_contentScrollController.hasClients) return;
+    if (_contentScrollController.offset <= 32) return;
+
+    _contentScrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   void _syncCarouselToSelectedImage() {
@@ -115,7 +128,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _syncCarouselToSelectedImage();
+      _scrollToImageSection();
     });
+  }
+
+  void _onVariantSelected(ProductVariant variant) {
+    _productState?.selectVariant(variant);
+    _scrollToImageSection();
   }
 
   Product _fallbackProduct(Map<String, dynamic> raw) {
@@ -468,13 +487,14 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     ProductVariant variant,
     bool isSelected, {
     required bool compactMode,
+    required VoidCallback onSelect,
   }) {
     final label = _variantLabel(variant);
     final isColor = _isColorVariant(variant);
 
     if (isColor) {
       return GestureDetector(
-        onTap: () => _productState?.selectVariant(variant),
+        onTap: onSelect,
         child: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -526,7 +546,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }
 
     return GestureDetector(
-      onTap: () => _productState?.selectVariant(variant),
+      onTap: onSelect,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         alignment: Alignment.center,
@@ -2269,6 +2289,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       ),
       floatingActionButton: const SupportChatFab(),
       body: SingleChildScrollView(
+        controller: _contentScrollController,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -2277,7 +2298,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               images: carouselImages,
               selectedIndex: selectedImageIndex,
               pageController: _pageController,
-              onPageChanged: (i) => _productState?.setImageIndex(i),
+              onPageChanged: (i) {
+                _productState?.setImageIndex(i);
+                _scrollToImageSection();
+              },
               buildImage: _buildImage,
             ),
 
@@ -2644,6 +2668,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                               variant,
                               isSelected,
                               compactMode: false,
+                              onSelect: () => _onVariantSelected(variant),
                             );
                           },
                         ),
@@ -2665,6 +2690,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                               variant,
                               isSelected,
                               compactMode: true,
+                              onSelect: () => _onVariantSelected(variant),
                             );
                           },
                         ),

@@ -2,14 +2,14 @@
 
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
 import 'package:confetti/confetti.dart';
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:purecuts/core/theme/app_theme.dart';
-import 'package:purecuts/core/theme/spacing.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
+import 'package:purecuts/core/theme/app_theme.dart';
+import 'package:purecuts/core/theme/spacing.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 import 'package:purecuts/features/orders/order_provider.dart';
@@ -61,11 +61,21 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
     );
     _scaleAnim = CurvedAnimation(parent: _controller, curve: Curves.elasticOut);
     _controller.forward();
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _confettiController.play();
     });
 
+    // Defer provider mutations until after the first frame to avoid
+    // notifyListeners() while widget tree is being built.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _persistOrderAndSyncProviders();
+    });
+  }
+
+  void _persistOrderAndSyncProviders() {
     // ✅ Save cart items to OrderProvider BEFORE clearing the cart
     final cart = context.read<CartModel>();
     final orders = context.read<OrderProvider>();
@@ -75,7 +85,12 @@ class _OrderConfirmScreenState extends State<OrderConfirmScreen>
         (widget.alreadyPlacedOrderRef ?? '').trim().isNotEmpty
         ? widget.alreadyPlacedOrderRef!.trim()
         : _firestoreService.generateOrderRef();
-    _orderRef = provisionalOrderRef;
+
+    if (mounted) {
+      setState(() => _orderRef = provisionalOrderRef);
+    } else {
+      _orderRef = provisionalOrderRef;
+    }
 
     final orderedItems = widget.orderedItems?.isNotEmpty == true
         ? widget.orderedItems!

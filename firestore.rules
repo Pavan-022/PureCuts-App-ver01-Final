@@ -237,6 +237,11 @@ service cloud.firestore {
       allow create, update, delete: if isSuperAdmin();
     }
 
+    match /app_settings/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
     // --- Support Chat ---
     // Chat doc id must be: support_<uid>
     match /chats/{chatId} {

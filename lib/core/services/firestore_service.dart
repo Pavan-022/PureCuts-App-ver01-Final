@@ -51,6 +51,18 @@ class FirestoreService {
     return safe > max ? max : safe;
   }
 
+  Future<Map<String, dynamic>> getStoreAppSettings() async {
+    try {
+      final snap = await _db.collection('app_settings').doc('store').get();
+      if (!snap.exists) return const <String, dynamic>{};
+      final data = snap.data();
+      if (data == null) return const <String, dynamic>{};
+      return Map<String, dynamic>.from(data);
+    } catch (_) {
+      return const <String, dynamic>{};
+    }
+  }
+
   void _traceQuery(
     String operation,
     Stopwatch stopwatch, {

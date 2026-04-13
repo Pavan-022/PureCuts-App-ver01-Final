@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:confetti/confetti.dart';
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
 import 'package:firebase_performance/firebase_performance.dart';
 import 'package:flutter/material.dart';
@@ -37,11 +38,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   static const String _payuPaymentMethod =
       'Pay Online (UPI/Card/NetBanking/Wallet)';
 
-  // Temporary test override: Pune deliveries are free.
-  static const int _puneDeliveryCharge = 19;
-  static const int _maharashtraDeliveryCharge = 30;
-  static const int _outsideMaharashtraDeliveryCharge = 89;
-  static const int _freeDeliveryThreshold = 1000;
+  static const int _defaultPuneDeliveryCharge = 19;
+  static const int _defaultMaharashtraDeliveryCharge = 30;
+  static const int _defaultOutsideMaharashtraDeliveryCharge = 89;
+  static const int _defaultFreeDeliveryThreshold = 1000;
+
+  int _puneDeliveryCharge = _defaultPuneDeliveryCharge;
+  int _maharashtraDeliveryCharge = _defaultMaharashtraDeliveryCharge;
+  int _outsideMaharashtraDeliveryCharge =
+      _defaultOutsideMaharashtraDeliveryCharge;
+  int _freeDeliveryThreshold = _defaultFreeDeliveryThreshold;
 
   static const Set<String> _punePincodes = {
     '411001',
@@ -123,6 +129,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _checkingRecoveredPayment = false;
   bool _autoFinalizeAttempted = false;
   Trace? _checkoutLoadTrace;
+  ConfettiController? _freeDeliveryConfettiController;
+  bool _wasFreeDeliveryUnlocked = false;
+  bool _showingFreeDeliveryPopup = false;
+
+  ConfettiController _ensureFreeDeliveryConfettiController() {
+    return _freeDeliveryConfettiController ??= ConfettiController(
+      duration: const Duration(milliseconds: 1200),
+    );
+  }
 
   void _startCheckoutLoadTrace() {
     if (_checkoutLoadTrace != null) return;
@@ -243,6 +258,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   void initState() {
     super.initState();
     _startCheckoutLoadTrace();
+    _ensureFreeDeliveryConfettiController();
 
     final auth = context.read<AuthProvider>();
     _hydrateAddressesFromUser(auth);
@@ -269,12 +285,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       }
     });
 
+    unawaited(_loadDeliverySettings());
+
     unawaited(_recoverPendingOnlinePayment());
   }
 
   @override
   void dispose() {
     unawaited(_stopCheckoutLoadTrace());
+    _freeDeliveryConfettiController?.dispose();
+    _freeDeliveryConfettiController = null;
     _line1Controller.dispose();
     _line2Controller.dispose();
     _landmarkController.dispose();
@@ -358,6 +378,47 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         !_validPhone(_phoneController.text);
   }
 
+  int _safeNonNegativeInt(dynamic value, int fallback) {
+    if (value is int) return value < 0 ? fallback : value;
+    if (value is num) {
+      final casted = value.round();
+      return casted < 0 ? fallback : casted;
+    }
+    final parsed = int.tryParse((value ?? '').toString().trim());
+    if (parsed == null || parsed < 0) return fallback;
+    return parsed;
+  }
+
+  Future<void> _loadDeliverySettings() async {
+    final settings = await _firestoreService.getStoreAppSettings();
+    if (!mounted || settings.isEmpty) return;
+
+    final delivery = settings['delivery'];
+    final deliveryMap = delivery is Map<String, dynamic>
+        ? delivery
+        : (delivery is Map ? Map<String, dynamic>.from(delivery) : null);
+    if (deliveryMap == null) return;
+
+    setState(() {
+      _puneDeliveryCharge = _safeNonNegativeInt(
+        deliveryMap['pune'],
+        _defaultPuneDeliveryCharge,
+      );
+      _maharashtraDeliveryCharge = _safeNonNegativeInt(
+        deliveryMap['maharashtra'],
+        _defaultMaharashtraDeliveryCharge,
+      );
+      _outsideMaharashtraDeliveryCharge = _safeNonNegativeInt(
+        deliveryMap['outsideMaharashtra'],
+        _defaultOutsideMaharashtraDeliveryCharge,
+      );
+      _freeDeliveryThreshold = _safeNonNegativeInt(
+        deliveryMap['freeThreshold'],
+        _defaultFreeDeliveryThreshold,
+      );
+    });
+  }
+
   Map<String, dynamic> _deliveryAddressMap() {
     return {
       'line1': _line1Controller.text.trim(),
@@ -416,39 +477,127 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         state.contains('maharashtra'));
   }
 
-  int _calculateDeliveryCharge(int itemTotal) {
-    int regionalCharge() {
-      final deliveryAddress = _activeDeliveryAddress();
+  int _regionalDeliveryCharge() {
+    final deliveryAddress = _activeDeliveryAddress();
 
-      if (_isOutsideMaharashtra(deliveryAddress)) {
-        return _outsideMaharashtraDeliveryCharge;
-      }
-
-      if (_isPuneDelivery(deliveryAddress)) {
-        return _puneDeliveryCharge;
-      }
-
-      return _maharashtraDeliveryCharge;
+    if (_isOutsideMaharashtra(deliveryAddress)) {
+      return _outsideMaharashtraDeliveryCharge;
     }
 
-    final baseCharge = regionalCharge();
+    if (_isPuneDelivery(deliveryAddress)) {
+      return _puneDeliveryCharge;
+    }
+
+    return _maharashtraDeliveryCharge;
+  }
+
+  int _calculateDeliveryCharge(int itemTotal) {
+    final baseCharge = _regionalDeliveryCharge();
 
     if (itemTotal >= _freeDeliveryThreshold) {
-      return 0;
-    }
-
-    final effectiveOrderValue = itemTotal + baseCharge;
-    if (effectiveOrderValue >= _freeDeliveryThreshold) {
       return 0;
     }
 
     return baseCharge;
   }
 
+  int _amountToUnlockFreeDelivery(int itemTotal) {
+    if (_calculateDeliveryCharge(itemTotal) == 0) return 0;
+    final remaining =
+        _freeDeliveryThreshold - (itemTotal + _regionalDeliveryCharge());
+    return remaining > 0 ? remaining : 0;
+  }
+
   int _grandTotal(CartModel cart) {
     final itemTotal = _itemTotal(cart);
     final deliveryCharge = _calculateDeliveryCharge(itemTotal);
     return itemTotal + deliveryCharge;
+  }
+
+  Future<void> _showFreeDeliveryUnlockedPopup() async {
+    if (!mounted || _showingFreeDeliveryPopup) return;
+    _showingFreeDeliveryPopup = true;
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        builder: (ctx) {
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFFF1FFF5), Color(0xFFE8FFF0)],
+                ),
+                border: Border.all(color: const Color(0xFFBDE9CC)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 58,
+                    height: 58,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF22A35A).withOpacity(0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.local_shipping_rounded,
+                      color: Color(0xFF1B8D3F),
+                      size: 30,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Free Delivery Unlocked! 🎉',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Awesome! Your order now qualifies for FREE delivery.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1B8D3F),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text('Nice!'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    } finally {
+      _showingFreeDeliveryPopup = false;
+    }
   }
 
   Future<void> _clearPendingOnlinePaymentMarkers() async {
@@ -1862,6 +2011,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     final itemTotal = _itemTotal(cart);
     final grandTotal = _grandTotal(cart);
+    final amountToUnlockFreeDelivery = _amountToUnlockFreeDelivery(itemTotal);
+    final freeDeliveryUnlocked = amountToUnlockFreeDelivery == 0;
+    final freeDeliveryConfettiController =
+        _ensureFreeDeliveryConfettiController();
+
+    if (freeDeliveryUnlocked && !_wasFreeDeliveryUnlocked) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        freeDeliveryConfettiController.play();
+        unawaited(_showFreeDeliveryUnlockedPopup());
+      });
+    }
+    _wasFreeDeliveryUnlocked = freeDeliveryUnlocked;
+
     final recommendations = _recommendations(cart: cart, home: home);
 
     final addressSummary = [
@@ -2362,6 +2525,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         child: Divider(height: 1),
                       ),
                       _billRow('Grand total', '₹$grandTotal', bold: true),
+                      const SizedBox(height: AppSpacing.sm),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          freeDeliveryUnlocked
+                              ? '🎉 Free delivery unlocked for this order'
+                              : 'Add product worth ₹$amountToUnlockFreeDelivery more to unlock FREE delivery',
+                          style: const TextStyle(
+                            color: Color(0xFF1B8D3F),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -2720,6 +2897,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       ],
                     ),
                   ],
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ConfettiWidget(
+                  confettiController: _ensureFreeDeliveryConfettiController(),
+                  blastDirectionality: BlastDirectionality.explosive,
+                  shouldLoop: false,
+                  emissionFrequency: 0.045,
+                  numberOfParticles: 45,
+                  minBlastForce: 9,
+                  maxBlastForce: 18,
+                  gravity: 0.22,
                 ),
               ),
             ),
