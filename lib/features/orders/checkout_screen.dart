@@ -132,6 +132,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   ConfettiController? _freeDeliveryConfettiController;
   bool _wasFreeDeliveryUnlocked = false;
   bool _showingFreeDeliveryPopup = false;
+  static bool _hasShownFreeDeliveryUnlockCelebration = false;
 
   ConfettiController _ensureFreeDeliveryConfettiController() {
     return _freeDeliveryConfettiController ??= ConfettiController(
@@ -550,7 +551,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     ),
                     child: const Icon(
                       Icons.local_shipping_rounded,
-                      color: Color(0xFF1B8D3F),
+                      color: const Color.fromARGB(255, 103, 7, 148),
                       size: 30,
                     ),
                   ),
@@ -580,7 +581,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     child: ElevatedButton(
                       onPressed: () => Navigator.of(ctx).pop(),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1B8D3F),
+                        backgroundColor: const Color.fromARGB(255, 103, 7, 148),
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -967,10 +968,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           final categoryMatch = cartCategories.contains(category);
           return tagMatch || categoryMatch;
         })
-        .take(6)
+        .take(12)
         .toList(growable: true);
 
-    if (primary.length < 6) {
+    if (primary.length < 12) {
       final already = primary
           .map((e) => _baseProductId((e['id'] ?? '').toString()))
           .toSet();
@@ -978,11 +979,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         final id = _baseProductId((candidate['id'] ?? '').toString());
         if (already.contains(id)) continue;
         primary.add(candidate);
-        if (primary.length >= 6) break;
+        if (primary.length >= 12) break;
       }
     }
 
-    return primary.take(6).toList(growable: false);
+    return primary.take(12).toList(growable: false);
   }
 
   Future<void> _openDetailsBottomSheet({
@@ -1349,6 +1350,138 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.lg),
           borderSide: const BorderSide(color: AppColors.divider),
+        ),
+      ),
+    );
+  }
+
+  Widget _compactRecommendationCard(Map<String, dynamic> product) {
+    final image = resolveListImage(product);
+    final price = (product['price'] as num?)?.toDouble() ?? 0;
+    final originalPrice =
+        (product['originalPrice'] as num?)?.toDouble() ?? price;
+    final hasDiscount = originalPrice > price;
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ProductDetailScreen(product: product),
+          ),
+        ),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: AppColors.divider),
+          ),
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Center(
+                  child: CachedNetworkImage(
+                    imageUrl: image,
+                    fit: BoxFit.contain,
+                    fadeInDuration: Duration.zero,
+                    fadeOutDuration: Duration.zero,
+                    memCacheWidth: 168,
+                    maxWidthDiskCache: 168,
+                    errorWidget: (_, __, ___) => const Icon(
+                      Icons.image_outlined,
+                      color: AppColors.textHint,
+                      size: 20,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                (product['brand'] ?? '').toString(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                (product['name'] ?? '').toString(),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 11,
+                  height: 1.2,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '₹${price.toStringAsFixed(price.truncateToDouble() == price ? 0 : 2)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        if (hasDiscount)
+                          Text(
+                            '₹${originalPrice.toStringAsFixed(originalPrice.truncateToDouble() == originalPrice ? 0 : 2)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.textHint,
+                              fontSize: 10,
+                              decoration: TextDecoration.lineThrough,
+                              decorationColor: AppColors.textHint,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  InkWell(
+                    onTap: () => context.read<CartModel>().add(product),
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                        border: Border.all(color: AppColors.primary),
+                      ),
+                      child: const Text(
+                        'ADD',
+                        style: TextStyle(
+                          color: AppColors.primary,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -2016,7 +2149,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final freeDeliveryConfettiController =
         _ensureFreeDeliveryConfettiController();
 
-    if (freeDeliveryUnlocked && !_wasFreeDeliveryUnlocked) {
+    if (!freeDeliveryUnlocked) {
+      _hasShownFreeDeliveryUnlockCelebration = false;
+    }
+
+    if (freeDeliveryUnlocked &&
+        !_wasFreeDeliveryUnlocked &&
+        !_hasShownFreeDeliveryUnlockCelebration) {
+      _hasShownFreeDeliveryUnlockCelebration = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         freeDeliveryConfettiController.play();
@@ -2290,153 +2430,56 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             fontSize: 12,
                           ),
                         )
-                      : GridView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: recommendations.length,
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 3,
-                                mainAxisSpacing: AppSpacing.md,
-                                crossAxisSpacing: AppSpacing.md,
-                                childAspectRatio: 0.7,
-                              ),
-                          itemBuilder: (_, i) {
-                            final p = recommendations[i];
-                            final recommendationImage = resolveListImage(p);
-                            if (recommendationImage.isNotEmpty) {
-                              unawaited(
-                                ImageBandwidthTelemetry.instance.trackImageLoad(
-                                  screen: 'checkout_recommendations',
-                                  imageUrl: recommendationImage,
+                      : SizedBox(
+                          height: 430,
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              const spacing = AppSpacing.md;
+                              final cardHeight =
+                                  (constraints.maxHeight - spacing) / 2;
+                              final cardWidth =
+                                  (constraints.maxWidth - spacing) / 2;
+                              final aspectRatio = cardHeight / cardWidth;
+
+                              return Directionality(
+                                textDirection: TextDirection.rtl,
+                                child: GridView.builder(
+                                  primary: false,
+                                  physics: const BouncingScrollPhysics(),
+                                  scrollDirection: Axis.horizontal,
+                                  reverse: true,
+                                  itemCount: recommendations.length,
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: 2,
+                                        mainAxisSpacing: spacing,
+                                        crossAxisSpacing: spacing,
+                                        childAspectRatio: aspectRatio,
+                                      ),
+                                  itemBuilder: (_, i) {
+                                    final p = recommendations[i];
+                                    final recommendationImage =
+                                        resolveListImage(p);
+                                    if (recommendationImage.isNotEmpty) {
+                                      unawaited(
+                                        ImageBandwidthTelemetry.instance
+                                            .trackImageLoad(
+                                              screen:
+                                                  'checkout_recommendations',
+                                              imageUrl: recommendationImage,
+                                            ),
+                                      );
+                                    }
+
+                                    return Directionality(
+                                      textDirection: TextDirection.ltr,
+                                      child: _compactRecommendationCard(p),
+                                    );
+                                  },
                                 ),
                               );
-                            }
-                            return Material(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(AppRadius.lg),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(
-                                  AppRadius.lg,
-                                ),
-                                onTap: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        ProductDetailScreen(product: p),
-                                  ),
-                                ),
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(
-                                      AppRadius.lg,
-                                    ),
-                                    border: Border.all(
-                                      color: AppColors.divider,
-                                    ),
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(
-                                      AppSpacing.sm,
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Expanded(
-                                          child: Center(
-                                            child: CachedNetworkImage(
-                                              imageUrl: recommendationImage,
-                                              fit: BoxFit.contain,
-                                              fadeInDuration: Duration.zero,
-                                              fadeOutDuration: Duration.zero,
-                                              memCacheWidth: 168,
-                                              maxWidthDiskCache: 168,
-                                              errorWidget: (_, __, ___) =>
-                                                  const Icon(
-                                                    Icons.image_outlined,
-                                                    color: AppColors.textHint,
-                                                  ),
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(height: AppSpacing.xs),
-                                        Text(
-                                          (p['name'] ?? '').toString(),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            color: AppColors.textPrimary,
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: Text(
-                                                '₹${p['price']}',
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(
-                                                  color: AppColors.textPrimary,
-                                                  fontWeight: FontWeight.w700,
-                                                  fontSize: 12,
-                                                ),
-                                              ),
-                                            ),
-                                            const SizedBox(
-                                              width: AppSpacing.xs,
-                                            ),
-                                            InkWell(
-                                              onTap: () => context
-                                                  .read<CartModel>()
-                                                  .add(p),
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                    AppRadius.sm,
-                                                  ),
-                                              child: Container(
-                                                constraints:
-                                                    const BoxConstraints(
-                                                      minWidth: 38,
-                                                    ),
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 6,
-                                                      vertical: 3,
-                                                    ),
-                                                decoration: BoxDecoration(
-                                                  borderRadius:
-                                                      BorderRadius.circular(
-                                                        AppRadius.sm,
-                                                      ),
-                                                  border: Border.all(
-                                                    color: AppColors.primary,
-                                                  ),
-                                                ),
-                                                child: const Text(
-                                                  'ADD',
-                                                  textAlign: TextAlign.center,
-                                                  style: TextStyle(
-                                                    color: AppColors.primary,
-                                                    fontSize: 10,
-                                                    fontWeight: FontWeight.w800,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
+                            },
+                          ),
                         ),
                 ),
                 const SizedBox(height: AppSpacing.lg),
