@@ -1,4 +1,5 @@
 ﻿import 'dart:async';
+import 'dart:math';
 
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:cached_network_image/cached_network_image.dart';
@@ -80,6 +81,7 @@ class _HomeScreenState extends State<HomeScreen>
   Timer? _payuRecoveryRetryTimer;
   Timer? _payuRecoveryPollTimer;
   int _payuRecoveryPollAttempts = 0;
+  int _hotDealsShuffleSeed = DateTime.now().microsecondsSinceEpoch;
 
   static const int _maxPayuRecoveryPollAttempts = 20;
   static const Duration _payuRecoveryPollInterval = Duration(seconds: 3);
@@ -156,6 +158,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _refreshHomeData() async {
+    _hotDealsShuffleSeed = DateTime.now().microsecondsSinceEpoch;
     await Future.wait([
       context.read<HomeProvider>().loadData(forceRefresh: true),
       _resolveOrderHistory(force: true),
@@ -965,6 +968,7 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
+    _hotDealsShuffleSeed = DateTime.now().microsecondsSinceEpoch;
     WidgetsBinding.instance.addObserver(this);
     _ensureBannerImageZoomReady();
     _initSpeech();
@@ -1004,6 +1008,11 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      if (mounted) {
+        setState(() {
+          _hotDealsShuffleSeed = DateTime.now().microsecondsSinceEpoch;
+        });
+      }
       unawaited(_resolvePayuRecoveryAction(force: true));
     }
   }
@@ -1077,34 +1086,53 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _startAutoScroll() {
     Future.delayed(const Duration(milliseconds: 500), () {
-      if (_recommendedScrollController.hasClients) {
-        final maxScroll = _recommendedScrollController.position.maxScrollExtent;
+      if (!mounted) return;
 
-        // Scroll to end slowly
-        _recommendedScrollController
-            .animateTo(
-              maxScroll,
-              duration: const Duration(seconds: 15),
-              curve: Curves.linear,
-            )
-            .then((_) {
-              // Wait briefly, then scroll back
-              Future.delayed(const Duration(milliseconds: 500), () {
-                if (_recommendedScrollController.hasClients) {
-                  _recommendedScrollController
-                      .animateTo(
-                        0,
-                        duration: const Duration(seconds: 15),
-                        curve: Curves.linear,
-                      )
-                      .then((_) {
-                        // Repeat
-                        _startAutoScroll();
-                      });
-                }
-              });
-            });
+      if (!_recommendedScrollController.hasClients) {
+        _startAutoScroll();
+        return;
       }
+
+      final maxScroll = _recommendedScrollController.position.maxScrollExtent;
+      if (maxScroll <= 0) {
+        _startAutoScroll();
+        return;
+      }
+
+      // Scroll to end slowly
+      _recommendedScrollController
+          .animateTo(
+            maxScroll,
+            duration: const Duration(seconds: 15),
+            curve: Curves.linear,
+          )
+          .then((_) {
+            // Wait briefly, then scroll back
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (!mounted) return;
+              if (!_recommendedScrollController.hasClients) {
+                _startAutoScroll();
+                return;
+              }
+
+              _recommendedScrollController
+                  .animateTo(
+                    0,
+                    duration: const Duration(seconds: 15),
+                    curve: Curves.linear,
+                  )
+                  .then((_) {
+                    // Repeat
+                    _startAutoScroll();
+                  })
+                  .catchError((_) {
+                    _startAutoScroll();
+                  });
+            });
+          })
+          .catchError((_) {
+            _startAutoScroll();
+          });
     });
   }
 
@@ -1112,7 +1140,12 @@ class _HomeScreenState extends State<HomeScreen>
     int bannerCount,
     List<Map<String, dynamic>> banners,
   ) {
-    if (_bannerCountForTimer == bannerCount) return;
+    if (_bannerCountForTimer == bannerCount) {
+      if (bannerCount > 1 && _bannerAutoSlideTimer == null) {
+        _setAutoSlideTimer(banners, _currentBannerPage);
+      }
+      return;
+    }
 
     _bannerCountForTimer = bannerCount;
     _currentBannerPage = 0;
@@ -1144,16 +1177,22 @@ class _HomeScreenState extends State<HomeScreen>
   }) {
     _bannerAutoSlideTimer?.cancel();
 
-    final currentBanner = banners[currentIndex];
+    if (banners.isEmpty) return;
+    final safeIndex = currentIndex.clamp(0, banners.length - 1);
+
+    final currentBanner = banners[safeIndex];
     final isVideo = _isBannerVideo(currentBanner);
     final duration = useInitialDelay
         ? _bannerInitialSlideDelay
         : (isVideo ? const Duration(seconds: 10) : const Duration(seconds: 4));
 
     _bannerAutoSlideTimer = Timer(duration, () {
-      if (!_bannerPageController.hasClients) return;
+      if (!_bannerPageController.hasClients) {
+        _setAutoSlideTimer(banners, safeIndex);
+        return;
+      }
 
-      final nextPage = (currentIndex + 1) % banners.length;
+      final nextPage = (safeIndex + 1) % banners.length;
       _bannerPageController.animateToPage(
         nextPage,
         duration: const Duration(milliseconds: 420),
@@ -1903,10 +1942,8 @@ class _HomeScreenState extends State<HomeScreen>
       discountedItems,
       maxItems: 24,
     );
-    final browseItems = _mergeUniqueProductLists(
-      hotDealsSeed,
-      fallbackBrowseItems,
-      maxItems: 24,
+    final browseItems = _randomizeHotDealsForView(
+      _mergeUniqueProductLists(hotDealsSeed, fallbackBrowseItems, maxItems: 24),
     );
     final recommendedDisplayItems = recommendedItems.isNotEmpty
         ? recommendedItems
@@ -1914,11 +1951,12 @@ class _HomeScreenState extends State<HomeScreen>
     final mostBoughtDisplayItems = mostBoughtItems.isNotEmpty
         ? mostBoughtItems
         : unassignedProducts;
-    final popularDisplayItems = popularItems.isNotEmpty
+    final popularBaseItems = popularItems.isNotEmpty
         ? popularItems
         : (popularFallbackItems.isNotEmpty
               ? popularFallbackItems
               : unassignedProducts);
+    final popularDisplayItems = _sortProductsByRecency(popularBaseItems);
     final visiblePopularItems = _showAllPopularProducts
         ? popularDisplayItems
         : popularDisplayItems.take(8).toList(growable: false);
@@ -2119,6 +2157,30 @@ class _HomeScreenState extends State<HomeScreen>
     return products.where(matches).toList();
   }
 
+  List<Map<String, dynamic>> _sortProductsByRecency(
+    List<Map<String, dynamic>> products,
+  ) {
+    DateTime parseDate(dynamic value) {
+      if (value is Timestamp) return value.toDate();
+      if (value is DateTime) return value;
+      if (value is num) {
+        return DateTime.fromMillisecondsSinceEpoch(value.toInt());
+      }
+      final parsed = DateTime.tryParse((value ?? '').toString().trim());
+      return parsed ?? DateTime.fromMillisecondsSinceEpoch(0);
+    }
+
+    DateTime productRecency(Map<String, dynamic> product) {
+      return parseDate(
+        product['updatedAt'] ?? product['createdAt'] ?? product['publishedAt'],
+      );
+    }
+
+    final sorted = List<Map<String, dynamic>>.from(products)
+      ..sort((a, b) => productRecency(b).compareTo(productRecency(a)));
+    return sorted;
+  }
+
   bool _hasExplicitHomeSection(Map<String, dynamic> product) {
     final value =
         (product['homeSection'] ??
@@ -2161,6 +2223,15 @@ class _HomeScreenState extends State<HomeScreen>
     pushAll(primary);
     pushAll(secondary);
     return merged;
+  }
+
+  List<Map<String, dynamic>> _randomizeHotDealsForView(
+    List<Map<String, dynamic>> products,
+  ) {
+    if (products.length <= 1) return products;
+    final shuffled = List<Map<String, dynamic>>.from(products);
+    shuffled.shuffle(Random(_hotDealsShuffleSeed));
+    return shuffled;
   }
 
   List<Map<String, dynamic>> _recommendedForNewUser(

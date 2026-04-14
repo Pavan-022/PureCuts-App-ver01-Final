@@ -311,6 +311,61 @@ class FirestoreService {
     return (products: collected, lastDocument: cursor, hasMore: hasMore);
   }
 
+  Future<List<ProductModel>> getLatestPublishedProducts({
+    int limit = _defaultProductPageBatch,
+  }) async {
+    final safeLimit = _clampLimit(
+      value: limit,
+      fallback: _defaultProductPageBatch,
+      max: FeatureFlags.maxProductPageSize,
+    );
+    final sw = Stopwatch()..start();
+
+    try {
+      final snap = await _db
+          .collection(_productsCollection)
+          .orderBy('createdAt', descending: true)
+          .limit(safeLimit)
+          .get();
+
+      final collected = <ProductModel>[];
+      for (final doc in snap.docs) {
+        if (!_isPublishedProduct(doc.data())) continue;
+        try {
+          collected.add(ProductModel.fromMap(doc.data(), doc.id));
+        } catch (_) {
+          // Skip malformed docs instead of aborting the whole page.
+        }
+      }
+
+      _traceQuery(
+        'getLatestPublishedProducts',
+        sw,
+        details: {
+          'requestedLimit': limit,
+          'appliedLimit': safeLimit,
+          'rawDocs': snap.docs.length,
+          'returned': collected.length,
+          'fallback': false,
+        },
+      );
+      return collected;
+    } catch (_) {
+      final page = await getProductsPage(limit: safeLimit);
+      _traceQuery(
+        'getLatestPublishedProducts',
+        sw,
+        details: {
+          'requestedLimit': limit,
+          'appliedLimit': safeLimit,
+          'returned': page.products.length,
+          'fallback': true,
+        },
+      );
+      return page.products;
+    }
+  }
+
   String _baseProductId(String value) {
     final id = value.trim();
     if (id.isEmpty) return '';

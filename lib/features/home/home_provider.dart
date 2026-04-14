@@ -1006,6 +1006,30 @@ class HomeProvider extends ChangeNotifier {
             }
           }
 
+          if (startupLite) {
+            final latest = await _service.getLatestPublishedProducts(
+              limit: _homeInitialProductLimit,
+            );
+            if (latest.isNotEmpty) {
+              final merged = <String, ProductModel>{
+                for (final product in latest)
+                  if (product.id.trim().isNotEmpty) product.id.trim(): product,
+              };
+
+              for (final product in fetched) {
+                final id = product.id.trim();
+                if (id.isEmpty || merged.containsKey(id)) continue;
+                merged[id] = product;
+              }
+
+              fetched
+                ..clear()
+                ..addAll(
+                  merged.values.take(targetPool).toList(growable: false),
+                );
+            }
+          }
+
           final fullLoadRequested = forceRefresh || !startupLite;
           final fullCatalogComplete =
               !timedOut && (!hasMore || fetched.length >= _homeMaxProductPool);

@@ -2213,6 +2213,25 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         : 0;
     final variants = List<ProductVariant>.from(_product.variants)
       ..sort(_compareVariantAscending);
+    const variantGridSwitchThreshold = 4;
+    const variantGridCrossAxisCount = 3;
+    const variantGridMainAxisSpacing = 10.0;
+    const variantGridTileHeight = 58.0;
+    const variantGridMinHeight = 72.0;
+    const variantGridMaxHeight = 246.0;
+    final showVariantGrid = variants.length > variantGridSwitchThreshold;
+    final variantGridRows = (variants.length / variantGridCrossAxisCount)
+        .ceil()
+        .clamp(1, 999);
+    final calculatedVariantGridHeight =
+        (variantGridRows * variantGridTileHeight) +
+        ((variantGridRows - 1) * variantGridMainAxisSpacing);
+    final variantGridHeight = calculatedVariantGridHeight.clamp(
+      variantGridMinHeight,
+      variantGridMaxHeight,
+    );
+    final variantGridNeedsScroll =
+        calculatedVariantGridHeight > variantGridMaxHeight;
 
     final imageList = _productState?.displayImages ?? const <String>[];
     final selectedImageIndex = _productState?.selectedImageIndex ?? 0;
@@ -2632,7 +2651,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                               fontWeight: FontWeight.w700,
                             ),
                           ),
-                          if (variants.length > 10) ...[
+                          if (variantGridNeedsScroll) ...[
                             const SizedBox(height: 4),
                             const Text(
                               'Scroll to see more options',
@@ -2646,15 +2665,15 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         ],
                       ),
                     ),
-                    if (variants.length > 10)
+                    if (showVariantGrid)
                       SizedBox(
-                        height: 246,
+                        height: variantGridHeight,
                         child: GridView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
                           physics: const BouncingScrollPhysics(),
                           gridDelegate:
                               const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 3,
+                                crossAxisCount: variantGridCrossAxisCount,
                                 mainAxisSpacing: 10,
                                 crossAxisSpacing: 10,
                                 childAspectRatio: 1.65,
