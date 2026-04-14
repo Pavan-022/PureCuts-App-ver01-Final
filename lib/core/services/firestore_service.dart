@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -27,6 +28,9 @@ class FirestoreService {
   static const Duration _bannerCacheTtl = Duration(minutes: 10);
   static List<Map<String, dynamic>>? _bannerCache;
   static DateTime? _bannerCacheAt;
+  final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
+    region: 'us-central1',
+  );
 
   List<Map<String, dynamic>> _cloneMapList(List<Map<String, dynamic>> source) {
     return source
@@ -978,6 +982,108 @@ class FirestoreService {
     }
   }
 
+  dynamic _toCallableSafeValue(dynamic value) {
+    if (value == null || value is bool || value is num || value is String) {
+      return value;
+    }
+
+    if (value is Timestamp) {
+      return value.toDate().toIso8601String();
+    }
+
+    if (value is DateTime) {
+      return value.toIso8601String();
+    }
+
+    if (value is Iterable) {
+      return value.map(_toCallableSafeValue).toList(growable: false);
+    }
+
+    if (value is Map) {
+      final out = <String, dynamic>{};
+      value.forEach((key, val) {
+        out[key.toString()] = _toCallableSafeValue(val);
+      });
+      return out;
+    }
+
+    return value.toString();
+  }
+
+  Future<String?> _createCodOrderViaCallable({
+    required String uid,
+    required List<Map<String, dynamic>> items,
+    required int total,
+    Map<String, dynamic>? deliveryAddress,
+    Map<String, dynamic>? contactDetails,
+    String? paymentMethod,
+    Map<String, dynamic>? billDetails,
+    Map<String, dynamic>? userProfile,
+  }) async {
+    final callable = _functions.httpsCallable('createCodOrder');
+
+    final compactProfile = {
+      'name': (userProfile?['name'] ?? '').toString(),
+      'ownerName': (userProfile?['ownerName'] ?? '').toString(),
+      'email': (userProfile?['email'] ?? '').toString(),
+      'phone': (userProfile?['phone'] ?? '').toString(),
+      'mobile': (userProfile?['mobile'] ?? '').toString(),
+      'pincode': (userProfile?['pincode'] ?? '').toString(),
+      'country': (userProfile?['country'] ?? '').toString(),
+    };
+
+    Map<String, dynamic> payload() => {
+      'uid': uid,
+      'items': _toCallableSafeValue(items),
+      'total': total,
+      'deliveryAddress': _toCallableSafeValue(
+        deliveryAddress ?? const <String, dynamic>{},
+      ),
+      'contactDetails': _toCallableSafeValue(
+        contactDetails ?? const <String, dynamic>{},
+      ),
+      'paymentMethod': (paymentMethod ?? '').toString().trim().isEmpty
+          ? 'Cash on Delivery'
+          : paymentMethod,
+      'billDetails': _toCallableSafeValue(
+        billDetails ?? const <String, dynamic>{},
+      ),
+      'userProfile': _toCallableSafeValue(compactProfile),
+    };
+
+    Future<String?> invoke() async {
+      final response = await callable.call(payload());
+      final data = response.data;
+      if (data is! Map) return null;
+      final map = data.map((k, v) => MapEntry(k.toString(), v));
+      final orderRef = _firstNonEmpty([
+        map['orderRef'],
+        map['orderId'],
+        map['orderNumber'],
+      ]);
+      return orderRef.isEmpty ? null : orderRef;
+    }
+
+    try {
+      return await invoke();
+    } on FirebaseFunctionsException catch (e) {
+      final code = e.code.toLowerCase();
+      if (code == 'unauthenticated' || code == 'permission-denied') {
+        await _auth.currentUser?.getIdToken(true);
+        return await invoke();
+      }
+      debugPrint(
+        '[FirestoreService] createCodOrder callable failed: code=${e.code}, message=${e.message}, details=${e.details}',
+      );
+      rethrow;
+    } catch (e, st) {
+      debugPrint(
+        '[FirestoreService] createCodOrder callable unexpected failure: $e\n$st',
+      );
+      rethrow;
+    }
+  }
+
   Future<String?> registerUserPurchase({
     required String uid,
     required List<Map<String, dynamic>> items,
@@ -1002,6 +1108,27 @@ class FirestoreService {
     if (productIds.isEmpty) return null;
 
     final cleanPaymentTxnId = (paymentTxnId ?? '').trim();
+
+    if (cleanPaymentTxnId.isEmpty) {
+      try {
+        return await _createCodOrderViaCallable(
+          uid: cleanUid,
+          items: items,
+          total: total,
+          deliveryAddress: deliveryAddress,
+          contactDetails: contactDetails,
+          paymentMethod: paymentMethod,
+          billDetails: billDetails,
+          userProfile: userProfile,
+        );
+      } on FirebaseFunctionsException catch (e) {
+        final msg =
+            'COD order save failed (functions:${e.code}) ${e.message ?? ''}'
+                .trim();
+        throw StateError(msg);
+      }
+    }
+
     if (cleanPaymentTxnId.isNotEmpty) {
       try {
         final existingByTxn = await _db
@@ -1022,12 +1149,13 @@ class FirestoreService {
       }
     }
 
-    final orderDoc = cleanPaymentTxnId.isNotEmpty
-        ? _db
-              .collection(_ordersCollection)
-              .doc(_orderDocIdFromPaymentTxn(cleanPaymentTxnId))
-        : _db.collection(_ordersCollection).doc();
-    final orderRef = (orderRefOverride ?? '').trim().isNotEmpty
+    DocumentReference<Map<String, dynamic>> orderDoc;
+    String orderRef;
+    final hasExplicitOrderRef = (orderRefOverride ?? '').trim().isNotEmpty;
+    orderDoc = _db
+        .collection(_ordersCollection)
+        .doc(_orderDocIdFromPaymentTxn(cleanPaymentTxnId));
+    orderRef = hasExplicitOrderRef
         ? orderRefOverride!.trim()
         : generateOrderRef(entropy: orderDoc.id.substring(0, 6));
 

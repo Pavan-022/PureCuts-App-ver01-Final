@@ -15,6 +15,7 @@ const {
 	rebuildOrderCounters,
 } = require("./dashboardMetrics");
 const { paymentApi } = require("./payment/paymentHandler");
+const { createCodOrder } = require("./codOrder");
 
 exports.onSupportMessageCreated = onSupportMessageCreated;
 exports.setAdminClaims = setAdminClaims;
@@ -30,3 +31,4 @@ exports.getDashboardMetricsSnapshot = getDashboardMetricsSnapshot;
 exports.rebuildOrderCounters = rebuildOrderCounters;
 exports.paymentApi = paymentApi;
 exports.reconcileSuccessfulPayments = reconcileSuccessfulPayments;
+exports.createCodOrder = createCodOrder;

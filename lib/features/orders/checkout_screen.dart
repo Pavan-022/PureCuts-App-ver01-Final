@@ -1898,10 +1898,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           }
         } catch (error) {
           if (!mounted) return;
+          final reason = error.toString().replaceFirst('StateError: ', '');
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text(
-                'Order could not be saved right now. Please try again.',
+                reason.isNotEmpty
+                    ? reason
+                    : 'Order could not be saved right now. Please try again.',
               ),
             ),
           );
