@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/core/utils/tier_pricing.dart';
+import 'package:purecuts/core/utils/variant_selection_guard.dart';
 import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
@@ -190,6 +191,8 @@ class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
         // Keep locale null to allow plugin default.
       }
     }
+
+    if (!mounted) return;
 
     setState(() {
       _speechReady = available;
@@ -693,6 +696,8 @@ class _PreviouslyBoughtScreenState extends State<PreviouslyBoughtScreen> {
 }
 
 class _BoughtItem extends StatelessWidget {
+  static const String _contactPurchaseNumber = '+91 9579177826';
+
   final Map<String, dynamic> product;
   const _BoughtItem({required this.product});
   int? _bulkTriggerQty(Map<String, dynamic> product) {
@@ -726,7 +731,13 @@ class _BoughtItem extends StatelessWidget {
     final name = product['name'] as String? ?? 'Product';
     final brand = product['brand'] as String? ?? '';
     final price = (product['price'] as num?)?.toInt() ?? 0;
+    final hasVisiblePrice = price > 0;
     final id = product['id'] as String? ?? '';
+    void showContactMessage() {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Contact to purchase: $_contactPurchaseNumber')),
+      );
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -804,14 +815,15 @@ class _BoughtItem extends StatelessWidget {
                         ),
                       ],
                       const SizedBox(height: 8),
-                      Text(
-                        '₹$price',
-                        style: const TextStyle(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 15,
+                      if (hasVisiblePrice)
+                        Text(
+                          '₹$price',
+                          style: const TextStyle(
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 ),
@@ -827,13 +839,30 @@ class _BoughtItem extends StatelessWidget {
 
                     if (qty == 0) {
                       return _AddButton(
-                        onTap: () => context.read<CartModel>().add({
-                          'id': id,
-                          'name': name,
-                          'brand': brand,
-                          'image': imageUrl,
-                          'price': price,
-                        }),
+                        onTap: () {
+                          if (price <= 0) {
+                            showContactMessage();
+                            return;
+                          }
+                          final payload = {
+                            'id': id,
+                            'name': name,
+                            'brand': brand,
+                            'image': imageUrl,
+                            'price': price,
+                            'productType':
+                                product['productType'] ?? product['type'],
+                            'variants': product['variants'],
+                            'variableOptions': product['variableOptions'],
+                          };
+                          if (!ensureVariantSelectedBeforeQuickAdd(
+                            context,
+                            payload,
+                          )) {
+                            return;
+                          }
+                          context.read<CartModel>().add(payload);
+                        },
                       );
                     }
 
@@ -858,13 +887,28 @@ class _BoughtItem extends StatelessWidget {
                       qty: qty,
                       onMinus: () => context.read<CartModel>().remove(id),
                       onPlus: () {
-                        context.read<CartModel>().add({
+                        if (price <= 0) {
+                          showContactMessage();
+                          return;
+                        }
+                        final payload = {
                           'id': id,
                           'name': name,
                           'brand': brand,
                           'image': imageUrl,
                           'price': price,
-                        });
+                          'productType':
+                              product['productType'] ?? product['type'],
+                          'variants': product['variants'],
+                          'variableOptions': product['variableOptions'],
+                        };
+                        if (!ensureVariantSelectedBeforeQuickAdd(
+                          context,
+                          payload,
+                        )) {
+                          return;
+                        }
+                        context.read<CartModel>().add(payload);
                         if (bulkTriggerQty != null &&
                             qty + 1 >= bulkTriggerQty) {
                           Navigator.push(

@@ -6,6 +6,7 @@ import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/services/image_bandwidth_telemetry.dart';
 import 'package:purecuts/core/utils/product_image_contract.dart';
 import 'package:purecuts/core/utils/tier_pricing.dart';
+import 'package:purecuts/core/utils/variant_selection_guard.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/models/cart_model.dart';
 import '../../features/auth/providers/auth_provider.dart';
@@ -17,6 +18,7 @@ class ProductCard extends StatefulWidget {
   final ValueChanged<Map<String, dynamic>>? onAddToCart;
   final bool showHeartIcon;
   final bool showBoughtEarlierBadge;
+  final bool useFloatingVariantSnackbar;
 
   const ProductCard({
     super.key,
@@ -24,6 +26,7 @@ class ProductCard extends StatefulWidget {
     this.onAddToCart,
     this.showHeartIcon = true,
     this.showBoughtEarlierBadge = false,
+    this.useFloatingVariantSnackbar = false,
   });
 
   @override
@@ -32,6 +35,7 @@ class ProductCard extends StatefulWidget {
 
 class _ProductCardState extends State<ProductCard> {
   static final Map<String, bool> _favoriteCache = <String, bool>{};
+  static const String _contactPurchaseNumber = '+91 9579177826';
 
   final FirestoreService _firestoreService = FirestoreService();
   bool _isWishlisted = false;
@@ -155,6 +159,14 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   void _handleAddToCart(BuildContext context) {
+    if (!ensureVariantSelectedBeforeQuickAdd(
+      context,
+      product,
+      floating: widget.useFloatingVariantSnackbar,
+    )) {
+      return;
+    }
+
     if (_isOutOfStock) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -163,6 +175,15 @@ class _ProductCardState extends State<ProductCard> {
       );
       return;
     }
+
+    final price = (product['price'] as num?)?.toInt() ?? 0;
+    if (price <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Contact to purchase: $_contactPurchaseNumber')),
+      );
+      return;
+    }
+
     if (widget.onAddToCart != null) {
       widget.onAddToCart!(product);
       return;
@@ -212,6 +233,8 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   void _openProductDetail(BuildContext context) {
+    ScaffoldMessenger.maybeOf(context)?.hideCurrentSnackBar();
+    ScaffoldMessenger.maybeOf(context)?.clearSnackBars();
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => ProductDetailScreen(product: product)),
@@ -219,6 +242,8 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   void _openProductDetailForBulkOrder(BuildContext context) {
+    ScaffoldMessenger.maybeOf(context)?.hideCurrentSnackBar();
+    ScaffoldMessenger.maybeOf(context)?.clearSnackBars();
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -253,6 +278,8 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   void _openSimilarProducts(BuildContext context) {
+    ScaffoldMessenger.maybeOf(context)?.hideCurrentSnackBar();
+    ScaffoldMessenger.maybeOf(context)?.clearSnackBars();
     final tag = (product['tag'] ?? '').toString().trim();
     final brand = (product['brand'] ?? '').toString().trim();
 
@@ -359,9 +386,12 @@ class _ProductCardState extends State<ProductCard> {
     final bulkReached =
         bulkTriggerQty != null && qty >= bulkTriggerQty && qty > 0;
 
-    final hasDiscount =
-        (product['originalPrice'] as num? ?? 0) >
-        (product['price'] as num? ?? 0);
+    final int priceValue = (product['price'] as num?)?.toInt() ?? 0;
+    final int originalPriceValue =
+        (product['originalPrice'] as num?)?.toInt() ?? 0;
+    final bool hasVisiblePrice = priceValue > 0;
+    final bool hasVisibleDiscount =
+        hasVisiblePrice && originalPriceValue > priceValue;
 
     return GestureDetector(
       onTap: () => _openProductDetail(context),
@@ -422,7 +452,7 @@ class _ProductCardState extends State<ProductCard> {
                   ),
 
                 // Discount badge
-                if (hasDiscount)
+                if (hasVisibleDiscount)
                   Positioned(
                     top: 6,
                     right: widget.showHeartIcon ? 30 : 6,
@@ -727,33 +757,35 @@ class _ProductCardState extends State<ProductCard> {
                   const SizedBox(height: 4),
 
                   // Price row
-                  Row(
-                    children: [
-                      Text(
-                        '₹${product['price']}',
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(width: 5),
-                      if (hasDiscount)
-                        Flexible(
-                          child: Text(
-                            '₹${product['originalPrice']}',
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: AppColors.textHint,
-                              fontSize: 10,
-                              decoration: TextDecoration.lineThrough,
-                              decorationColor: AppColors.textHint,
-                            ),
+                  if (hasVisiblePrice) ...[
+                    Row(
+                      children: [
+                        Text(
+                          '₹$priceValue',
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
+                        const SizedBox(width: 5),
+                        if (hasVisibleDiscount)
+                          Flexible(
+                            child: Text(
+                              '₹$originalPriceValue',
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: AppColors.textHint,
+                                fontSize: 10,
+                                decoration: TextDecoration.lineThrough,
+                                decorationColor: AppColors.textHint,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                  ],
 
                   // See more
                   GestureDetector(

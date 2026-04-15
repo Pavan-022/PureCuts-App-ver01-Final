@@ -38,6 +38,12 @@ class _MainNavScreenState extends State<MainNavScreen> {
   void _onNavTap(int i) {
     if (i == _index) return;
 
+    if (i == 2) {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      messenger?.hideCurrentSnackBar();
+      messenger?.clearSnackBars();
+    }
+
     final isNearTab = (i - _index).abs() == 1;
     if (isNearTab) {
       _pageController.animateToPage(

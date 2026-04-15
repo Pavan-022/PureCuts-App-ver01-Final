@@ -13,6 +13,7 @@ import 'package:purecuts/core/services/push_notification_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/utils/product_image_contract.dart';
 import 'package:purecuts/core/utils/tier_pricing.dart';
+import 'package:purecuts/core/utils/variant_selection_guard.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
 import 'package:purecuts/core/widgets/shimmer_widgets.dart';
 import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
@@ -82,6 +83,7 @@ class _HomeScreenState extends State<HomeScreen>
   Timer? _payuRecoveryPollTimer;
   int _payuRecoveryPollAttempts = 0;
   int _hotDealsShuffleSeed = DateTime.now().microsecondsSinceEpoch;
+  bool _stickyThresholdRecalcQueued = false;
 
   static const int _maxPayuRecoveryPollAttempts = 20;
   static const Duration _payuRecoveryPollInterval = Duration(seconds: 3);
@@ -146,6 +148,9 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _addToCart(Map<String, dynamic> product) {
+    if (!ensureVariantSelectedBeforeQuickAdd(context, product)) {
+      return;
+    }
     context.read<CartModel>().add(product);
   }
 
@@ -433,6 +438,8 @@ class _HomeScreenState extends State<HomeScreen>
         // Keep locale null to let plugin choose device default.
       }
     }
+
+    if (!mounted) return;
 
     setState(() {
       _speechReady = available;
@@ -1044,14 +1051,29 @@ class _HomeScreenState extends State<HomeScreen>
       }
     }
 
+    if (_stickyShowOffset == null || _stickySearchShowOffset == null) {
+      _queueStickyThresholdRecalc();
+      return;
+    }
+
     _updateStickyCategories();
+  }
+
+  void _queueStickyThresholdRecalc() {
+    if (!mounted || _stickyThresholdRecalcQueued) return;
+    _stickyThresholdRecalcQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _stickyThresholdRecalcQueued = false;
+      if (!mounted) return;
+      _recalculateStickyThresholds();
+    });
   }
 
   void _updateStickyCategories() {
     if (!mounted || !_contentScrollController.hasClients) return;
 
     if (_stickyShowOffset == null || _stickySearchShowOffset == null) {
-      _recalculateStickyThresholds();
+      _queueStickyThresholdRecalc();
       return;
     }
 
@@ -2683,6 +2705,13 @@ class _HomeScreenState extends State<HomeScreen>
           final p = products[i];
           final productId = _baseProductId((p['id'] ?? '').toString());
           final showBoughtEarlier = _purchasedProductIds.contains(productId);
+          final salePrice = _toDouble(p['price'] ?? p['salePrice']).round();
+          final originalPrice = _toDouble(
+            p['originalPrice'] ?? p['mrp'] ?? p['listPrice'],
+          ).round();
+          final hasVisiblePrice = salePrice > 0;
+          final hasVisibleOriginal =
+              hasVisiblePrice && originalPrice > salePrice;
           final discountPercent = _resolveDiscountPercent(p);
           final hasDiscount = discountPercent != null;
           return GestureDetector(
@@ -2790,6 +2819,35 @@ class _HomeScreenState extends State<HomeScreen>
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                  if (hasVisiblePrice) ...[
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Text(
+                          '₹$salePrice',
+                          style: const TextStyle(
+                            color: AppColors.primary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        if (hasVisibleOriginal) ...[
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              '₹$originalPrice',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.textHint,
+                                fontSize: 9,
+                                decoration: TextDecoration.lineThrough,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),

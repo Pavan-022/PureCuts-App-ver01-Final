@@ -58,6 +58,12 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      messenger?.hideCurrentSnackBar();
+      messenger?.clearSnackBars();
+    });
     if (widget.initialCategory != null && widget.initialCategory!.isNotEmpty) {
       _preferredCategory = widget.initialCategory!;
     }
@@ -377,15 +383,6 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
       final categoryMatches = _matchesQuery(categoryName, query);
 
       if (allSubs.isEmpty) {
-        if (categoryMatches) {
-          sections.add(
-            _CategorySectionData(
-              categoryName: categoryName,
-              subCategories: const [],
-              totalSubCategories: 0,
-            ),
-          );
-        }
         continue;
       }
 

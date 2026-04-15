@@ -491,6 +491,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }) {
     final label = _variantLabel(variant);
     final isColor = _isColorVariant(variant);
+    const selectedSurface = Color(0xFFF3ECFF);
+    const unselectedSurface = Color(0xFFF8F9FC);
+    const selectedBorder = AppColors.primary;
+    const unselectedBorder = Color(0xFFDDE2EE);
+    const selectedText = Color(0xFF4B1FA8);
+    const unselectedText = Color(0xFF5A6272);
 
     if (isColor) {
       return GestureDetector(
@@ -527,8 +533,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 width: compactMode ? 88 : double.infinity,
                 child: Text(
                   label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: compactMode ? 1 : 2,
+                  overflow: compactMode
+                      ? TextOverflow.ellipsis
+                      : TextOverflow.clip,
+                  softWrap: !compactMode,
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: isSelected
@@ -555,27 +564,36 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             : const BoxConstraints(minWidth: 0),
         padding: EdgeInsets.symmetric(
           horizontal: compactMode ? 10 : 8,
-          vertical: compactMode ? 8 : 7,
+          vertical: compactMode ? 8 : 8,
         ),
         decoration: BoxDecoration(
-          color: isSelected
-              ? AppColors.primary.withOpacity(0.08)
-              : const Color(0xFFF7F7FA),
-          borderRadius: BorderRadius.circular(10),
+          color: isSelected ? selectedSurface : unselectedSurface,
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? AppColors.primary : const Color(0xFFE1E5EE),
+            color: isSelected ? selectedBorder : unselectedBorder,
             width: isSelected ? 1.8 : 1,
           ),
+          boxShadow: isSelected
+              ? const [
+                  BoxShadow(
+                    color: Color(0x1A7C3AED),
+                    blurRadius: 8,
+                    offset: Offset(0, 2),
+                  ),
+                ]
+              : null,
         ),
         child: Text(
           label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+          maxLines: compactMode ? 1 : 2,
+          overflow: compactMode ? TextOverflow.ellipsis : TextOverflow.clip,
+          softWrap: !compactMode,
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: isSelected ? AppColors.primary : AppColors.textSecondary,
-            fontSize: compactMode ? 12 : 11,
+            color: isSelected ? selectedText : unselectedText,
+            fontSize: compactMode ? 12 : 12,
             fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+            letterSpacing: 0.1,
           ),
         ),
       ),
@@ -2208,16 +2226,20 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     final originalPrice = ((widget.product['originalPrice'] as num?) ?? 0)
         .toInt();
     final hasDiscount = originalPrice > price;
+    final hasVisiblePrice = price > 0;
     final discountPct = hasDiscount
         ? (((originalPrice - price) / originalPrice) * 100).round()
         : 0;
     final variants = List<ProductVariant>.from(_product.variants)
       ..sort(_compareVariantAscending);
     const variantGridSwitchThreshold = 4;
-    const variantGridCrossAxisCount = 3;
-    const variantGridMainAxisSpacing = 10.0;
-    const variantGridTileHeight = 58.0;
-    const variantGridMinHeight = 72.0;
+    final hasLongVariantLabels = variants.any(
+      (variant) => _variantLabel(variant).trim().length > 12,
+    );
+    final variantGridCrossAxisCount = hasLongVariantLabels ? 2 : 3;
+    const variantGridMainAxisSpacing = 8.0;
+    final variantGridTileHeight = hasLongVariantLabels ? 66.0 : 56.0;
+    const variantGridMinHeight = 68.0;
     const variantGridMaxHeight = 246.0;
     final showVariantGrid = variants.length > variantGridSwitchThreshold;
     final variantGridRows = (variants.length / variantGridCrossAxisCount)
@@ -2550,62 +2572,67 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     child: Divider(height: 1, color: Color(0xFFF0F0F5)),
                   ),
 
-                  // Price section
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          '₹$price',
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
-                            fontSize: 30,
-                            fontWeight: FontWeight.w900,
-                            height: 1,
-                          ),
-                        ),
-                        if (hasDiscount) ...[
-                          const SizedBox(width: 10),
+                  if (hasVisiblePrice) ...[
+                    // Price section
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
                           Text(
-                            '₹$originalPrice',
+                            '₹$price',
                             style: const TextStyle(
-                              color: AppColors.textHint,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                              decoration: TextDecoration.lineThrough,
+                              color: AppColors.textPrimary,
+                              fontSize: 30,
+                              fontWeight: FontWeight.w900,
+                              height: 1,
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE8F5E9),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              '$discountPct% OFF',
+                          if (hasDiscount) ...[
+                            const SizedBox(width: 10),
+                            Text(
+                              '₹$originalPrice',
                               style: const TextStyle(
-                                color: Color(0xFF2D7A22),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
+                                color: AppColors.textHint,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                                decoration: TextDecoration.lineThrough,
                               ),
                             ),
-                          ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE8F5E9),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                '$discountPct% OFF',
+                                style: const TextStyle(
+                                  color: Color(0xFF2D7A22),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
-                    child: Text(
-                      'MRP inclusive of all taxes',
-                      style: TextStyle(color: AppColors.textHint, fontSize: 12),
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
+                      child: Text(
+                        'MRP inclusive of all taxes',
+                        style: TextStyle(
+                          color: AppColors.textHint,
+                          fontSize: 12,
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                   if (_isOutOfStock)
                     const Padding(
                       padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -2646,9 +2673,19 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           Text(
                             _variantSectionTitle(variants),
                             style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF1E2433),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.1,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          const Text(
+                            'Tap to choose your preferred option',
+                            style: TextStyle(
+                              color: Color(0xFF7C8597),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                           if (variantGridNeedsScroll) ...[
@@ -2656,9 +2693,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             const Text(
                               'Scroll to see more options',
                               style: TextStyle(
-                                color: AppColors.textHint,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
+                                color: Color(0xFF8B94A8),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
@@ -2672,11 +2709,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
                           physics: const BouncingScrollPhysics(),
                           gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
+                              SliverGridDelegateWithFixedCrossAxisCount(
                                 crossAxisCount: variantGridCrossAxisCount,
-                                mainAxisSpacing: 10,
-                                crossAxisSpacing: 10,
-                                childAspectRatio: 1.65,
+                                mainAxisSpacing: variantGridMainAxisSpacing,
+                                crossAxisSpacing: variantGridMainAxisSpacing,
+                                childAspectRatio: hasLongVariantLabels
+                                    ? 1.30
+                                    : 1.65,
                               ),
                           itemCount: variants.length,
                           itemBuilder: (_, i) {
@@ -3821,6 +3860,8 @@ class _CircleIconButton extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _BottomCartBar extends StatelessWidget {
+  static const String _contactPurchaseNumber = '+91 9579177826';
+
   final Map<String, dynamic> cartItem;
   final String displaySize;
   final int displayPrice;
@@ -3850,6 +3891,11 @@ class _BottomCartBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cartId = (cartItem['id'] ?? '').toString();
+    void showContactMessage() {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Contact to purchase: +91 9579177826')),
+      );
+    }
 
     return SafeArea(
       top: false,
@@ -3886,59 +3932,49 @@ class _BottomCartBar extends StatelessWidget {
           final displayAmount = qty > 0
               ? (resolvedDisplayPrice * qty)
               : resolvedDisplayPrice;
-          return Container(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
-                  blurRadius: 16,
-                  offset: const Offset(0, -4),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                // Price info
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (displaySize.isNotEmpty)
-                        Text(
-                          displaySize,
-                          style: const TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
+          final hasVisiblePrice = displayAmount > 0;
+          final contactOnlyPurchase = displayPrice <= 0;
+          final Widget trailingAction = contactOnlyPurchase && qty == 0
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        'Contact: $_contactPurchaseNumber',
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 170,
+                      height: 50,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                      Text(
-                        '₹$displayAmount',
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 26,
-                          fontWeight: FontWeight.w900,
-                          height: 1.1,
+                        onPressed: cartId.isEmpty ? null : showContactMessage,
+                        child: const Text(
+                          'Contact to purchase',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
-                      const Text(
-                        'Incl. all taxes',
-                        style: TextStyle(
-                          color: AppColors.textHint,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(width: 10),
-
-                // Add to Cart / qty stepper + checkout
-                SizedBox(
+                    ),
+                  ],
+                )
+              : SizedBox(
                   width: qty == 0 ? 170 : 225,
                   height: 50,
                   child: isOutOfStock
@@ -3973,12 +4009,18 @@ class _BottomCartBar extends StatelessWidget {
                           onPressed: cartId.isEmpty
                               ? null
                               : () {
+                                  if (contactOnlyPurchase) {
+                                    showContactMessage();
+                                    return;
+                                  }
                                   onManualQuantityChange?.call();
                                   cart.add(cartItem);
                                 },
-                          child: const Text(
-                            'Add to cart',
-                            style: TextStyle(
+                          child: Text(
+                            contactOnlyPurchase
+                                ? 'Contact to purchase'
+                                : 'Add to cart',
+                            style: const TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w700,
                             ),
@@ -4018,6 +4060,10 @@ class _BottomCartBar extends StatelessWidget {
                                   Expanded(
                                     child: IconButton(
                                       onPressed: () {
+                                        if (contactOnlyPurchase) {
+                                          showContactMessage();
+                                          return;
+                                        }
                                         onManualQuantityChange?.call();
                                         cart.add(cartItem);
                                       },
@@ -4066,7 +4112,62 @@ class _BottomCartBar extends StatelessWidget {
                             ),
                           ],
                         ),
+                );
+          return Container(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 16,
+                  offset: const Offset(0, -4),
                 ),
+              ],
+            ),
+            child: Row(
+              children: [
+                // Price info
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (displaySize.isNotEmpty)
+                        Text(
+                          displaySize,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      if (hasVisiblePrice) ...[
+                        Text(
+                          '₹$displayAmount',
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 26,
+                            fontWeight: FontWeight.w900,
+                            height: 1.1,
+                          ),
+                        ),
+                        const Text(
+                          'Incl. all taxes',
+                          style: TextStyle(
+                            color: AppColors.textHint,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+
+                const SizedBox(width: 10),
+
+                // Add to Cart / qty stepper + checkout
+                trailingAction,
               ],
             ),
           );

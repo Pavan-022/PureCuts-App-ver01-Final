@@ -22,9 +22,15 @@ class ParentCategoryScreen extends StatefulWidget {
 
 class _ParentCategoryScreenState extends State<ParentCategoryScreen> {
   final FirestoreService _firestoreService = FirestoreService();
+  ScaffoldMessengerState? _messenger;
   Set<String> _purchasedProductIds = <String>{};
   String? _selectedSubCategory;
   String? _selectedSubSubCategory;
+
+  void _clearTransientSnackbars() {
+    _messenger?.hideCurrentSnackBar();
+    _messenger?.clearSnackBars();
+  }
 
   List<Map<String, dynamic>> _mergeUniqueProducts(
     List<Map<String, dynamic>> primary,
@@ -67,6 +73,12 @@ class _ParentCategoryScreenState extends State<ParentCategoryScreen> {
       );
     });
     _resolvePurchasedProducts();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _messenger ??= ScaffoldMessenger.maybeOf(context);
   }
 
   String _normalized(String value) {
@@ -227,167 +239,183 @@ class _ParentCategoryScreenState extends State<ParentCategoryScreen> {
       selectedSubSubName,
     );
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
+    return PopScope(
+      onPopInvoked: (didPop) {
+        _clearTransientSnackbars();
+      },
+      child: Scaffold(
         backgroundColor: Colors.white,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        title: Text(
-          categoryName,
-          style: const TextStyle(
-            color: AppColors.textPrimary,
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          title: Text(
+            categoryName,
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
-      ),
-      body: (home.loading || !home.fullCatalogReady)
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 2),
-                if (subCategories.isNotEmpty)
-                  SizedBox(
-                    height: 54,
-                    child: ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      scrollDirection: Axis.horizontal,
-                      itemCount: subCategories.length + 1,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (_, i) {
-                        final isAll = i == 0;
-                        final name = isAll
-                            ? 'All'
-                            : (subCategories[i - 1]['name'] ?? '').toString();
-                        final isSelected = isAll
-                            ? selectedSubCategoryName.isEmpty
-                            : _normalized(name) ==
-                                  _normalized(selectedSubCategoryName);
+        body: (home.loading || !home.fullCatalogReady)
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 2),
+                  if (subCategories.isNotEmpty)
+                    SizedBox(
+                      height: 54,
+                      child: ListView.separated(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        scrollDirection: Axis.horizontal,
+                        itemCount: subCategories.length + 1,
+                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        itemBuilder: (_, i) {
+                          final isAll = i == 0;
+                          final name = isAll
+                              ? 'All'
+                              : (subCategories[i - 1]['name'] ?? '').toString();
+                          final isSelected = isAll
+                              ? selectedSubCategoryName.isEmpty
+                              : _normalized(name) ==
+                                    _normalized(selectedSubCategoryName);
 
-                        return ChoiceChip(
-                          label: Text(name),
-                          selected: isSelected,
-                          onSelected: (_) {
-                            if (isAll) {
-                              setState(() {
-                                _selectedSubCategory = null;
-                                _selectedSubSubCategory = null;
-                              });
-                              return;
-                            }
+                          return ChoiceChip(
+                            label: Text(name),
+                            selected: isSelected,
+                            onSelected: (_) {
+                              if (isAll) {
+                                setState(() {
+                                  _selectedSubCategory = null;
+                                  _selectedSubSubCategory = null;
+                                });
+                                return;
+                              }
 
-                            _onSelectSubCategory(home, categoryName, name);
-                          },
-                          selectedColor: const Color(0xFFEFF8E4),
-                          labelStyle: TextStyle(
-                            color: isSelected
-                                ? AppColors.success
-                                : AppColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(999),
-                            side: BorderSide(
+                              _onSelectSubCategory(home, categoryName, name);
+                            },
+                            selectedColor: const Color(0xFFEFF8E4),
+                            labelStyle: TextStyle(
                               color: isSelected
                                   ? AppColors.success
-                                  : const Color(0xFFE3E7EE),
+                                  : AppColors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
                             ),
-                          ),
-                          backgroundColor: const Color(0xFFF7F9FC),
-                        );
-                      },
-                    ),
-                  )
-                else
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(14, 4, 14, 4),
-                    child: Text(
-                      'No sub-categories available for this category.',
-                      style: TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(999),
+                              side: BorderSide(
+                                color: isSelected
+                                    ? AppColors.success
+                                    : const Color(0xFFE3E7EE),
+                              ),
+                            ),
+                            backgroundColor: const Color(0xFFF7F9FC),
+                          );
+                        },
                       ),
-                    ),
-                  ),
-                if ((selectedSubSubName ?? '').trim().isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-                    child: Chip(
-                      visualDensity: VisualDensity.compact,
-                      backgroundColor: const Color(0xFFF2F6FF),
-                      side: const BorderSide(color: Color(0xFFDAE6FF)),
-                      label: Text(
-                        selectedSubSubName!,
-                        style: const TextStyle(
-                          color: AppColors.primary,
+                    )
+                  else
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(14, 4, 14, 4),
+                      child: Text(
+                        'No sub-categories available for this category.',
+                        style: TextStyle(
+                          color: AppColors.textSecondary,
                           fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
-                      deleteIcon: const Icon(Icons.close, size: 16),
-                      onDeleted: () =>
-                          setState(() => _selectedSubSubCategory = null),
                     ),
-                  ),
-                const SizedBox(height: 6),
-                Expanded(
-                  child: RefreshIndicator(
-                    onRefresh: _refreshCategoryProducts,
-                    child: products.isEmpty
-                        ? ListView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 110),
-                            children: const [
-                              SizedBox(height: 220),
-                              Center(
-                                child: Text(
-                                  'No products found for this selection',
-                                  style: TextStyle(
-                                    color: AppColors.textSecondary,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
+                  if ((selectedSubSubName ?? '').trim().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+                      child: Chip(
+                        visualDensity: VisualDensity.compact,
+                        backgroundColor: const Color(0xFFF2F6FF),
+                        side: const BorderSide(color: Color(0xFFDAE6FF)),
+                        label: Text(
+                          selectedSubSubName!,
+                          style: const TextStyle(
+                            color: AppColors.primary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        deleteIcon: const Icon(Icons.close, size: 16),
+                        onDeleted: () =>
+                            setState(() => _selectedSubSubCategory = null),
+                      ),
+                    ),
+                  const SizedBox(height: 6),
+                  Expanded(
+                    child: RefreshIndicator(
+                      onRefresh: _refreshCategoryProducts,
+                      child: products.isEmpty
+                          ? ListView(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.fromLTRB(
+                                12,
+                                0,
+                                12,
+                                110,
+                              ),
+                              children: const [
+                                SizedBox(height: 220),
+                                Center(
+                                  child: Text(
+                                    'No products found for this selection',
+                                    style: TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
+                              ],
+                            )
+                          : GridView.builder(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.fromLTRB(
+                                12,
+                                0,
+                                12,
+                                110,
                               ),
-                            ],
-                          )
-                        : GridView.builder(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 110),
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 2,
-                                  mainAxisSpacing: 8,
-                                  crossAxisSpacing: 8,
-                                  childAspectRatio: 0.62,
-                                ),
-                            itemCount: products.length,
-                            itemBuilder: (_, i) {
-                              final product = products[i];
-                              final productId = _baseProductId(
-                                (product['id'] ?? '').toString(),
-                              );
-                              return ProductCard(
-                                product: product,
-                                showHeartIcon: false,
-                                showBoughtEarlierBadge: _purchasedProductIds
-                                    .contains(productId),
-                              );
-                            },
-                          ),
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: 2,
+                                    mainAxisSpacing: 8,
+                                    crossAxisSpacing: 8,
+                                    childAspectRatio: 0.62,
+                                  ),
+                              itemCount: products.length,
+                              itemBuilder: (_, i) {
+                                final product = products[i];
+                                final productId = _baseProductId(
+                                  (product['id'] ?? '').toString(),
+                                );
+                                return ProductCard(
+                                  product: product,
+                                  showHeartIcon: false,
+                                  showBoughtEarlierBadge: _purchasedProductIds
+                                      .contains(productId),
+                                  useFloatingVariantSnackbar: true,
+                                );
+                              },
+                            ),
+                    ),
                   ),
-                ),
-              ],
-            ),
-      bottomNavigationBar: Consumer<CartModel>(
-        builder: (context, cart, _) {
-          if (cart.itemCount == 0) return const SizedBox.shrink();
-          return const StickyCartBar();
-        },
+                ],
+              ),
+        bottomNavigationBar: Consumer<CartModel>(
+          builder: (context, cart, _) {
+            if (cart.itemCount == 0) return const SizedBox.shrink();
+            return const StickyCartBar();
+          },
+        ),
       ),
     );
   }

@@ -1,6 +1,7 @@
 // lib/core/models/order_provider.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:purecuts/core/constants/feature_flags.dart';
 import 'package:purecuts/core/models/order_model.dart';
@@ -39,6 +40,17 @@ class OrderProvider extends ChangeNotifier {
   String? get ordersError => _ordersError;
 
   bool hasBought(String productId) => _boughtProducts.containsKey(productId);
+
+  void _notifySafely() {
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase != SchedulerPhase.idle) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (hasListeners) notifyListeners();
+      });
+      return;
+    }
+    notifyListeners();
+  }
 
   void syncAuthUid(String? uid) {
     final nextUid = (uid ?? '').trim();
@@ -83,7 +95,7 @@ class OrderProvider extends ChangeNotifier {
     }
 
     _loading = true;
-    notifyListeners();
+    _notifySafely();
 
     final existing = _loadedUid == cleanUid
         ? List<Map<String, dynamic>>.from(_boughtProducts.values)
@@ -104,7 +116,7 @@ class OrderProvider extends ChangeNotifier {
       _loadedUid = cleanUid;
     } finally {
       _loading = false;
-      notifyListeners();
+      _notifySafely();
     }
   }
 
@@ -117,7 +129,7 @@ class OrderProvider extends ChangeNotifier {
     if (cleanUid.isEmpty) {
       _orders.clear();
       _ordersError = null;
-      notifyListeners();
+      _notifySafely();
       return;
     }
 
@@ -129,7 +141,7 @@ class OrderProvider extends ChangeNotifier {
     _ordersLoading = true;
     _ordersError = null;
     _ordersPagingLoading = false;
-    notifyListeners();
+    _notifySafely();
 
     try {
       _ordersCursor = null;
@@ -169,7 +181,7 @@ class OrderProvider extends ChangeNotifier {
       _ordersError = 'Failed to load orders. Please try again.';
     } finally {
       _ordersLoading = false;
-      notifyListeners();
+      _notifySafely();
     }
   }
 
@@ -181,12 +193,12 @@ class OrderProvider extends ChangeNotifier {
     if (_ordersLoadedUid != cleanUid) return;
     if (_ordersLegacyMode) {
       _ordersHasMore = false;
-      notifyListeners();
+      _notifySafely();
       return;
     }
 
     _ordersPagingLoading = true;
-    notifyListeners();
+    _notifySafely();
 
     try {
       final page = await _firestoreService.getUserOrdersPage(
@@ -221,7 +233,7 @@ class OrderProvider extends ChangeNotifier {
       _ordersHasMore = false;
     } finally {
       _ordersPagingLoading = false;
-      notifyListeners();
+      _notifySafely();
     }
   }
 
@@ -249,7 +261,7 @@ class OrderProvider extends ChangeNotifier {
     _ordersLegacyMode = false;
     _ordersCursor = null;
     _ordersError = null;
-    notifyListeners();
+    _notifySafely();
   }
 
   /// Call this after a successful order confirmation
@@ -262,6 +274,6 @@ class OrderProvider extends ChangeNotifier {
         'lastOrderStatus': item['lastOrderStatus'] ?? 'placed',
       });
     }
-    notifyListeners();
+    _notifySafely();
   }
 }

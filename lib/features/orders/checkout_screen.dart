@@ -14,6 +14,7 @@ import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/theme/spacing.dart';
 import 'package:purecuts/core/services/performance_trace_service.dart';
 import 'package:purecuts/core/utils/product_image_contract.dart';
+import 'package:purecuts/core/utils/variant_selection_guard.dart';
 import 'package:purecuts/core/services/payu_payment_service.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
 import 'package:purecuts/features/home/home_provider.dart';
@@ -1457,7 +1458,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   ),
                   const SizedBox(width: 6),
                   InkWell(
-                    onTap: () => context.read<CartModel>().add(product),
+                    onTap: () {
+                      if (!ensureVariantSelectedBeforeQuickAdd(
+                        context,
+                        product,
+                      )) {
+                        return;
+                      }
+                      context.read<CartModel>().add(product);
+                    },
                     borderRadius: BorderRadius.circular(AppRadius.sm),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
