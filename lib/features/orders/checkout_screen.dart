@@ -133,7 +133,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   ConfettiController? _freeDeliveryConfettiController;
   bool _wasFreeDeliveryUnlocked = false;
   bool _showingFreeDeliveryPopup = false;
-  static bool _hasShownFreeDeliveryUnlockCelebration = false;
 
   ConfettiController _ensureFreeDeliveryConfettiController() {
     return _freeDeliveryConfettiController ??= ConfettiController(
@@ -524,6 +523,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         context: context,
         barrierDismissible: true,
         builder: (ctx) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            Future.delayed(const Duration(seconds: 1), () {
+              if (!mounted || !_showingFreeDeliveryPopup) return;
+              final navigator = Navigator.of(ctx);
+              if (navigator.canPop()) {
+                navigator.pop();
+              }
+            });
+          });
+
           return Dialog(
             insetPadding: const EdgeInsets.symmetric(horizontal: 28),
             shape: RoundedRectangleBorder(
@@ -574,21 +583,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       color: AppColors.textSecondary,
                       fontSize: 13,
                       height: 1.4,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.of(ctx).pop(),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color.fromARGB(255, 103, 7, 148),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text('Nice!'),
                     ),
                   ),
                 ],
@@ -2161,14 +2155,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final freeDeliveryConfettiController =
         _ensureFreeDeliveryConfettiController();
 
-    if (!freeDeliveryUnlocked) {
-      _hasShownFreeDeliveryUnlockCelebration = false;
-    }
-
-    if (freeDeliveryUnlocked &&
-        !_wasFreeDeliveryUnlocked &&
-        !_hasShownFreeDeliveryUnlockCelebration) {
-      _hasShownFreeDeliveryUnlockCelebration = true;
+    if (freeDeliveryUnlocked && !_wasFreeDeliveryUnlocked) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         freeDeliveryConfettiController.play();
@@ -2442,56 +2429,158 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             fontSize: 12,
                           ),
                         )
-                      : SizedBox(
-                          height: 430,
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              const spacing = AppSpacing.md;
-                              final cardHeight =
-                                  (constraints.maxHeight - spacing) / 2;
-                              final cardWidth =
-                                  (constraints.maxWidth - spacing) / 2;
-                              final aspectRatio = cardHeight / cardWidth;
+                      : Column(
+                          children: [
+                            SizedBox(
+                              height: 410,
+                              child: Stack(
+                                children: [
+                                  LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      const spacing = AppSpacing.md;
+                                      final cardHeight =
+                                          (constraints.maxHeight - spacing) / 2;
+                                      final cardWidth =
+                                          (constraints.maxWidth - spacing) / 2;
+                                      final aspectRatio =
+                                          cardHeight / cardWidth;
 
-                              return Directionality(
-                                textDirection: TextDirection.rtl,
-                                child: GridView.builder(
-                                  primary: false,
-                                  physics: const BouncingScrollPhysics(),
-                                  scrollDirection: Axis.horizontal,
-                                  reverse: true,
-                                  itemCount: recommendations.length,
-                                  gridDelegate:
-                                      SliverGridDelegateWithFixedCrossAxisCount(
-                                        crossAxisCount: 2,
-                                        mainAxisSpacing: spacing,
-                                        crossAxisSpacing: spacing,
-                                        childAspectRatio: aspectRatio,
-                                      ),
-                                  itemBuilder: (_, i) {
-                                    final p = recommendations[i];
-                                    final recommendationImage =
-                                        resolveListImage(p);
-                                    if (recommendationImage.isNotEmpty) {
-                                      unawaited(
-                                        ImageBandwidthTelemetry.instance
-                                            .trackImageLoad(
-                                              screen:
-                                                  'checkout_recommendations',
-                                              imageUrl: recommendationImage,
-                                            ),
+                                      return Directionality(
+                                        textDirection: TextDirection.rtl,
+                                        child: GridView.builder(
+                                          primary: false,
+                                          physics:
+                                              const BouncingScrollPhysics(),
+                                          scrollDirection: Axis.horizontal,
+                                          reverse: true,
+                                          itemCount: recommendations.length,
+                                          gridDelegate:
+                                              SliverGridDelegateWithFixedCrossAxisCount(
+                                                crossAxisCount: 2,
+                                                mainAxisSpacing: spacing,
+                                                crossAxisSpacing: spacing,
+                                                childAspectRatio: aspectRatio,
+                                              ),
+                                          itemBuilder: (_, i) {
+                                            final p = recommendations[i];
+                                            final recommendationImage =
+                                                resolveListImage(p);
+                                            if (recommendationImage
+                                                .isNotEmpty) {
+                                              unawaited(
+                                                ImageBandwidthTelemetry.instance
+                                                    .trackImageLoad(
+                                                      screen:
+                                                          'checkout_recommendations',
+                                                      imageUrl:
+                                                          recommendationImage,
+                                                    ),
+                                              );
+                                            }
+
+                                            return Directionality(
+                                              textDirection: TextDirection.ltr,
+                                              child: _compactRecommendationCard(
+                                                p,
+                                              ),
+                                            );
+                                          },
+                                        ),
                                       );
-                                    }
-
-                                    return Directionality(
-                                      textDirection: TextDirection.ltr,
-                                      child: _compactRecommendationCard(p),
-                                    );
-                                  },
+                                    },
+                                  ),
+                                  Positioned(
+                                    left: 2,
+                                    top: 0,
+                                    bottom: 0,
+                                    child: IgnorePointer(
+                                      child: Center(
+                                        child: Container(
+                                          width: 26,
+                                          height: 26,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withOpacity(
+                                              0.88,
+                                            ),
+                                            shape: BoxShape.circle,
+                                            boxShadow: const [
+                                              BoxShadow(
+                                                color: Color(0x16000000),
+                                                blurRadius: 8,
+                                                offset: Offset(0, 2),
+                                              ),
+                                            ],
+                                          ),
+                                          child: const Icon(
+                                            Icons.chevron_left_rounded,
+                                            size: 18,
+                                            color: AppColors.textSecondary,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    right: 2,
+                                    top: 0,
+                                    bottom: 0,
+                                    child: IgnorePointer(
+                                      child: Center(
+                                        child: Container(
+                                          width: 26,
+                                          height: 26,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withOpacity(
+                                              0.88,
+                                            ),
+                                            shape: BoxShape.circle,
+                                            boxShadow: const [
+                                              BoxShadow(
+                                                color: Color(0x16000000),
+                                                blurRadius: 8,
+                                                offset: Offset(0, 2),
+                                              ),
+                                            ],
+                                          ),
+                                          child: const Icon(
+                                            Icons.chevron_right_rounded,
+                                            size: 18,
+                                            color: AppColors.textSecondary,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: const [
+                                Icon(
+                                  Icons.keyboard_double_arrow_left_rounded,
+                                  size: 14,
+                                  color: AppColors.textHint,
                                 ),
-                              );
-                            },
-                          ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Swipe for more',
+                                  style: TextStyle(
+                                    color: AppColors.textHint,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                SizedBox(width: 4),
+                                Icon(
+                                  Icons.keyboard_double_arrow_right_rounded,
+                                  size: 14,
+                                  color: AppColors.textHint,
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                 ),
                 const SizedBox(height: AppSpacing.lg),
