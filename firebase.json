@@ -11,6 +11,10 @@
     ],
     "rewrites": [
       {
+        "source": "/p/**",
+        "destination": "/product-redirect.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

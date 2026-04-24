@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/core/services/image_bandwidth_telemetry.dart';
+import 'package:purecuts/core/services/deep_link_service.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
@@ -21,6 +22,7 @@ import 'package:purecuts/features/products/detail/product_repository.dart';
 import 'package:purecuts/features/products/product_list_screen.dart';
 import 'package:purecuts/features/support_chat/widgets/support_chat_fab.dart';
 import 'package:purecuts/core/utils/tier_pricing.dart';
+import 'package:share_plus/share_plus.dart';
 
 class ProductDetailScreen extends StatefulWidget {
   final Map<String, dynamic> product;
@@ -318,9 +320,30 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   Future<void> _shareProduct() async {
     final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      const SnackBar(content: Text('Share feature will be enabled soon.')),
-    );
+    final productId = _productId.trim();
+    if (productId.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Product link is not ready yet.')),
+      );
+      return;
+    }
+
+    try {
+      final shareUri = DeepLinkService.buildProductShareUri(productId);
+      final productName = _product.name.trim();
+      final message = productName.isNotEmpty
+          ? '$productName\n\nCheck this out on PureCuts:\n$shareUri'
+          : 'Check this product on PureCuts:\n$shareUri';
+      await Share.share(
+        message,
+        subject: productName.isEmpty ? 'PureCuts Product' : productName,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not open share options.')),
+      );
+    }
   }
 
   String _normalizeImagePath(String raw) {

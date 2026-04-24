@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/navigation/app_navigator.dart';
+import 'package:purecuts/core/services/deep_link_service.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/core/services/push_notification_service.dart';
@@ -104,6 +105,7 @@ class _PureCutsAppState extends State<PureCutsApp> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       PushNotificationService.instance.initialize();
+      unawaited(DeepLinkService.instance.initialize());
     });
   }
 
