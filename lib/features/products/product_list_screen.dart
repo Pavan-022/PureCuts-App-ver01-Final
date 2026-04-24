@@ -31,6 +31,8 @@ class ProductListScreen extends StatefulWidget {
 
 class _ProductListScreenState extends State<ProductListScreen> {
   static const int _pageSize = 24;
+  static const Duration _searchDebounceDelay = Duration(milliseconds: 280);
+  static const Duration _searchHydrationDelay = Duration(milliseconds: 700);
   String _selectedCategory = 'All';
   String? _selectedBrand;
   String? _selectedTag;
@@ -55,8 +57,49 @@ class _ProductListScreenState extends State<ProductListScreen> {
   bool _isEmergencyHydrating = false;
   String? _pagingError;
   String? _lastEmergencyHydrationKey;
+  Timer? _searchDebounceTimer;
+  Timer? _searchHydrationTimer;
+  final Map<int, _SearchTextIndex> _searchTextIndexCache =
+      <int, _SearchTextIndex>{};
 
   String _searchQuery = '';
+
+  bool _shouldHydrateForQuery(String query) => query.trim().length >= 2;
+
+  void _scheduleHydrationForCommittedQuery(String query) {
+    _searchHydrationTimer?.cancel();
+
+    final trimmed = query.trim();
+    final shouldHydrateQuery = _shouldHydrateForQuery(trimmed);
+    final hasTagFilter = (_selectedTag ?? '').trim().isNotEmpty;
+    final hasCategoryFilter = _selectedCategory.trim().toLowerCase() != 'all';
+
+    if (!shouldHydrateQuery && !hasTagFilter && !hasCategoryFilter) return;
+
+    _searchHydrationTimer = Timer(_searchHydrationDelay, () {
+      if (!mounted) return;
+      _hydrateScopeForSearchIfNeeded();
+      if (shouldHydrateQuery) {
+        unawaited(_hydrateFullCatalogEmergency());
+      }
+    });
+  }
+
+  void _commitSearchQuery(String value) {
+    final next = value;
+    if (_searchQuery == next) return;
+    if (!mounted) return;
+    setState(() => _searchQuery = next);
+    _scheduleHydrationForCommittedQuery(next);
+  }
+
+  void _onSearchInputChanged(String value) {
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(_searchDebounceDelay, () {
+      if (!mounted) return;
+      _commitSearchQuery(value);
+    });
+  }
 
   String _scopeKey() {
     final category = _selectedCategory.trim().toLowerCase();
@@ -65,7 +108,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
   }
 
   bool get _needsFullScopeForSearch {
-    final hasQuery = _searchQuery.trim().isNotEmpty;
+    final hasQuery = _shouldHydrateForQuery(_searchQuery);
     final hasTagFilter = (_selectedTag ?? '').trim().isNotEmpty;
     final hasCategoryFilter = _selectedCategory.trim().toLowerCase() != 'all';
     return hasQuery || hasTagFilter || hasCategoryFilter;
@@ -142,7 +185,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
     } finally {
       if (mounted) {
         setState(() => _isSearchHydrating = false);
-        if (_searchQuery.trim().isNotEmpty) {
+        if (_shouldHydrateForQuery(_searchQuery)) {
           unawaited(_hydrateFullCatalogEmergency());
         }
       }
@@ -314,6 +357,88 @@ class _ProductListScreenState extends State<ProductListScreen> {
     return _normalizeToken(value).replaceAll(RegExp(r'[^a-z0-9]+'), '');
   }
 
+  String _allValues(dynamic node) {
+    if (node == null) return '';
+    if (node is Map) {
+      return node.values.map(_allValues).join(' ');
+    }
+    if (node is Iterable) {
+      return node.map(_allValues).join(' ');
+    }
+    return node.toString();
+  }
+
+  _SearchTextIndex _searchTextIndexFor(Map<String, dynamic> product) {
+    final cacheKey = identityHashCode(product);
+    final cached = _searchTextIndexCache[cacheKey];
+    if (cached != null) return cached;
+
+    final name = _normalizeToken(
+      (product['name'] ?? product['title'] ?? product['productName'] ?? '')
+          .toString(),
+    );
+    final brand = _normalizeToken(
+      (product['brand'] ??
+              product['brandName'] ??
+              product['manufacturer'] ??
+              '')
+          .toString(),
+    );
+    final category = _normalizeToken(
+      (product['category'] ?? product['categoryName'] ?? '').toString(),
+    );
+    final subCategory = _normalizeToken(
+      (product['subCategory'] ?? product['subcategory'] ?? '').toString(),
+    );
+    final subSubCategory = _normalizeToken(
+      (product['subSubCategory'] ?? product['subsubCategory'] ?? '').toString(),
+    );
+    final tag = _normalizeToken((product['tag'] ?? '').toString());
+    final tags = _normalizeToken(_tagSearchSource(product));
+    final description = _normalizeToken(
+      (product['description'] ??
+              product['shortDescription'] ??
+              product['highlights'] ??
+              '')
+          .toString(),
+    );
+    final subtitle = _normalizeToken(
+      (product['subtitle'] ??
+              product['subTitle'] ??
+              product['short_name'] ??
+              '')
+          .toString(),
+    );
+    final productType = _normalizeToken(
+      (product['productType'] ?? product['type'] ?? '').toString(),
+    );
+    final sku = _normalizeToken(
+      (product['sku'] ?? product['itemCode'] ?? product['code'] ?? '')
+          .toString(),
+    );
+    final fallbackAllFields = _normalizeToken(_allValues(product));
+
+    final searchable =
+        '$name $brand $category $subCategory $subSubCategory $tag $tags $description $subtitle $productType $sku $fallbackAllFields';
+    final compactSearchable = _compactToken(searchable);
+
+    final index = _SearchTextIndex(
+      name: name,
+      brand: brand,
+      tags: tags,
+      category: category,
+      description: description,
+      searchable: searchable,
+      compactSearchable: compactSearchable,
+    );
+
+    if (_searchTextIndexCache.length > 12000) {
+      _searchTextIndexCache.clear();
+    }
+    _searchTextIndexCache[cacheKey] = index;
+    return index;
+  }
+
   String _normalizeCategoryKey(String value) {
     return value.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
   }
@@ -471,66 +596,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
         .where((t) => t.isNotEmpty)
         .toList(growable: false);
 
-    final name = _normalizeToken(
-      (product['name'] ?? product['title'] ?? product['productName'] ?? '')
-          .toString(),
-    );
-    final brand = _normalizeToken(
-      (product['brand'] ??
-              product['brandName'] ??
-              product['manufacturer'] ??
-              '')
-          .toString(),
-    );
-    final category = _normalizeToken(
-      (product['category'] ?? product['categoryName'] ?? '').toString(),
-    );
-    final subCategory = _normalizeToken(
-      (product['subCategory'] ?? product['subcategory'] ?? '').toString(),
-    );
-    final subSubCategory = _normalizeToken(
-      (product['subSubCategory'] ?? product['subsubCategory'] ?? '').toString(),
-    );
-    final tag = _normalizeToken((product['tag'] ?? '').toString());
-    final tags = _normalizeToken(_tagSearchSource(product));
-    final description = _normalizeToken(
-      (product['description'] ??
-              product['shortDescription'] ??
-              product['highlights'] ??
-              '')
-          .toString(),
-    );
-    final subtitle = _normalizeToken(
-      (product['subtitle'] ??
-              product['subTitle'] ??
-              product['short_name'] ??
-              '')
-          .toString(),
-    );
-    final productType = _normalizeToken(
-      (product['productType'] ?? product['type'] ?? '').toString(),
-    );
-    final sku = _normalizeToken(
-      (product['sku'] ?? product['itemCode'] ?? product['code'] ?? '')
-          .toString(),
-    );
-
-    String allValues(dynamic node) {
-      if (node == null) return '';
-      if (node is Map) {
-        return node.values.map(allValues).join(' ');
-      }
-      if (node is Iterable) {
-        return node.map(allValues).join(' ');
-      }
-      return node.toString();
-    }
-
-    final fallbackAllFields = _normalizeToken(allValues(product));
-
-    final searchable =
-        '$name $brand $category $subCategory $subSubCategory $tag $tags $description $subtitle $productType $sku $fallbackAllFields';
-    final compactSearchable = _compactToken(searchable);
+    final index = _searchTextIndexFor(product);
+    final searchable = index.searchable;
+    final compactSearchable = index.compactSearchable;
 
     // Require every query token to be present somewhere in searchable text.
     return tokens.every((token) {
@@ -552,21 +620,12 @@ class _ProductListScreenState extends State<ProductListScreen> {
         .where((t) => t.isNotEmpty)
         .toList(growable: false);
 
-    String norm(dynamic v) => _normalizeToken((v ?? '').toString());
-
-    final name = norm(
-      product['name'] ?? product['title'] ?? product['productName'],
-    );
-    final brand = norm(
-      product['brand'] ?? product['brandName'] ?? product['manufacturer'],
-    );
-    final tags = norm(_tagSearchSource(product));
-    final category = norm(product['category'] ?? product['categoryName']);
-    final description = norm(
-      product['description'] ??
-          product['shortDescription'] ??
-          product['highlights'],
-    );
+    final index = _searchTextIndexFor(product);
+    final name = index.name;
+    final brand = index.brand;
+    final tags = index.tags;
+    final category = index.category;
+    final description = index.description;
 
     int scoreField(
       String field, {
@@ -664,11 +723,17 @@ class _ProductListScreenState extends State<ProductListScreen> {
     required bool hasQuery,
   }) {
     if (hasQuery) {
+      final scoreCache = <int, int>{};
+      int scoreOf(Map<String, dynamic> product) {
+        final key = identityHashCode(product);
+        return scoreCache.putIfAbsent(
+          key,
+          () => _searchScore(product, _searchQuery),
+        );
+      }
+
       products.sort((a, b) {
-        final scoreCmp = _searchScore(
-          b,
-          _searchQuery,
-        ).compareTo(_searchScore(a, _searchQuery));
+        final scoreCmp = scoreOf(b).compareTo(scoreOf(a));
         if (scoreCmp != 0) return scoreCmp;
         final aName = (a['name'] ?? '').toString().toLowerCase();
         final bName = (b['name'] ?? '').toString().toLowerCase();
@@ -827,7 +892,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
           ..selection = TextSelection.fromPosition(
             TextPosition(offset: spoken.length),
           );
-        setState(() => _searchQuery = spoken);
+        _searchDebounceTimer?.cancel();
+        _commitSearchQuery(spoken);
         if (!result.finalResult || spoken.isEmpty) return;
         launched = true;
         _submitVoiceQuery(spoken);
@@ -854,16 +920,14 @@ class _ProductListScreenState extends State<ProductListScreen> {
     if (!_pendingVoiceSearch || !mounted) return;
     _pendingVoiceSearch = false;
     _closeSpeechDialog();
+    _searchDebounceTimer?.cancel();
     _searchCtrl
       ..text = spoken
       ..selection = TextSelection.fromPosition(
         TextPosition(offset: spoken.length),
       );
-    setState(() {
-      _isListening = false;
-      _searchQuery = spoken;
-    });
-    unawaited(_hydrateFullCatalogEmergency());
+    setState(() => _isListening = false);
+    _commitSearchQuery(spoken);
   }
 
   void _closeSpeechDialog() {
@@ -980,12 +1044,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
     } finally {
       if (mounted) {
         setState(() => _isInitialLoading = false);
-        // Trigger a second-phase hydration AFTER initial loading flips false,
-        // otherwise _hydrateScopeForSearchIfNeeded exits early.
-        _hydrateScopeForSearchIfNeeded();
-        if (_searchQuery.trim().isNotEmpty) {
-          unawaited(_hydrateFullCatalogEmergency());
-        }
+        // Trigger second-phase hydration with delay to avoid jank while typing.
+        _scheduleHydrationForCommittedQuery(_searchQuery);
       }
     }
   }
@@ -1061,7 +1121,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
         }),
       );
       _loadFirstPage();
-      if (_searchQuery.trim().isNotEmpty) {
+      if (_shouldHydrateForQuery(_searchQuery)) {
         unawaited(_hydrateFullCatalogEmergency());
       }
     });
@@ -1070,6 +1130,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
   @override
   void dispose() {
     _speech.stop();
+    _searchDebounceTimer?.cancel();
+    _searchHydrationTimer?.cancel();
     _scrollController.removeListener(_onScroll);
     _searchCtrl.dispose();
     _scrollController.dispose();
@@ -1106,7 +1168,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
       hasQuery: hasQuery,
     );
 
-    if (hasQuery &&
+    if (_shouldHydrateForQuery(_searchQuery) &&
         products.isEmpty &&
         !_isInitialLoading &&
         !_isSearchHydrating &&
@@ -1203,13 +1265,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: TextField(
               controller: _searchCtrl,
-              onChanged: (v) {
-                setState(() => _searchQuery = v);
-                _hydrateScopeForSearchIfNeeded();
-                if (v.trim().isNotEmpty) {
-                  unawaited(_hydrateFullCatalogEmergency());
-                }
-              },
+              onChanged: _onSearchInputChanged,
               decoration: InputDecoration(
                 hintText: 'Search products...',
                 hintStyle: const TextStyle(
@@ -1237,8 +1293,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
                             size: 18,
                           ),
                           onPressed: () {
+                            _searchDebounceTimer?.cancel();
                             _searchCtrl.clear();
-                            setState(() => _searchQuery = '');
+                            _commitSearchQuery('');
                           },
                         ),
                       IconButton(
@@ -1483,4 +1540,24 @@ class _ProductListScreenState extends State<ProductListScreen> {
       floatingActionButton: const SupportChatFab(),
     );
   }
+}
+
+class _SearchTextIndex {
+  final String name;
+  final String brand;
+  final String tags;
+  final String category;
+  final String description;
+  final String searchable;
+  final String compactSearchable;
+
+  const _SearchTextIndex({
+    required this.name,
+    required this.brand,
+    required this.tags,
+    required this.category,
+    required this.description,
+    required this.searchable,
+    required this.compactSearchable,
+  });
 }

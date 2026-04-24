@@ -41,7 +41,6 @@ class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   static const double _bannerHeight = 132;
   static const Duration _bannerInitialSlideDelay = Duration(seconds: 7);
-  final ScrollController _recommendedScrollController = ScrollController();
   final PageController _bannerPageController = PageController();
   final GlobalKey _headerSearchBarKey = GlobalKey();
   final GlobalKey _categoriesSectionKey = GlobalKey();
@@ -83,6 +82,7 @@ class _HomeScreenState extends State<HomeScreen>
   Timer? _payuRecoveryPollTimer;
   int _payuRecoveryPollAttempts = 0;
   int _hotDealsShuffleSeed = DateTime.now().microsecondsSinceEpoch;
+  int _recommendedShuffleSeed = DateTime.now().microsecondsSinceEpoch + 1;
   bool _stickyThresholdRecalcQueued = false;
 
   static const int _maxPayuRecoveryPollAttempts = 20;
@@ -164,6 +164,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _refreshHomeData() async {
     _hotDealsShuffleSeed = DateTime.now().microsecondsSinceEpoch;
+    _recommendedShuffleSeed = DateTime.now().microsecondsSinceEpoch + 1;
     await Future.wait([
       context.read<HomeProvider>().loadData(forceRefresh: true),
       _resolveOrderHistory(force: true),
@@ -976,6 +977,7 @@ class _HomeScreenState extends State<HomeScreen>
   void initState() {
     super.initState();
     _hotDealsShuffleSeed = DateTime.now().microsecondsSinceEpoch;
+    _recommendedShuffleSeed = DateTime.now().microsecondsSinceEpoch + 1;
     WidgetsBinding.instance.addObserver(this);
     _ensureBannerImageZoomReady();
     _initSpeech();
@@ -1002,9 +1004,7 @@ class _HomeScreenState extends State<HomeScreen>
         hp.loadData().then((_) => hp.ensureVisibilityCatalogLoaded()),
         _resolveOrderHistory(force: true),
         _resolvePayuRecoveryAction(force: true),
-      ]).then((_) {
-        if (mounted) _startAutoScroll();
-      });
+      ]);
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1018,6 +1018,7 @@ class _HomeScreenState extends State<HomeScreen>
       if (mounted) {
         setState(() {
           _hotDealsShuffleSeed = DateTime.now().microsecondsSinceEpoch;
+          _recommendedShuffleSeed = DateTime.now().microsecondsSinceEpoch + 1;
         });
       }
       unawaited(_resolvePayuRecoveryAction(force: true));
@@ -1104,58 +1105,6 @@ class _HomeScreenState extends State<HomeScreen>
         _stickyLabelsOnly = labelsOnly;
       });
     }
-  }
-
-  void _startAutoScroll() {
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (!mounted) return;
-
-      if (!_recommendedScrollController.hasClients) {
-        _startAutoScroll();
-        return;
-      }
-
-      final maxScroll = _recommendedScrollController.position.maxScrollExtent;
-      if (maxScroll <= 0) {
-        _startAutoScroll();
-        return;
-      }
-
-      // Scroll to end slowly
-      _recommendedScrollController
-          .animateTo(
-            maxScroll,
-            duration: const Duration(seconds: 15),
-            curve: Curves.linear,
-          )
-          .then((_) {
-            // Wait briefly, then scroll back
-            Future.delayed(const Duration(milliseconds: 500), () {
-              if (!mounted) return;
-              if (!_recommendedScrollController.hasClients) {
-                _startAutoScroll();
-                return;
-              }
-
-              _recommendedScrollController
-                  .animateTo(
-                    0,
-                    duration: const Duration(seconds: 15),
-                    curve: Curves.linear,
-                  )
-                  .then((_) {
-                    // Repeat
-                    _startAutoScroll();
-                  })
-                  .catchError((_) {
-                    _startAutoScroll();
-                  });
-            });
-          })
-          .catchError((_) {
-            _startAutoScroll();
-          });
-    });
   }
 
   void _syncBannerAutoSlide(
@@ -1288,7 +1237,6 @@ class _HomeScreenState extends State<HomeScreen>
     _payuRecoveryRetryTimer?.cancel();
     _stopPayuRecoveryPolling();
     _speech.stop();
-    _recommendedScrollController.dispose();
     _contentScrollController.removeListener(_updateStickyCategories);
     _contentScrollController.dispose();
     _bannerAutoSlideTimer?.cancel();
@@ -1967,9 +1915,14 @@ class _HomeScreenState extends State<HomeScreen>
     final browseItems = _randomizeHotDealsForView(
       _mergeUniqueProductLists(hotDealsSeed, fallbackBrowseItems, maxItems: 24),
     );
-    final recommendedDisplayItems = recommendedItems.isNotEmpty
+    final recommendedSourceItems = recommendedItems.isNotEmpty
         ? recommendedItems
         : unassignedProducts;
+    final recommendedDisplayItems = _randomizeRecommendationsForView(
+      recommendedSourceItems
+          .where((p) => _toDouble(p['price'] ?? p['salePrice']) > 0)
+          .toList(),
+    );
     final mostBoughtDisplayItems = mostBoughtItems.isNotEmpty
         ? mostBoughtItems
         : unassignedProducts;
@@ -2035,7 +1988,6 @@ class _HomeScreenState extends State<HomeScreen>
               SizedBox(
                 height: 200,
                 child: ListView.separated(
-                  controller: _recommendedScrollController,
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                   scrollDirection: Axis.horizontal,
                   itemCount: recommendedDisplayItems.length > 4
@@ -2253,6 +2205,15 @@ class _HomeScreenState extends State<HomeScreen>
     if (products.length <= 1) return products;
     final shuffled = List<Map<String, dynamic>>.from(products);
     shuffled.shuffle(Random(_hotDealsShuffleSeed));
+    return shuffled;
+  }
+
+  List<Map<String, dynamic>> _randomizeRecommendationsForView(
+    List<Map<String, dynamic>> products,
+  ) {
+    if (products.length <= 1) return products;
+    final shuffled = List<Map<String, dynamic>>.from(products);
+    shuffled.shuffle(Random(_recommendedShuffleSeed));
     return shuffled;
   }
 
