@@ -1322,53 +1322,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
               ),
             ),
           ),
+
           // Category chips
-          SizedBox(
-            height: 52,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
-              itemCount: categories.length,
-              itemBuilder: (_, i) {
-                final cat = categories[i];
-                final selected = cat == _selectedCategory;
-                return GestureDetector(
-                  onTap: () async {
-                    if (_selectedCategory == cat) return;
-                    setState(() => _selectedCategory = cat);
-                    await _loadFirstPage();
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: selected ? AppColors.primary : Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: selected ? AppColors.primary : AppColors.border,
-                      ),
-                    ),
-                    child: Text(
-                      cat,
-                      style: TextStyle(
-                        color: selected
-                            ? Colors.white
-                            : AppColors.textSecondary,
-                        fontSize: 13,
-                        fontWeight: selected
-                            ? FontWeight.w600
-                            : FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
           if ((_selectedBrand ?? '').trim().isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),

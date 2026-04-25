@@ -472,7 +472,7 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
                 child: Row(
                   children: [
                     Container(
-                      width: 74,
+                      width: 89,
                       decoration: BoxDecoration(
                         color: const Color(0xFFF7F8FA),
                         borderRadius: BorderRadius.circular(12),
@@ -660,13 +660,13 @@ class _SubSubRailItem extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 38,
-              height: 38,
+              width: 46,
+              height: 46,
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Center(child: _ThumbIcon(path: iconPath ?? '')),
+              child: Center(child: _ThumbIcon(path: iconPath ?? '', size: 50)),
             ),
             const SizedBox(height: 4),
             Text(

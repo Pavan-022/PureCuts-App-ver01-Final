@@ -59,4 +59,4 @@ android/key.properties
 purecuts-11a7c-firebase-adminsdk-fbsvc-1bd001457f.json
 serviceAccountKey.json
 *.service-account.json
-*firebase-adminsdk*.json
+*firebase-adminsdk*.jsonx
