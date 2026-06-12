@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:purecuts/core/models/order_model.dart';
 import 'package:purecuts/core/utils/product_image_contract.dart';
 import 'package:purecuts/core/utils/tier_pricing.dart';
 
@@ -77,9 +78,12 @@ class CartModel extends ChangeNotifier {
   static Future<SharedPreferences>? _prefsFuture;
   final List<CartItem> _items;
   final List<String> _previewOrder = <String>[];
+  final Map<String, int> _lockedQuantities = <String, int>{};
   int _addEventTick = 0;
   String? _lastAddedProductId;
   String? _lastAddedImage;
+  String? _editSourceOrderId;
+  String? _editSourceOrderRef;
   String _activeUserKey = 'guest';
   StreamSubscription<fb_auth.User?>? _authSub;
 
@@ -123,16 +127,57 @@ class CartModel extends ChangeNotifier {
         .toList(growable: false);
   }
 
+  bool _hasShownFreeDeliveryUnlockPopup = false;
+
+  bool get hasShownFreeDeliveryUnlockPopup => _hasShownFreeDeliveryUnlockPopup;
+
+  void markFreeDeliveryUnlockPopupShown() {
+    _hasShownFreeDeliveryUnlockPopup = true;
+  }
+
+  void resetFreeDeliveryUnlockPopupShown() {
+    _hasShownFreeDeliveryUnlockPopup = false;
+  }
+
   int get addEventTick => _addEventTick;
 
   String? get lastAddedProductId => _lastAddedProductId;
 
   String? get lastAddedImage => _lastAddedImage;
 
+  bool get isEditSessionActive => _lockedQuantities.isNotEmpty;
+
+  String? get editSourceOrderId => _editSourceOrderId;
+
+  String? get editSourceOrderRef => _editSourceOrderRef;
+
+  Map<String, int> get editLockedQuantities =>
+      Map.unmodifiable(_lockedQuantities);
+
   int get itemCount => _items.fold(0, (sum, item) => sum + item.quantity);
 
-  int get totalPrice =>
-      _items.fold(0, (sum, item) => sum + item.price * item.quantity);
+  int get totalPrice {
+    if (!isEditSessionActive) {
+      return _items.fold(0, (sum, item) => sum + item.price * item.quantity);
+    }
+
+    var total = 0;
+    for (final item in _items) {
+      final lockedQty = _lockedQuantities[_baseProductId(item.id)] ?? 0;
+      final chargeableQty = item.quantity - lockedQty;
+      if (chargeableQty <= 0) continue;
+
+      final unitPrice = _isTierPricingEnabled(item)
+          ? unitPriceForQuantity(
+              quantity: chargeableQty,
+              basePrice: item.basePrice,
+              pricingTiers: item.pricingTiers,
+            )
+          : item.price;
+      total += unitPrice * chargeableQty;
+    }
+    return total;
+  }
 
   bool hasItem(String id) => _items.any((e) => e.id == id);
 
@@ -165,6 +210,106 @@ class CartModel extends ChangeNotifier {
   int quantityOf(String id) {
     final idx = _items.indexWhere((e) => e.id == id);
     return idx >= 0 ? _items[idx].quantity : 0;
+  }
+
+  static String _baseProductId(String value) {
+    final id = value.trim();
+    if (id.isEmpty) return '';
+    final sep = id.indexOf('::');
+    if (sep <= 0) return id;
+    return id.substring(0, sep);
+  }
+
+  int lockedQuantityOf(String id) {
+    return _lockedQuantities[_baseProductId(id)] ?? 0;
+  }
+
+  bool isLockedItem(String id) => lockedQuantityOf(id) > 0;
+
+  CartItem _cartItemFromOrderItem(Map<String, dynamic> item) {
+    final productId = _baseProductId(
+      (item['productId'] ?? item['id'] ?? '').toString(),
+    );
+    final rawPrice = (item['price'] is num)
+        ? (item['price'] as num).toInt()
+        : int.tryParse((item['price'] ?? '0').toString()) ?? 0;
+    final rawBasePrice = (item['basePrice'] is num)
+        ? (item['basePrice'] as num).toInt()
+        : int.tryParse(
+                (item['basePrice'] ?? item['originalPrice'] ?? rawPrice)
+                    .toString(),
+              ) ??
+              rawPrice;
+    final pricingType = (item['pricingType'] ?? '').toString().trim();
+    final pricingTiers = parsePricingTiers(item['pricingTiers']);
+    final quantity = (item['quantity'] is num)
+        ? (item['quantity'] as num).toInt()
+        : int.tryParse((item['quantity'] ?? '1').toString()) ?? 1;
+
+    return CartItem(
+      id: productId,
+      name: (item['name'] ?? '').toString(),
+      brand: (item['brand'] ?? '').toString(),
+      image: (item['image'] ?? '').toString(),
+      price: rawPrice,
+      basePrice: rawBasePrice,
+      pricingType: pricingType,
+      pricingTiers: pricingTiers,
+      quantity: quantity,
+    );
+  }
+
+  void startEditSession(OrderModel order) {
+    clearEditSession();
+    _items.clear();
+    _previewOrder.clear();
+
+    final sourceDocId = order.orderDocumentId.trim();
+    final sourceOrderRef = order.orderId.trim();
+    _editSourceOrderId = sourceDocId.isNotEmpty ? sourceDocId : sourceOrderRef;
+    _editSourceOrderRef = sourceOrderRef.isNotEmpty
+        ? sourceOrderRef
+        : sourceDocId;
+
+    final groupedItems = <String, Map<String, dynamic>>{};
+    final groupedQuantities = <String, int>{};
+
+    for (final rawItem in order.items) {
+      final productId = _baseProductId(
+        (rawItem['productId'] ?? rawItem['id'] ?? '').toString(),
+      );
+      if (productId.isEmpty) continue;
+
+      groupedQuantities[productId] =
+          (groupedQuantities[productId] ?? 0) +
+          ((rawItem['quantity'] is num)
+              ? (rawItem['quantity'] as num).toInt()
+              : int.tryParse((rawItem['quantity'] ?? '1').toString()) ?? 1);
+
+      groupedItems.putIfAbsent(productId, () {
+        final itemCopy = Map<String, dynamic>.from(rawItem);
+        itemCopy['id'] = productId;
+        itemCopy['productId'] = productId;
+        return itemCopy;
+      });
+    }
+
+    groupedItems.forEach((productId, item) {
+      final quantity = groupedQuantities[productId] ?? 1;
+      final cartItem = _cartItemFromOrderItem({...item, 'quantity': quantity});
+      _items.add(cartItem);
+      _lockedQuantities[productId] = quantity;
+    });
+
+    _rebuildPreviewFromItems();
+    _persist();
+    notifyListeners();
+  }
+
+  void clearEditSession() {
+    _lockedQuantities.clear();
+    _editSourceOrderId = null;
+    _editSourceOrderRef = null;
   }
 
   void add(Map<String, dynamic> product) {
@@ -220,9 +365,11 @@ class CartModel extends ChangeNotifier {
     if (productId.isEmpty) return;
 
     final safeQty = quantity < 0 ? 0 : quantity;
+    final lockedQty = lockedQuantityOf(productId);
+    final effectiveQty = safeQty < lockedQty ? lockedQty : safeQty;
     final idx = _items.indexWhere((e) => e.id == productId);
 
-    if (safeQty == 0) {
+    if (effectiveQty == 0) {
       if (idx >= 0) {
         _items.removeAt(idx);
         _syncPreviewWithItems();
@@ -235,7 +382,7 @@ class CartModel extends ChangeNotifier {
     final selectedImage = resolveListImage(product);
 
     if (idx >= 0) {
-      _items[idx].quantity = safeQty;
+      _items[idx].quantity = effectiveQty;
       _items[idx] = _repriceForQuantity(_items[idx]);
     } else {
       final rawPrice = (product['price'] is num)
@@ -248,7 +395,7 @@ class CartModel extends ChangeNotifier {
       final pricingType = (product['pricingType'] ?? '').toString().trim();
       final pricingTiers = parsePricingTiers(product['pricingTiers']);
       final unitPrice = unitPriceForQuantity(
-        quantity: safeQty,
+        quantity: effectiveQty,
         basePrice: rawBasePrice,
         pricingTiers: pricingTiers,
       );
@@ -263,7 +410,7 @@ class CartModel extends ChangeNotifier {
           basePrice: rawBasePrice,
           pricingType: pricingType,
           pricingTiers: pricingTiers,
-          quantity: safeQty,
+          quantity: effectiveQty,
         ),
       );
     }
@@ -280,6 +427,11 @@ class CartModel extends ChangeNotifier {
   void remove(String id) {
     final idx = _items.indexWhere((e) => e.id == id);
     if (idx >= 0) {
+      final lockedQty = lockedQuantityOf(id);
+      if (_items[idx].quantity <= lockedQty) {
+        return;
+      }
+
       if (_items[idx].quantity > 1) {
         _items[idx].quantity--;
         _items[idx] = _repriceForQuantity(_items[idx]);
@@ -295,6 +447,8 @@ class CartModel extends ChangeNotifier {
   void clear() {
     _items.clear();
     _previewOrder.clear();
+    _hasShownFreeDeliveryUnlockPopup = false;
+    clearEditSession();
     _persist();
     notifyListeners();
   }

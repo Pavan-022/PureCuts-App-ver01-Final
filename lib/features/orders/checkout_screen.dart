@@ -8,6 +8,8 @@ import 'package:firebase_performance/firebase_performance.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/models/cart_model.dart';
+import 'package:purecuts/core/constants/feature_flags.dart';
+import 'package:purecuts/core/models/order_model.dart';
 import 'package:purecuts/core/services/firestore_service.dart';
 import 'package:purecuts/core/services/image_bandwidth_telemetry.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
@@ -25,9 +27,11 @@ class CheckoutScreen extends StatefulWidget {
   const CheckoutScreen({
     super.key,
     this.autoFinalizeRecoveredPayuOrder = false,
+    this.editOrder,
   });
 
   final bool autoFinalizeRecoveredPayuOrder;
+  final OrderModel? editOrder;
 
   @override
   State<CheckoutScreen> createState() => _CheckoutScreenState();
@@ -118,6 +122,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   final TextEditingController _mapLinkController = TextEditingController();
   final TextEditingController _receiverNameController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _productSuggestionController =
+      TextEditingController();
 
   final GlobalKey<FormState> _detailsFormKey = GlobalKey<FormState>();
   final List<Map<String, dynamic>> _savedAddresses = [];
@@ -129,10 +135,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String? _recoveredSuccessfulPayuTxnId;
   bool _checkingRecoveredPayment = false;
   bool _autoFinalizeAttempted = false;
+  bool _suggestionUploading = false;
   Trace? _checkoutLoadTrace;
   ConfettiController? _freeDeliveryConfettiController;
-  bool _wasFreeDeliveryUnlocked = false;
   bool _showingFreeDeliveryPopup = false;
+  bool _editSessionPrimed = false;
 
   ConfettiController _ensureFreeDeliveryConfettiController() {
     return _freeDeliveryConfettiController ??= ConfettiController(
@@ -261,6 +268,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     _startCheckoutLoadTrace();
     _ensureFreeDeliveryConfettiController();
 
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _editSessionPrimed || widget.editOrder == null) return;
+      final cart = context.read<CartModel>();
+      if (!cart.isEditSessionActive) {
+        cart.startEditSession(widget.editOrder!);
+      }
+      _editSessionPrimed = true;
+      setState(() {});
+    });
+
     final auth = context.read<AuthProvider>();
     _hydrateAddressesFromUser(auth);
 
@@ -305,6 +322,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     _mapLinkController.dispose();
     _receiverNameController.dispose();
     _phoneController.dispose();
+    _productSuggestionController.dispose();
     super.dispose();
   }
 
@@ -338,6 +356,30 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       'pricingTiers': item.pricingTiers
           .map((tier) => tier.toMap())
           .toList(growable: false),
+    };
+  }
+
+  Map<String, dynamic>? _buildEditMeta(CartModel cart) {
+    if (!cart.isEditSessionActive) return null;
+
+    final order = widget.editOrder;
+    final sourceDocId = (order?.orderDocumentId ?? cart.editSourceOrderId ?? '')
+        .trim();
+    final sourceOrderRef = (order?.orderId ?? cart.editSourceOrderRef ?? '')
+        .trim();
+    if (sourceDocId.isEmpty && sourceOrderRef.isEmpty) return null;
+
+    return {
+      'isEditOrder': true,
+      'sourceOrderDocumentId': sourceDocId,
+      'sourceOrderId': sourceDocId,
+      'sourceOrderRef': sourceOrderRef,
+      'windowHours': FeatureFlags.orderEditWindowHours,
+      'lockedQuantities': cart.editLockedQuantities,
+      'originalCreatedAt': order?.createdAt.toIso8601String(),
+      'originalTotalAmount': order?.totalAmount ?? 0,
+      'originalItemCount': order?.itemCount ?? 0,
+      'originalPaymentMethod': order?.paymentMethod,
     };
   }
 
@@ -503,9 +545,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }
 
   int _amountToUnlockFreeDelivery(int itemTotal) {
-    if (_calculateDeliveryCharge(itemTotal) == 0) return 0;
-    final remaining =
-        _freeDeliveryThreshold - (itemTotal + _regionalDeliveryCharge());
+    final remaining = _freeDeliveryThreshold - itemTotal;
     return remaining > 0 ? remaining : 0;
   }
 
@@ -556,12 +596,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     width: 58,
                     height: 58,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF22A35A).withOpacity(0.12),
+                      color: const Color(0xFF22A35A).withValues(alpha: 0.12),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
                       Icons.local_shipping_rounded,
-                      color: const Color.fromARGB(255, 103, 7, 148),
+                      color: Color.fromARGB(255, 103, 7, 148),
                       size: 30,
                     ),
                   ),
@@ -1158,7 +1198,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
                         if (!mounted) return;
                         if (!saved) {
-                          ScaffoldMessenger.of(this.context).showSnackBar(
+                          ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text(
                                 'Unable to save details. Please try again.',
@@ -1176,7 +1216,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           _applyAddressEntry(_savedAddresses[selectedIdx]);
                         });
                         Navigator.of(sheetContext).pop();
-                        ScaffoldMessenger.of(this.context).showSnackBar(
+                        ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text('Delivery details saved.'),
                             duration: Duration(seconds: 2),
@@ -1350,6 +1390,70 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
+  Future<void> _submitProductSuggestionIfNeeded({
+    required String uid,
+    required String orderRef,
+    required String orderId,
+  }) async {
+    final cleanText = _productSuggestionController.text.trim();
+    if (cleanText.isEmpty) return;
+
+    if (mounted) {
+      setState(() {
+        _suggestionUploading = true;
+      });
+    }
+
+    try {
+      await _firestoreService.createProductSuggestion(
+        uid: uid,
+        text: cleanText,
+        orderRef: orderRef,
+        orderId: orderId,
+        meta: {'source': 'checkout', 'paymentMethod': _selectedPaymentMethod},
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _suggestionUploading = false;
+        });
+      }
+    }
+  }
+
+  Widget _buildProductSuggestionSection() {
+    return _sectionCard(
+      title: 'Product suggestion',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Want to suggest a product we should add? Enter a note below (optional).',
+            style: TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 12.5,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextField(
+            controller: _productSuggestionController,
+            maxLines: 3,
+            maxLength: 1000,
+            decoration: const InputDecoration(
+              hintText: 'What product should we add?',
+              counterText: '',
+            ),
+          ),
+          if (_suggestionUploading) ...[
+            const SizedBox(height: AppSpacing.md),
+            const LinearProgressIndicator(minHeight: 2),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _compactRecommendationCard(Map<String, dynamic> product) {
     final image = resolveListImage(product);
     final price = (product['price'] as num?)?.toDouble() ?? 0;
@@ -1385,7 +1489,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     fadeOutDuration: Duration.zero,
                     memCacheWidth: 168,
                     maxWidthDiskCache: 168,
-                    errorWidget: (_, __, ___) => const Icon(
+                    errorWidget: (_, _, _) => const Icon(
                       Icons.image_outlined,
                       color: AppColors.textHint,
                       size: 20,
@@ -1496,6 +1600,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     bool skipConfirmation = false,
   }) async {
     if (_isPlacingOrder) return;
+
+    final messenger = ScaffoldMessenger.maybeOf(context);
 
     setState(() {
       _isPlacingOrder = true;
@@ -1790,6 +1896,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         var successfulPaymentTxnId = (_recoveredSuccessfulPayuTxnId ?? '')
             .trim();
         String? orderRef;
+        final editMeta = _buildEditMeta(cart);
 
         if (_selectedPaymentMethod == _payuPaymentMethod) {
           if ((_recoveredSuccessfulPayuTxnId ?? '').trim().isEmpty) {
@@ -1819,6 +1926,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     'deliveryCharge': deliveryChargeValue,
                     'handlingCharge': 0,
                     'grandTotal': grandTotal,
+                    'editMeta': ?editMeta,
                     'customerName': draftCustomerName,
                     'customerEmail': draftCustomerEmail,
                     'customerPhone': draftCustomerPhone,
@@ -1896,6 +2004,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 'handlingCharge': 0,
                 'grandTotal': grandTotal,
               },
+              editMeta: editMeta,
               userProfile: auth.user?.toMap(),
             );
           }
@@ -1921,6 +2030,26 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
           );
           return;
+        }
+
+        final resolvedOrderRef = (orderRef ?? '').trim();
+
+        try {
+          await _submitProductSuggestionIfNeeded(
+            uid: uid,
+            orderRef: resolvedOrderRef,
+            orderId: resolvedOrderRef,
+          );
+        } catch (error) {
+          if (mounted) {
+            messenger?.showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Order placed, but suggestion could not be saved: ${error.toString().replaceFirst('StateError: ', '')}',
+                ),
+              ),
+            );
+          }
         }
 
         if (_selectedPaymentMethod == _payuPaymentMethod) {
@@ -2046,12 +2175,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           padding: const EdgeInsets.all(AppSpacing.md),
                           decoration: BoxDecoration(
                             color: isSelected
-                                ? AppColors.primary.withOpacity(0.08)
+                                ? AppColors.primary.withValues(alpha: 0.08)
                                 : Colors.white,
                             borderRadius: BorderRadius.circular(AppRadius.lg),
                             border: Border.all(
                               color: isSelected
-                                  ? AppColors.primary.withOpacity(0.35)
+                                  ? AppColors.primary.withValues(alpha: 0.35)
                                   : AppColors.border,
                             ),
                           ),
@@ -2062,7 +2191,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 height: 38,
                                 decoration: BoxDecoration(
                                   color: isSelected
-                                      ? AppColors.primary.withOpacity(0.14)
+                                      ? AppColors.primary.withValues(alpha: 0.14)
                                       : AppColors.surface,
                                   borderRadius: BorderRadius.circular(
                                     AppRadius.md,
@@ -2129,6 +2258,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Widget build(BuildContext context) {
     final cart = context.watch<CartModel>();
     final home = context.watch<HomeProvider>();
+    final isEditMode = cart.isEditSessionActive;
 
     for (final item in cart.items) {
       final url = item.image.trim();
@@ -2143,7 +2273,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     if (cart.items.isEmpty) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Checkout')),
+        appBar: AppBar(title: Text(isEditMode ? 'Edit Order' : 'Checkout')),
         body: const Center(child: Text('Your cart is empty')),
       );
     }
@@ -2152,17 +2282,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final grandTotal = _grandTotal(cart);
     final amountToUnlockFreeDelivery = _amountToUnlockFreeDelivery(itemTotal);
     final freeDeliveryUnlocked = amountToUnlockFreeDelivery == 0;
+    final freeDeliveryPopupShown = cart.hasShownFreeDeliveryUnlockPopup;
     final freeDeliveryConfettiController =
         _ensureFreeDeliveryConfettiController();
 
-    if (freeDeliveryUnlocked && !_wasFreeDeliveryUnlocked) {
+    if (freeDeliveryUnlocked && !freeDeliveryPopupShown) {
+      cart.markFreeDeliveryUnlockPopupShown();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         freeDeliveryConfettiController.play();
         unawaited(_showFreeDeliveryUnlockedPopup());
       });
+    } else if (!freeDeliveryUnlocked && freeDeliveryPopupShown) {
+      cart.resetFreeDeliveryUnlockPopupShown();
     }
-    _wasFreeDeliveryUnlocked = freeDeliveryUnlocked;
 
     final recommendations = _recommendations(cart: cart, home: home);
 
@@ -2188,9 +2321,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
           ),
         ),
-        title: const Text(
-          'Checkout',
-          style: TextStyle(
+        title: Text(
+          isEditMode ? 'Edit Order' : 'Checkout',
+          style: const TextStyle(
             color: AppColors.textPrimary,
             fontWeight: FontWeight.w700,
           ),
@@ -2253,7 +2386,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                         fadeOutDuration: Duration.zero,
                                         memCacheWidth: 112,
                                         maxWidthDiskCache: 112,
-                                        errorWidget: (_, __, ___) => const Icon(
+                                        errorWidget: (_, _, _) => const Icon(
                                           Icons.image_outlined,
                                           color: AppColors.textHint,
                                         ),
@@ -2419,6 +2552,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   ),
                 ),
                 const SizedBox(height: AppSpacing.lg),
+                _buildProductSuggestionSection(),
+                const SizedBox(height: AppSpacing.lg),
                 _sectionCard(
                   title: 'You might also like',
                   child: recommendations.isEmpty
@@ -2499,8 +2634,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                           width: 26,
                                           height: 26,
                                           decoration: BoxDecoration(
-                                            color: Colors.white.withOpacity(
-                                              0.88,
+                                            color: Colors.white.withValues(
+                                              alpha: 0.88,
                                             ),
                                             shape: BoxShape.circle,
                                             boxShadow: const [
@@ -2530,8 +2665,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                           width: 26,
                                           height: 26,
                                           decoration: BoxDecoration(
-                                            color: Colors.white.withOpacity(
-                                              0.88,
+                                            color: Colors.white.withValues(
+                                              alpha: 0.88,
                                             ),
                                             shape: BoxShape.circle,
                                             boxShadow: const [
@@ -2739,14 +2874,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 padding: const EdgeInsets.all(AppSpacing.md),
                                 decoration: BoxDecoration(
                                   color: isSelected
-                                      ? AppColors.primary.withOpacity(0.08)
+                                      ? AppColors.primary.withValues(alpha: 0.08)
                                       : AppColors.surface,
                                   borderRadius: BorderRadius.circular(
                                     AppRadius.md,
                                   ),
                                   border: Border.all(
                                     color: isSelected
-                                        ? AppColors.primary.withOpacity(0.35)
+                                        ? AppColors.primary.withValues(alpha: 0.35)
                                         : AppColors.divider,
                                   ),
                                 ),
@@ -3009,6 +3144,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             ),
                             onPressed: _isPlacingOrder
                                 ? null
+                                : _suggestionUploading
+                                ? null
                                 : () => _placeOrder(cart: cart, home: home),
                             child: _isPlacingOrder
                                 ? const SizedBox(
@@ -3091,7 +3228,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   ),
                 ),
               ),
-              if (trailing != null) trailing,
+              ?trailing,
             ],
           ),
           const SizedBox(height: AppSpacing.md),
