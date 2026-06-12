@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:purecuts/core/models/order_model.dart';
 import 'package:purecuts/core/utils/product_image_contract.dart';
 import 'package:purecuts/core/utils/tier_pricing.dart';
+import 'package:purecuts/core/services/firestore_service.dart';
 
 class CartItem {
   final String id;
@@ -86,10 +87,25 @@ class CartModel extends ChangeNotifier {
   String? _editSourceOrderRef;
   String _activeUserKey = 'guest';
   StreamSubscription<fb_auth.User?>? _authSub;
+  String _tempProductSuggestion = '';
 
   CartModel._(this._items) {
     _rebuildPreviewFromItems();
     _bindAuthChanges();
+  }
+
+  String get tempProductSuggestion => _tempProductSuggestion;
+
+  void setTempProductSuggestion(String value) {
+    if (_tempProductSuggestion != value) {
+      _tempProductSuggestion = value;
+      notifyListeners();
+    }
+  }
+
+  void clearTempProductSuggestion() {
+    _tempProductSuggestion = '';
+    notifyListeners();
   }
 
   factory CartModel.empty() => CartModel._(<CartItem>[]);
@@ -448,6 +464,7 @@ class CartModel extends ChangeNotifier {
     _items.clear();
     _previewOrder.clear();
     _hasShownFreeDeliveryUnlockPopup = false;
+    _tempProductSuggestion = '';
     clearEditSession();
     _persist();
     notifyListeners();
@@ -534,6 +551,13 @@ class CartModel extends ChangeNotifier {
         rows.map((e) => jsonEncode(e)).toList(growable: false),
       );
       await prefs.setString(_storageUserMetaKey, _activeUserKey);
+
+      if (_activeUserKey != 'guest') {
+        unawaited(FirestoreService().syncCartToFirestore(
+          uid: _activeUserKey,
+          items: _items,
+        ));
+      }
     } catch (e, st) {
       debugPrint('[CartModel] Persist failed: $e\n$st');
       // Ignore persistence failures so cart interactions remain functional.

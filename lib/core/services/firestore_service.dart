@@ -12,6 +12,7 @@ import 'package:purecuts/core/models/user_model.dart';
 import 'package:purecuts/core/constants/feature_flags.dart';
 import 'package:purecuts/core/services/performance_trace_service.dart';
 import 'package:purecuts/features/products/detail/product_models.dart';
+import 'package:purecuts/core/models/cart_model.dart';
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -23,6 +24,7 @@ class FirestoreService {
   static const String _ordersCollection = 'orders';
   static const String _productSharesCollection = 'productShares';
   static const String _productReviewsCollection = 'productReviews';
+  static const String _productSuggestionsCollection = 'productSuggestions';
   static const String _bannersCollection = 'banners';
   static const String _verificationRequestsCollection = 'verificationRequests';
   static const Duration _bannerCacheTtl = Duration(minutes: 10);
@@ -377,6 +379,11 @@ class FirestoreService {
   String _orderDocIdFromPaymentTxn(String txnId) {
     final cleaned = txnId.trim().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
     return 'payu_${cleaned.isEmpty ? 'unknown' : cleaned}';
+  }
+
+  String _editOrderDocId(String sourceKey) {
+    final cleaned = sourceKey.trim().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    return 'edit_${cleaned.isEmpty ? 'unknown' : cleaned}';
   }
 
   Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _queryOrdersByUid({
@@ -1073,6 +1080,7 @@ class FirestoreService {
     Map<String, dynamic>? contactDetails,
     String? paymentMethod,
     Map<String, dynamic>? billDetails,
+    Map<String, dynamic>? editMeta,
     Map<String, dynamic>? userProfile,
   }) async {
     final callable = _functions.httpsCallable('createCodOrder');
@@ -1103,6 +1111,7 @@ class FirestoreService {
       'billDetails': _toCallableSafeValue(
         billDetails ?? const <String, dynamic>{},
       ),
+      'editMeta': _toCallableSafeValue(editMeta ?? const <String, dynamic>{}),
       'userProfile': _toCallableSafeValue(compactProfile),
     };
 
@@ -1148,6 +1157,7 @@ class FirestoreService {
     String? paymentMethod,
     String? paymentTxnId,
     Map<String, dynamic>? billDetails,
+    Map<String, dynamic>? editMeta,
     String? orderRefOverride,
     Map<String, dynamic>? userProfile,
   }) async {
@@ -1174,6 +1184,7 @@ class FirestoreService {
           contactDetails: contactDetails,
           paymentMethod: paymentMethod,
           billDetails: billDetails,
+          editMeta: editMeta,
           userProfile: userProfile,
         );
       } on FirebaseFunctionsException catch (e) {
@@ -1204,15 +1215,73 @@ class FirestoreService {
       }
     }
 
+    final normalizedEditMeta = editMeta is Map
+        ? {
+            'isEditOrder': editMeta?['isEditOrder'] == true,
+            'sourceOrderDocumentId': (editMeta?['sourceOrderDocumentId'] ?? '')
+                .toString()
+                .trim(),
+            'sourceOrderId': (editMeta?['sourceOrderId'] ?? '')
+                .toString()
+                .trim(),
+            'sourceOrderRef': (editMeta?['sourceOrderRef'] ?? '')
+                .toString()
+                .trim(),
+            'windowHours':
+                int.tryParse((editMeta?['windowHours'] ?? '0').toString()) ?? 0,
+            'lockedQuantities': editMeta?['lockedQuantities'] is Map
+                ? Map<String, dynamic>.from(editMeta?['lockedQuantities'])
+                : <String, dynamic>{},
+            'originalCreatedAt': (editMeta?['originalCreatedAt'] ?? '')
+                .toString()
+                .trim(),
+            'originalTotalAmount':
+                int.tryParse(
+                  (editMeta?['originalTotalAmount'] ?? 0).toString(),
+                ) ??
+                0,
+            'originalItemCount':
+                int.tryParse(
+                  (editMeta?['originalItemCount'] ?? 0).toString(),
+                ) ??
+                0,
+            'originalPaymentMethod': (editMeta?['originalPaymentMethod'] ?? '')
+                .toString()
+                .trim(),
+          }
+        : null;
+
+    final sourceEditOrderRef = _normalizeOrderRef(
+      (normalizedEditMeta?['sourceOrderRef'] ?? '').toString(),
+    );
+    final sourceEditOrderDocId =
+        (normalizedEditMeta?['sourceOrderDocumentId'] ??
+                normalizedEditMeta?['sourceOrderId'] ??
+                '')
+            .toString()
+            .trim();
+    final isEditOrder =
+        normalizedEditMeta != null &&
+        normalizedEditMeta['isEditOrder'] == true &&
+        sourceEditOrderRef.isNotEmpty;
+
     DocumentReference<Map<String, dynamic>> orderDoc;
     String orderRef;
     final hasExplicitOrderRef = (orderRefOverride ?? '').trim().isNotEmpty;
-    orderDoc = _db
-        .collection(_ordersCollection)
-        .doc(_orderDocIdFromPaymentTxn(cleanPaymentTxnId));
+    if (isEditOrder && sourceEditOrderDocId.isNotEmpty) {
+      orderDoc = _db
+          .collection(_ordersCollection)
+          .doc(_editOrderDocId(sourceEditOrderDocId));
+    } else {
+      orderDoc = _db
+          .collection(_ordersCollection)
+          .doc(_orderDocIdFromPaymentTxn(cleanPaymentTxnId));
+    }
     orderRef = hasExplicitOrderRef
         ? orderRefOverride!.trim()
-        : generateOrderRef(entropy: orderDoc.id.substring(0, 6));
+        : (isEditOrder
+              ? sourceEditOrderRef
+              : generateOrderRef(entropy: orderDoc.id.substring(0, 6)));
 
     final userData = userProfile ?? const <String, dynamic>{};
     final authUser = _auth.currentUser;
@@ -1350,9 +1419,20 @@ class FirestoreService {
       'totalAmount': total,
       'grandTotal': total,
       'deliveryPlaced': true,
-      'status': 'placed',
-      'orderStatus': 'placed',
+      'status': isEditOrder ? 'edited' : 'placed',
+      'orderStatus': isEditOrder ? 'edited' : 'placed',
       'paymentStatus': cleanPaymentTxnId.isEmpty ? 'pending' : 'paid',
+      if (normalizedEditMeta != null) 'editMeta': normalizedEditMeta,
+      if (normalizedEditMeta != null)
+        'isEditOrder': normalizedEditMeta['isEditOrder'] == true,
+      if (normalizedEditMeta != null)
+        'originalOrderDocumentId': normalizedEditMeta['sourceOrderDocumentId'],
+      if (normalizedEditMeta != null)
+        'originalOrderId': normalizedEditMeta['sourceOrderId'],
+      if (normalizedEditMeta != null)
+        'originalOrderRef': normalizedEditMeta['sourceOrderRef'],
+      if (normalizedEditMeta != null)
+        'editWindowHours': normalizedEditMeta['windowHours'],
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     };
@@ -1361,7 +1441,7 @@ class FirestoreService {
     if (cleanPaymentTxnId.isNotEmpty) {
       await _db.runTransaction((tx) async {
         final existingSnap = await tx.get(orderDoc);
-        if (existingSnap.exists) {
+        if (existingSnap.exists && !isEditOrder) {
           final existing = existingSnap.data() ?? const <String, dynamic>{};
           persistedOrderRef = _firstNonEmpty([
             existing['orderRef'],
@@ -1372,10 +1452,24 @@ class FirestoreService {
           return;
         }
 
-        tx.set(orderDoc, payload, SetOptions(merge: false));
+        tx.set(orderDoc, payload, SetOptions(merge: isEditOrder));
       });
     } else {
       await orderDoc.set(payload);
+    }
+
+    final sourceOrderDocumentId =
+        (normalizedEditMeta?['sourceOrderDocumentId'] ?? '').toString().trim();
+    if (sourceOrderDocumentId.isNotEmpty &&
+        sourceOrderDocumentId != orderDoc.id) {
+      await _db.collection(_ordersCollection).doc(sourceOrderDocumentId).set({
+        'status': 'edited',
+        'orderStatus': 'edited',
+        'editedAt': FieldValue.serverTimestamp(),
+        'editedByOrderId': persistedOrderRef,
+        'editedByOrderDocumentId': orderDoc.id,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
     }
 
     unawaited(
@@ -1415,6 +1509,12 @@ class FirestoreService {
         ? '000000'
         : source.padRight(6, '0').substring(0, 6);
     return 'PC-$ymd-$suffix';
+  }
+
+  String _normalizeOrderRef(String value) {
+    final clean = value.trim();
+    if (clean.isEmpty) return '';
+    return clean.startsWith('#') ? clean.substring(1).trim() : clean;
   }
 
   /// Fetch user orders from Firestore
@@ -2017,6 +2117,173 @@ class FirestoreService {
     return uploaded;
   }
 
+  Future<Map<String, String>> uploadProductSuggestionImage({
+    required String uid,
+    required XFile file,
+    ValueChanged<double>? onProgress,
+  }) async {
+    final cleanUid = uid.trim();
+    if (cleanUid.isEmpty) {
+      throw StateError(
+        'User uid is required to upload product suggestion media.',
+      );
+    }
+
+    final lower = file.name.toLowerCase();
+    final isImage =
+        lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.gif');
+
+    if (!isImage) {
+      throw StateError(
+        'Only image files are supported for product suggestions.',
+      );
+    }
+
+    final ext = file.name.contains('.')
+        ? file.name.substring(file.name.lastIndexOf('.'))
+        : '.jpg';
+    final safeName = file.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+    final storagePath =
+        'productSuggestions/$cleanUid/${DateTime.now().millisecondsSinceEpoch}_$safeName';
+
+    final rawBytes = await file.readAsBytes();
+    final uploadBytes = await _compressImageForUpload(rawBytes);
+    final task = _storage
+        .ref(storagePath)
+        .putData(
+          uploadBytes,
+          SettableMetadata(
+            contentType:
+                'image/${ext.replaceFirst('.', '').toLowerCase() == 'png' ? 'png' : 'jpeg'}',
+            cacheControl: 'public,max-age=31536000,immutable',
+          ),
+        );
+
+    final sub = task.snapshotEvents.listen((snapshot) {
+      final total = snapshot.totalBytes;
+      final progress = total > 0
+          ? (snapshot.bytesTransferred / total).clamp(0.0, 1.0)
+          : 0.0;
+      onProgress?.call(progress);
+    });
+
+    final snap = await task;
+    await sub.cancel();
+    onProgress?.call(1.0);
+
+    return {
+      'imageUrl': await snap.ref.getDownloadURL(),
+      'imagePath': storagePath,
+    };
+  }
+
+  Future<String> createProductSuggestion({
+    required String uid,
+    required String text,
+    required String orderRef,
+    required String orderId,
+    String imageUrl = '',
+    String imagePath = '',
+    String status = 'submitted',
+    Map<String, dynamic>? meta,
+  }) async {
+    final cleanUid = uid.trim();
+    final cleanText = text.trim();
+    final cleanOrderRef = orderRef.trim();
+    final cleanOrderId = orderId.trim();
+
+    if (cleanUid.isEmpty ||
+        cleanText.isEmpty ||
+        cleanOrderRef.isEmpty ||
+        cleanOrderId.isEmpty) {
+      throw StateError('Missing product suggestion fields.');
+    }
+
+    final payload = {
+      'uid': cleanUid,
+      'text': cleanText,
+      'imageUrl': imageUrl.trim(),
+      'imagePath': imagePath.trim(),
+      'orderRef': cleanOrderRef,
+      'orderId': cleanOrderId,
+      'status': status.trim().isEmpty ? 'submitted' : status.trim(),
+      'adminNotes': '',
+      if (meta != null && meta.isNotEmpty) 'meta': meta,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+
+    final ref = await _db
+        .collection(_productSuggestionsCollection)
+        .add(payload);
+    return ref.id;
+  }
+
+  Future<List<Map<String, dynamic>>> getProductSuggestionsPage({
+    int limit = 25,
+    DocumentSnapshot<Map<String, dynamic>>? startAfterDoc,
+  }) async {
+    final safeLimit = _clampLimit(value: limit, fallback: 25, max: 100);
+    Query<Map<String, dynamic>> query = _db
+        .collection(_productSuggestionsCollection)
+        .orderBy('createdAt', descending: true)
+        .limit(safeLimit);
+
+    if (startAfterDoc != null) {
+      query = query.startAfterDocument(startAfterDoc);
+    }
+
+    try {
+      final snap = await query.get();
+      return snap.docs
+          .map((doc) => {'id': doc.id, ...doc.data()})
+          .toList(growable: false);
+    } catch (_) {
+      final snap = await _db.collection(_productSuggestionsCollection).get();
+      final rows = snap.docs
+          .map((doc) => {'id': doc.id, ...doc.data()})
+          .toList(growable: false);
+      rows.sort(
+        (a, b) =>
+            _toDateSafe(b['createdAt']).compareTo(_toDateSafe(a['createdAt'])),
+      );
+      return rows.length > safeLimit ? rows.sublist(0, safeLimit) : rows;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getProductSuggestionById(String id) async {
+    final cleanId = id.trim();
+    if (cleanId.isEmpty) return null;
+    final snap = await _db
+        .collection(_productSuggestionsCollection)
+        .doc(cleanId)
+        .get();
+    if (!snap.exists) return null;
+    return {'id': snap.id, ...snap.data()!};
+  }
+
+  Future<void> updateProductSuggestion(
+    String id,
+    Map<String, dynamic> data,
+  ) async {
+    final cleanId = id.trim();
+    if (cleanId.isEmpty || data.isEmpty) return;
+    await _db.collection(_productSuggestionsCollection).doc(cleanId).set({
+      ...data,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> deleteProductSuggestion(String id) async {
+    final cleanId = id.trim();
+    if (cleanId.isEmpty) return;
+    await _db.collection(_productSuggestionsCollection).doc(cleanId).delete();
+  }
+
   Future<void> submitProductReview({
     required String uid,
     required String productId,
@@ -2109,6 +2376,115 @@ class FirestoreService {
           .delete();
     } catch (_) {
       // Keep delete resilient if mirror doc is missing.
+    }
+  }
+
+  Future<void> subscribeToBackInStock({
+    required String uid,
+    required String fcmToken,
+    required String productId,
+    required String variantId,
+    required String productName,
+    required String variantName,
+  }) async {
+    final cleanUid = uid.trim();
+    final cleanProductId = _baseProductId(productId);
+    final cleanVariantId = variantId.trim();
+    if (cleanUid.isEmpty || cleanProductId.isEmpty) return;
+
+    final subId = '${cleanUid}_${cleanProductId}_$cleanVariantId';
+
+    await _db.collection('backInStockSubscriptions').doc(subId).set({
+      'userId': cleanUid,
+      'fcmToken': fcmToken.trim(),
+      'productId': cleanProductId,
+      'variantId': cleanVariantId,
+      'productName': productName.trim(),
+      'variantName': variantName.trim(),
+      'createdAt': FieldValue.serverTimestamp(),
+      'notified': false,
+    });
+  }
+
+  Future<bool> isSubscribedToBackInStock({
+    required String uid,
+    required String productId,
+    required String variantId,
+  }) async {
+    final cleanUid = uid.trim();
+    final cleanProductId = _baseProductId(productId);
+    final cleanVariantId = variantId.trim();
+    if (cleanUid.isEmpty || cleanProductId.isEmpty) return false;
+
+    final subId = '${cleanUid}_${cleanProductId}_$cleanVariantId';
+    final doc = await _db.collection('backInStockSubscriptions').doc(subId).get();
+    if (!doc.exists) return false;
+    final data = doc.data();
+    return data != null && data['notified'] == false;
+  }
+
+  Future<void> syncCartToFirestore({
+    required String uid,
+    required List<CartItem> items,
+  }) async {
+    final cleanUid = uid.trim();
+    if (cleanUid.isEmpty || cleanUid == 'guest') return;
+
+    try {
+      final cartRef = _db.collection('carts').doc(cleanUid);
+      if (items.isEmpty) {
+        await cartRef.set({
+          'userId': cleanUid,
+          'itemsCount': 0,
+          'items': [],
+          'updatedAt': FieldValue.serverTimestamp(),
+          'lastActiveAt': FieldValue.serverTimestamp(),
+          'notified': false,
+        }, SetOptions(merge: true));
+      } else {
+        await cartRef.set({
+          'userId': cleanUid,
+          'itemsCount': items.fold<int>(0, (sum, item) => sum + item.quantity),
+          'items': items.map((e) => e.toMap()).toList(),
+          'updatedAt': FieldValue.serverTimestamp(),
+          'lastActiveAt': FieldValue.serverTimestamp(),
+          'notified': false,
+        }, SetOptions(merge: true));
+      }
+    } catch (e, st) {
+      debugPrint('[FirestoreService] syncCartToFirestore failed: $e\n$st');
+    }
+  }
+
+  Future<void> updateCartActivity({
+    required String uid,
+    required bool isResumed,
+  }) async {
+    final cleanUid = uid.trim();
+    if (cleanUid.isEmpty || cleanUid == 'guest') return;
+
+    try {
+      final cartRef = _db.collection('carts').doc(cleanUid);
+      final doc = await cartRef.get();
+      if (!doc.exists) return;
+
+      final data = doc.data() ?? {};
+      final itemsCount = data['itemsCount'] ?? 0;
+      if (itemsCount <= 0) return;
+
+      if (isResumed) {
+        await cartRef.update({
+          'lastActiveAt': FieldValue.serverTimestamp(),
+          'notified': true,
+        });
+      } else {
+        await cartRef.update({
+          'lastActiveAt': FieldValue.serverTimestamp(),
+          'notified': false,
+        });
+      }
+    } catch (e, st) {
+      debugPrint('[FirestoreService] updateCartActivity failed: $e\n$st');
     }
   }
 }

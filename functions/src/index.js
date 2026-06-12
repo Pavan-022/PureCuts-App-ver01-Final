@@ -16,6 +16,8 @@ const {
 } = require("./dashboardMetrics");
 const { paymentApi } = require("./payment/paymentHandler");
 const { createCodOrder } = require("./codOrder");
+const { onBackInStockTrigger } = require("./notifications/backInStockTrigger");
+const { onAbandonedCartScheduler } = require("./notifications/abandonedCartTrigger");
 
 exports.onSupportMessageCreated = onSupportMessageCreated;
 exports.setAdminClaims = setAdminClaims;
@@ -32,3 +34,5 @@ exports.rebuildOrderCounters = rebuildOrderCounters;
 exports.paymentApi = paymentApi;
 exports.reconcileSuccessfulPayments = reconcileSuccessfulPayments;
 exports.createCodOrder = createCodOrder;
+exports.onBackInStockTrigger = onBackInStockTrigger;
+exports.onAbandonedCartScheduler = onAbandonedCartScheduler;

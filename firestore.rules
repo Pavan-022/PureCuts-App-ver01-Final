@@ -280,6 +280,19 @@ service cloud.firestore {
       }
     }
 
+    // --- Back In Stock Subscriptions ---
+    match /backInStockSubscriptions/{subId} {
+      allow create: if signedIn() && request.auth.uid == request.resource.data.userId;
+      allow read: if signedIn() && (subId.startsWith(request.auth.uid + "_") || isAdmin());
+      allow update: if isAdmin() || (signedIn() && request.auth.uid == request.resource.data.userId);
+      allow delete: if isAdmin() || (signedIn() && subId.startsWith(request.auth.uid + "_"));
+    }
+
+    // --- User Carts ---
+    match /carts/{uid} {
+      allow read, write: if isOwner(uid) || isAdmin();
+    }
+
     // Deny everything else by default
     match /{document=**} {
       allow read, write: if false;

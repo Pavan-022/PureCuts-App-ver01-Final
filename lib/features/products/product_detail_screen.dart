@@ -23,6 +23,8 @@ import 'package:purecuts/features/products/product_list_screen.dart';
 import 'package:purecuts/features/support_chat/widgets/support_chat_fab.dart';
 import 'package:purecuts/core/utils/tier_pricing.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 class ProductDetailScreen extends StatefulWidget {
   final Map<String, dynamic> product;
@@ -61,6 +63,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   int _bulkConfirmedQty = 0;
   Map<String, dynamic> _resolvedProductMap = <String, dynamic>{};
   bool _didAutoOpenBulkOrderSheet = false;
+  bool _isSubscribedToBackInStock = false;
+  bool _checkingSubscription = false;
+  String? _lastCheckedVariantId;
+  bool _hasCheckedSubscriptionOnce = false;
   Timer? _bulkHintHideTimer;
   Timer? _bulkHintRotateTimer;
 
@@ -132,6 +138,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       _syncCarouselToSelectedImage();
       _scrollToImageSection();
     });
+
+    final currentVarId = (_selectedVariant?.id ?? '').trim();
+    if (!_hasCheckedSubscriptionOnce || _lastCheckedVariantId != currentVarId) {
+      _hasCheckedSubscriptionOnce = true;
+      _lastCheckedVariantId = currentVarId;
+      unawaited(_checkSubscriptionStatus());
+    }
   }
 
   void _onVariantSelected(ProductVariant variant) {
@@ -207,6 +220,114 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     } catch (e) {
     } finally {
       if (mounted) setState(() => _loadingDetail = false);
+    }
+  }
+
+  Future<void> _checkSubscriptionStatus() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      if (mounted) {
+        setState(() {
+          _isSubscribedToBackInStock = false;
+        });
+      }
+      return;
+    }
+
+    final productId = _product.id;
+    final variantId = (_selectedVariant?.id ?? '').trim();
+
+    if (mounted) {
+      setState(() {
+        _checkingSubscription = true;
+      });
+    }
+
+    try {
+      final subbed = await _firestoreService.isSubscribedToBackInStock(
+        uid: uid,
+        productId: productId,
+        variantId: variantId,
+      );
+      if (mounted) {
+        setState(() {
+          _isSubscribedToBackInStock = subbed;
+        });
+      }
+    } catch (_) {
+    } finally {
+      if (mounted) {
+        setState(() {
+          _checkingSubscription = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _handleNotifyMeTap() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please log in to receive availability notifications.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    final productId = _product.id;
+    final variantId = (_selectedVariant?.id ?? '').trim();
+    final productName = _product.name;
+    final variantName = (_selectedVariant?.shadeName ?? '').trim();
+
+    setState(() => _checkingSubscription = true);
+
+    try {
+      final fcmToken = await FirebaseMessaging.instance.getToken();
+      if (fcmToken == null || fcmToken.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not register device for notifications. Please try again.'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      await _firestoreService.subscribeToBackInStock(
+        uid: uid,
+        fcmToken: fcmToken,
+        productId: productId,
+        variantId: variantId,
+        productName: productName,
+        variantName: variantName,
+      );
+
+      if (mounted) {
+        setState(() {
+          _isSubscribedToBackInStock = true;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('We will notify you as soon as this product is back in stock! 🎉'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Subscription failed: ${e.toString()}'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _checkingSubscription = false);
+      }
     }
   }
 
@@ -2346,6 +2467,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         pricingType: _effectivePricingType,
         pricingTiers: effectiveTiers,
         isOutOfStock: _isOutOfStock,
+        isSubscribed: _isSubscribedToBackInStock,
+        checkingSubscription: _checkingSubscription,
+        onNotifyMeTap: _handleNotifyMeTap,
         onBulkOrderTap: _onBulkOrderPressed,
         onManualQuantityChange: _invalidateBulkConfirmation,
         bulkConfirmedCartItemId: _bulkConfirmedCartItemId,
@@ -3892,6 +4016,9 @@ class _BottomCartBar extends StatelessWidget {
   final String pricingType;
   final List<PricingTier> pricingTiers;
   final bool isOutOfStock;
+  final bool isSubscribed;
+  final bool checkingSubscription;
+  final VoidCallback onNotifyMeTap;
   final VoidCallback? onBulkOrderTap;
   final VoidCallback? onManualQuantityChange;
   final String? bulkConfirmedCartItemId;
@@ -3905,6 +4032,9 @@ class _BottomCartBar extends StatelessWidget {
     required this.pricingType,
     required this.pricingTiers,
     required this.isOutOfStock,
+    required this.isSubscribed,
+    required this.checkingSubscription,
+    required this.onNotifyMeTap,
     this.onBulkOrderTap,
     this.onManualQuantityChange,
     this.bulkConfirmedCartItemId,
@@ -3998,23 +4128,44 @@ class _BottomCartBar extends StatelessWidget {
                   ],
                 )
               : SizedBox(
-                  width: qty == 0 ? 170 : 225,
+                  width: isOutOfStock ? 195 : (qty == 0 ? 170 : 225),
                   height: 50,
                   child: isOutOfStock
-                      ? ElevatedButton(
+                      ? ElevatedButton.icon(
+                          icon: checkingSubscription
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                  ),
+                                )
+                              : isSubscribed
+                                  ? const Icon(Icons.check_rounded, size: 16)
+                                  : const Icon(Icons.notifications_active_outlined, size: 16),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFBDBDBD),
+                            backgroundColor: isSubscribed ? const Color(0xFF10B981) : AppColors.primary,
                             foregroundColor: Colors.white,
                             elevation: 0,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14),
                             ),
                           ),
-                          onPressed: null,
-                          child: const Text(
-                            'Out of stock',
-                            style: TextStyle(
-                              fontSize: 15,
+                          onPressed: checkingSubscription
+                              ? null
+                              : isSubscribed
+                                  ? null
+                                  : onNotifyMeTap,
+                          label: Text(
+                            checkingSubscription
+                                ? 'Checking...'
+                                : isSubscribed
+                                    ? 'You\'ll be notified'
+                                    : 'Notify me when available',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 11.5,
                               fontWeight: FontWeight.w700,
                             ),
                           ),

@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:math';
 
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
@@ -16,6 +16,7 @@ import 'package:purecuts/core/utils/tier_pricing.dart';
 import 'package:purecuts/core/utils/variant_selection_guard.dart';
 import 'package:purecuts/core/widgets/product_card.dart';
 import 'package:purecuts/core/widgets/shimmer_widgets.dart';
+import 'package:purecuts/core/widgets/home_loading_overlay.dart';
 import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/features/auth/providers/auth_provider.dart';
@@ -73,7 +74,6 @@ class _HomeScreenState extends State<HomeScreen>
   bool _speechReady = false;
   bool _isListening = false;
   bool _speechDialogVisible = false;
-  bool _showAllPopularProducts = false;
   String? _speechLocaleId;
   ValueNotifier<String>? _activeTranscript;
   bool _pendingVoiceSubmit = false;
@@ -84,6 +84,8 @@ class _HomeScreenState extends State<HomeScreen>
   int _hotDealsShuffleSeed = DateTime.now().microsecondsSinceEpoch;
   int _recommendedShuffleSeed = DateTime.now().microsecondsSinceEpoch + 1;
   bool _stickyThresholdRecalcQueued = false;
+  bool _minimumLoadingTimeElapsed = false;
+  Timer? _initialLoadingTimer;
 
   static const int _maxPayuRecoveryPollAttempts = 20;
   static const Duration _payuRecoveryPollInterval = Duration(seconds: 3);
@@ -983,6 +985,19 @@ class _HomeScreenState extends State<HomeScreen>
     _initSpeech();
     _contentScrollController.addListener(_updateStickyCategories);
 
+    final home = context.read<HomeProvider>();
+    if (home.productMaps.isNotEmpty && !home.loading) {
+      _minimumLoadingTimeElapsed = true;
+    } else {
+      _initialLoadingTimer = Timer(const Duration(milliseconds: 1500), () {
+        if (mounted) {
+          setState(() {
+            _minimumLoadingTimeElapsed = true;
+          });
+        }
+      });
+    }
+
     _authStateSub = fb_auth.FirebaseAuth.instance.authStateChanges().listen((
       user,
     ) {
@@ -1022,6 +1037,16 @@ class _HomeScreenState extends State<HomeScreen>
         });
       }
       unawaited(_resolvePayuRecoveryAction(force: true));
+
+      final uid = context.read<AuthProvider>().user?.uid;
+      if (uid != null && uid.isNotEmpty) {
+        unawaited(_firestoreService.updateCartActivity(uid: uid, isResumed: true));
+      }
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      final uid = context.read<AuthProvider>().user?.uid;
+      if (uid != null && uid.isNotEmpty) {
+        unawaited(_firestoreService.updateCartActivity(uid: uid, isResumed: false));
+      }
     }
   }
 
@@ -1232,6 +1257,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
+    _initialLoadingTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _authStateSub?.cancel();
     _payuRecoveryRetryTimer?.cancel();
@@ -1457,6 +1483,9 @@ class _HomeScreenState extends State<HomeScreen>
     final home = context.watch<HomeProvider>();
     final screenHeight = MediaQuery.of(context).size.height;
 
+    final isDataAlreadyFetched = home.productMaps.isNotEmpty && !home.loading;
+    final showOverlay = !isDataAlreadyFetched && (!_minimumLoadingTimeElapsed || home.loading);
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: Stack(
@@ -1496,7 +1525,10 @@ class _HomeScreenState extends State<HomeScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         _buildHeader(),
-                        home.loading ? _buildShimmer() : _buildContent(home),
+                        if (home.loading && home.productMaps.isEmpty)
+                          _buildShimmer()
+                        else
+                          _buildContent(home),
                       ],
                     ),
                   ),
@@ -1552,6 +1584,15 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
               ],
+            ),
+          ),
+          // Full-screen animated loading overlay — sits on top of everything
+          Positioned.fill(
+            child: IgnorePointer(
+              ignoring: !showOverlay,
+              child: HomeLoadingOverlay(
+                visible: showOverlay,
+              ),
             ),
           ),
         ],
@@ -1932,9 +1973,7 @@ class _HomeScreenState extends State<HomeScreen>
               ? popularFallbackItems
               : unassignedProducts);
     final popularDisplayItems = _sortProductsByRecency(popularBaseItems);
-    final visiblePopularItems = _showAllPopularProducts
-        ? popularDisplayItems
-        : popularDisplayItems.take(8).toList(growable: false);
+    final visiblePopularItems = popularDisplayItems.take(8).toList(growable: false);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1986,7 +2025,7 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               SizedBox(
-                height: 200,
+                height: 202,
                 child: ListView.separated(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                   scrollDirection: Axis.horizontal,
@@ -2010,7 +2049,17 @@ class _HomeScreenState extends State<HomeScreen>
         _buildMostBought(mostBoughtDisplayItems),
         const SizedBox(height: 20),
         // Popular Products grid
-        _buildSectionHeader('Popular Products', 'See all'),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: const Text(
+            'Popular Products',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
         const SizedBox(height: 12),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -2040,17 +2089,17 @@ class _HomeScreenState extends State<HomeScreen>
             },
           ),
         ),
-        if (popularDisplayItems.length > 8)
+        if (popularDisplayItems.length > 8) ...[
+          const SizedBox(height: 16),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Align(
               alignment: Alignment.center,
               child: OutlinedButton(
-                onPressed: () {
-                  setState(() {
-                    _showAllPopularProducts = !_showAllPopularProducts;
-                  });
-                },
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ProductListScreen()),
+                ),
                 style: OutlinedButton.styleFrom(
                   side: const BorderSide(color: Color(0xFFE1D8FF)),
                   foregroundColor: AppColors.primary,
@@ -2062,11 +2111,9 @@ class _HomeScreenState extends State<HomeScreen>
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
-                child: Text(
-                  _showAllPopularProducts
-                      ? 'Show less popular products'
-                      : 'View all popular products',
-                  style: const TextStyle(
+                child: const Text(
+                  'See all products',
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
@@ -2074,6 +2121,7 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
           ),
+        ],
         const SizedBox(height: 100),
       ],
     );
@@ -2327,7 +2375,7 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildCategoriesGrid(HomeProvider home) {
     final cats = home.categories;
     return SizedBox(
-      height: 108,
+      height: 112,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
@@ -2656,7 +2704,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildRecentlyOrdered(List<Map<String, dynamic>> products) {
     return SizedBox(
-      height: 165,
+      height: 172,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
