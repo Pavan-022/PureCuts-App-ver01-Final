@@ -1,10 +1,11 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/core/theme/spacing.dart';
 import 'package:purecuts/core/models/cart_model.dart';
 import 'package:purecuts/core/utils/tier_pricing.dart';
+import 'package:purecuts/features/main_nav/main_nav_screen.dart';
 import 'package:purecuts/features/orders/checkout_screen.dart';
 import 'package:purecuts/features/products/product_detail_screen.dart';
 
@@ -115,12 +116,92 @@ class CartScreen extends StatelessWidget {
 
           final tax = (cart.totalPrice * 0.08).round();
           final grandTotal = cart.totalPrice + tax;
+          final isEditMode = cart.isEditSessionActive;
 
           return Stack(
             children: [
               ListView(
                 padding: const EdgeInsets.only(bottom: 140),
                 children: [
+                  if (isEditMode)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpacing.lg,
+                        AppSpacing.md,
+                        AppSpacing.lg,
+                        AppSpacing.sm,
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.all(AppSpacing.md),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF7F2FF),
+                          borderRadius: BorderRadius.circular(AppRadius.xl),
+                          border: Border.all(color: const Color(0xFFE3D4F4)),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(
+                              Icons.edit_outlined,
+                              color: AppColors.primary,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Edit mode: the original order items are locked. You can add more products, and only the added items will be charged.',
+                                style: const TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 12.5,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (isEditMode)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpacing.lg,
+                        0,
+                        AppSpacing.lg,
+                        AppSpacing.sm,
+                      ),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: AppColors.primary),
+                            foregroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 12,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(AppRadius.lg),
+                            ),
+                          ),
+                          onPressed: () {
+                            Navigator.of(context).pushAndRemoveUntil(
+                              MaterialPageRoute(
+                                builder: (_) => const MainNavScreen(),
+                              ),
+                              (route) => false,
+                            );
+                          },
+                          icon: const Icon(
+                            Icons.add_shopping_cart_rounded,
+                            size: 18,
+                          ),
+                          label: const Text(
+                            'Add More Items',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                    ),
                   const SizedBox(height: AppSpacing.sm),
                   // Cart items
                   ...cart.items.map((item) => _CartItem(item: item)),
@@ -332,12 +413,14 @@ class CartScreen extends StatelessWidget {
                               builder: (_) => const CheckoutScreen(),
                             ),
                           ),
-                          child: const Row(
+                          child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Text(
-                                'Proceed to Checkout',
-                                style: TextStyle(
+                                isEditMode
+                                    ? 'Continue Edit Order'
+                                    : 'Proceed to Checkout',
+                                style: const TextStyle(
                                   fontWeight: FontWeight.w700,
                                   fontSize: 15,
                                 ),
@@ -412,6 +495,8 @@ class _CartItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cart = context.watch<CartModel>();
+    final locked = cart.isLockedItem(item.id);
     final triggerQty = _bulkTriggerQty();
     final bulkReached =
         triggerQty != null && (item.quantity as int) >= triggerQty;
@@ -480,12 +565,14 @@ class _CartItem extends StatelessWidget {
                         ),
                       ),
                       GestureDetector(
-                        onTap: () {
-                          final cart = context.read<CartModel>();
-                          for (int i = 0; i < item.quantity; i++) {
-                            cart.remove(item.id);
-                          }
-                        },
+                        onTap: locked
+                            ? null
+                            : () {
+                                final cartModel = context.read<CartModel>();
+                                for (int i = 0; i < item.quantity; i++) {
+                                  cartModel.remove(item.id);
+                                }
+                              },
                         child: const Padding(
                           padding: EdgeInsets.only(left: 8),
                           child: Icon(
@@ -562,6 +649,10 @@ class _CartItem extends StatelessWidget {
                                     () => context.read<CartModel>().remove(
                                       item.id,
                                     ),
+                                    enabled:
+                                        !locked ||
+                                        item.quantity >
+                                            cart.lockedQuantityOf(item.id),
                                   ),
                                   SizedBox(
                                     width: 30,
@@ -618,13 +709,17 @@ class _CartItem extends StatelessWidget {
     );
   }
 
-  Widget _qtyBtn(IconData icon, VoidCallback onTap) {
+  Widget _qtyBtn(IconData icon, VoidCallback onTap, {bool enabled = true}) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: enabled ? onTap : null,
       child: SizedBox(
         width: 32,
         height: 32,
-        child: Icon(icon, color: AppColors.textSecondary, size: 14),
+        child: Icon(
+          icon,
+          color: enabled ? AppColors.textSecondary : AppColors.textHint,
+          size: 14,
+        ),
       ),
     );
   }

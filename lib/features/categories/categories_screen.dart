@@ -70,12 +70,14 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final home = context.read<HomeProvider>();
+      // Load initial data, but pre-load full catalog in background without blocking UI
       unawaited(
         Future<void>(() async {
           await home.loadData();
-          await home.ensureVisibilityCatalogLoaded();
         }),
       );
+      // Start full catalog load in background (don't await to avoid blocking UI)
+      unawaited(home.ensureVisibilityCatalogLoaded());
     });
     _resolvePurchasedProducts();
     _initSpeech();
@@ -434,7 +436,8 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   Future<void> _refreshCategories() async {
     final home = context.read<HomeProvider>();
     await home.loadData(forceRefresh: true);
-    await home.ensureVisibilityCatalogLoaded();
+    // Start full catalog refresh in background without blocking refresh indicator
+    unawaited(home.ensureVisibilityCatalogLoaded());
   }
 
   @override

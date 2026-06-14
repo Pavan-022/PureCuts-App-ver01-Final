@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -10,6 +10,7 @@ import 'package:purecuts/core/widgets/shimmer_widgets.dart';
 import 'package:purecuts/core/widgets/sticky_cart_bar.dart';
 import 'package:purecuts/features/home/home_provider.dart';
 import 'package:purecuts/features/support_chat/widgets/support_chat_fab.dart';
+import 'package:purecuts/features/categories/parent_category_screen.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class ProductListScreen extends StatefulWidget {
@@ -874,7 +875,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
     var launched = false;
     _pendingVoiceSearch = true;
     await _speech.cancel();
-    final started = await _speech.listen(
+    final bool started = (await _speech.listen(
       listenOptions: stt.SpeechListenOptions(
         listenMode: stt.ListenMode.search,
         partialResults: true,
@@ -898,9 +899,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
         launched = true;
         _submitVoiceQuery(spoken);
       },
-    );
+    )) ?? false;
 
-    if (!started) {
+    if (started != true) {
       _pendingVoiceSearch = false;
       _closeSpeechDialog();
       _activeTranscript = null;
@@ -1168,7 +1169,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
       hasQuery: hasQuery,
     );
 
-    if (_shouldHydrateForQuery(_searchQuery) &&
+    final hasCategoryFilter = _selectedCategory.trim().toLowerCase() != 'all';
+    if ((_shouldHydrateForQuery(_searchQuery) || hasCategoryFilter) &&
         products.isEmpty &&
         !_isInitialLoading &&
         !_isSearchHydrating &&
@@ -1182,6 +1184,18 @@ class _ProductListScreenState extends State<ProductListScreen> {
     _sortProductsForDisplay(products, hasQuery: hasQuery);
 
     final displayedProducts = products;
+
+    final totalSourceProducts = _buildSourceProducts(
+      home,
+      shouldUseExpandedPool: true,
+    );
+    final totalScopedProducts = _applyScopedFilters(totalSourceProducts);
+    final totalProductsList = _applyQueryFallbackIfNeeded(
+      totalSourceProducts,
+      totalScopedProducts,
+      hasQuery: hasQuery,
+    );
+    final totalCount = totalProductsList.length;
 
     final title = (_selectedTag ?? '').trim().isNotEmpty
         ? _selectedTag!
@@ -1323,6 +1337,62 @@ class _ProductListScreenState extends State<ProductListScreen> {
             ),
           ),
 
+          // Category chips selector
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.only(bottom: 12),
+            child: SizedBox(
+              height: 38,
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                scrollDirection: Axis.horizontal,
+                itemCount: categories.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                 itemBuilder: (context, index) {
+                   final category = categories[index];
+                   final isSelected = _selectedCategory == category;
+                   return GestureDetector(
+                     onTap: () {
+                       if (category == 'All') {
+                         setState(() {
+                           _selectedCategory = 'All';
+                         });
+                         _loadFirstPage();
+                       } else {
+                         Navigator.push(
+                           context,
+                           MaterialPageRoute(
+                             builder: (_) => ParentCategoryScreen(categoryName: category),
+                           ),
+                         );
+                       }
+                     },
+                     child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: isSelected ? AppColors.primary : AppColors.background,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: isSelected ? AppColors.primary : const Color(0xFFE5E7EB),
+                          width: 1,
+                        ),
+                      ),
+                      child: Text(
+                        category,
+                        style: TextStyle(
+                          color: isSelected ? Colors.white : AppColors.textPrimary,
+                          fontSize: 12,
+                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+
           // Category chips
           if ((_selectedBrand ?? '').trim().isNotEmpty)
             Padding(
@@ -1398,9 +1468,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
             child: Row(
               children: [
                 Text(
-                  (_isSearchHydrating || _isEmergencyHydrating)
-                      ? '${displayedProducts.length} products • loading more products...'
-                      : '${displayedProducts.length} products',
+                  (_isSearchHydrating || _isEmergencyHydrating || _isPageLoading)
+                      ? '$totalCount products • loading...'
+                      : '$totalCount products',
                   style: const TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 13,
@@ -1471,21 +1541,46 @@ class _ProductListScreenState extends State<ProductListScreen> {
                         ),
                       ],
                     )
-                  : GridView.builder(
+                  : CustomScrollView(
                       controller: _scrollController,
                       physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            mainAxisSpacing: 12,
-                            crossAxisSpacing: 12,
-                            childAspectRatio: 0.65,
+                      slivers: [
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                          sliver: SliverGrid(
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2,
+                              mainAxisSpacing: 12,
+                              crossAxisSpacing: 12,
+                              childAspectRatio: 0.65,
+                            ),
+                            delegate: SliverChildBuilderDelegate(
+                              (context, i) =>
+                                  ProductCard(product: displayedProducts[i]),
+                              childCount: displayedProducts.length,
+                            ),
                           ),
-                      itemCount: displayedProducts.length,
-                      itemBuilder: (_, i) {
-                        return ProductCard(product: displayedProducts[i]);
-                      },
+                        ),
+                        if (_isPageLoading)
+                          const SliverToBoxAdapter(
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(vertical: 24),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      AppColors.primary,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
             ),
           ),

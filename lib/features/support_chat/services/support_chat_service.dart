@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 
 class SupportChatService {
@@ -58,22 +59,35 @@ class SupportChatService {
     if (cleanUid.isEmpty) {
       throw ArgumentError('uid cannot be empty');
     }
+    // Guard: ensure the current authenticated user matches the provided UID.
+    final currentUid = fb_auth.FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (currentUid.isEmpty || currentUid != cleanUid) {
+      throw FirebaseException(
+        plugin: 'firebase_auth',
+        message: 'Authenticated user mismatch: expected $cleanUid, got $currentUid',
+      );
+    }
 
     final chatId = chatIdForUser(cleanUid);
     final chatRef = _chats.doc(chatId);
 
-    await chatRef.set({
-      'chatId': chatId,
-      'type': 'support',
-      'participants': [cleanUid, _adminId],
-      'userId': cleanUid,
-      'adminId': _adminId,
-      'userName': (userName ?? '').trim(),
-      'userEmail': (userEmail ?? '').trim(),
-      'userPhone': (userPhone ?? '').trim(),
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    try {
+      await chatRef.set({
+        'chatId': chatId,
+        'type': 'support',
+        'participants': [cleanUid, _adminId],
+        'userId': cleanUid,
+        'adminId': _adminId,
+        'userName': (userName ?? '').trim(),
+        'userEmail': (userEmail ?? '').trim(),
+        'userPhone': (userPhone ?? '').trim(),
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      if (e is FirebaseException) rethrow;
+      throw FirebaseException(plugin: 'support_chat', message: e.toString());
+    }
 
     return chatId;
   }

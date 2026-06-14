@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
 class OrderModel {
+  static const int editWindowHours = 12;
+
   final String orderDocumentId;
   final String orderId;
   final String uid;
@@ -15,6 +17,10 @@ class OrderModel {
   final int itemCount;
   final String paymentMethod;
   final Map<String, dynamic>? billDetails;
+  final Map<String, dynamic>? editMeta;
+  final String? originalOrderDocumentId;
+  final String? originalOrderId;
+  final String? originalOrderRef;
   final String status;
   final DateTime createdAt;
   final DateTime? updatedAt;
@@ -33,12 +39,25 @@ class OrderModel {
     required this.itemCount,
     required this.paymentMethod,
     this.billDetails,
+    this.editMeta,
+    this.originalOrderDocumentId,
+    this.originalOrderId,
+    this.originalOrderRef,
     required this.status,
     required this.createdAt,
     this.updatedAt,
   });
 
   factory OrderModel.fromMap(Map<String, dynamic> map) {
+    DateTime _toDate(dynamic value) {
+      if (value is Timestamp) return value.toDate();
+      if (value is DateTime) return value;
+      if (value is num)
+        return DateTime.fromMillisecondsSinceEpoch(value.toInt());
+      if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
+      return DateTime.now();
+    }
+
     final rawItems = (map['items'] as List?) ?? const [];
     final normalizedItems = rawItems
         .whereType<Map>()
@@ -57,6 +76,30 @@ class OrderModel {
         .toString()
         .trim()
         .toLowerCase();
+
+    final editMeta = map['editMeta'] is Map
+        ? Map<String, dynamic>.from(map['editMeta'])
+        : null;
+    final originalOrderDocumentId =
+        (map['originalOrderDocumentId'] ??
+                editMeta?['sourceOrderDocumentId'] ??
+                '')
+            .toString()
+            .trim();
+    final originalOrderId =
+        (map['originalOrderId'] ??
+                map['sourceOrderId'] ??
+                editMeta?['sourceOrderId'] ??
+                '')
+            .toString()
+            .trim();
+    final originalOrderRef =
+        (map['originalOrderRef'] ??
+                map['sourceOrderRef'] ??
+                editMeta?['sourceOrderRef'] ??
+                '')
+            .toString()
+            .trim();
 
     return OrderModel(
       orderDocumentId: (map['id'] ?? map['docId'] ?? '').toString().trim(),
@@ -88,13 +131,15 @@ class OrderModel {
       billDetails: map['billDetails'] is Map
           ? Map<String, dynamic>.from(map['billDetails'])
           : null,
+      editMeta: editMeta,
+      originalOrderDocumentId: originalOrderDocumentId.isEmpty
+          ? null
+          : originalOrderDocumentId,
+      originalOrderId: originalOrderId.isEmpty ? null : originalOrderId,
+      originalOrderRef: originalOrderRef.isEmpty ? null : originalOrderRef,
       status: normalizedStatus,
-      createdAt: map['createdAt'] != null
-          ? (map['createdAt'] as Timestamp).toDate()
-          : DateTime.now(),
-      updatedAt: map['updatedAt'] != null
-          ? (map['updatedAt'] as Timestamp).toDate()
-          : null,
+      createdAt: _toDate(map['createdAt']),
+      updatedAt: map['updatedAt'] != null ? _toDate(map['updatedAt']) : null,
     );
   }
 
@@ -146,6 +191,7 @@ class OrderModel {
   String get statusDisplay {
     final clean = status.trim().toLowerCase();
     if (clean.isEmpty) return 'Placed';
+    if (clean == 'edited') return 'Edited';
     if (clean == 'out_for_delivery') return 'Out for delivery';
     if (clean == 'in_transit') return 'In transit';
     return clean[0].toUpperCase() + clean.substring(1);
@@ -154,6 +200,23 @@ class OrderModel {
   /// Determine if order can be cancelled
   bool get canCancel {
     return status == 'placed' || status == 'confirmed';
+  }
+
+  bool get canEdit {
+    const editableStatuses = {'placed', 'confirmed', 'processing', 'packed'};
+    return editableStatuses.contains(status.trim().toLowerCase()) &&
+        DateTime.now().isBefore(editWindowEndsAt);
+  }
+
+  DateTime get editWindowEndsAt {
+    return createdAt.add(const Duration(hours: editWindowHours));
+  }
+
+  bool get hasEditHistory {
+    return (originalOrderDocumentId ?? '').trim().isNotEmpty ||
+        (originalOrderId ?? '').trim().isNotEmpty ||
+        (originalOrderRef ?? '').trim().isNotEmpty ||
+        editMeta != null;
   }
 
   /// Determine if order can be reordered

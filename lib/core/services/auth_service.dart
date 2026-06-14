@@ -69,8 +69,11 @@ class AuthService {
         onFailed(e);
       },
       codeSent: (verificationId, resendToken) {
+        final previewLength = verificationId.length < 10
+            ? verificationId.length
+            : 10;
         debugPrint(
-          '[AuthService] OTP code sent. verificationId=${verificationId.substring(0, 10)}…',
+          '[AuthService] OTP code sent. verificationId=${verificationId.substring(0, previewLength)}…',
         );
         onCodeSent(verificationId, resendToken);
       },

@@ -40,6 +40,11 @@ class FeatureFlags {
     defaultValue: 200,
   );
 
+  static const int orderEditWindowHours = int.fromEnvironment(
+    'ORDER_EDIT_WINDOW_HOURS',
+    defaultValue: 12,
+  );
+
   /// Splash hardening flags (phase 1)
   static const bool enableSplashWatchdog = bool.fromEnvironment(
     'ENABLE_SPLASH_WATCHDOG',
@@ -48,7 +53,7 @@ class FeatureFlags {
 
   static const int splashMinDurationMs = int.fromEnvironment(
     'SPLASH_MIN_DURATION_MS',
-    defaultValue: 1700,
+    defaultValue: 1000,
   );
 
   static const int splashWatchdogTimeoutMs = int.fromEnvironment(

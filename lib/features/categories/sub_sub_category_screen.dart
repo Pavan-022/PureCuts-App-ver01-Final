@@ -76,12 +76,10 @@ class _SubSubCategoryScreenState extends State<SubSubCategoryScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final home = context.read<HomeProvider>();
-      unawaited(
-        Future<void>(() async {
-          await home.loadData();
-          await home.ensureVisibilityCatalogLoaded();
-        }),
-      );
+      // Load initial data without blocking UI
+      unawaited(home.loadData());
+      // Start full catalog load in background (don't await to avoid blocking UI)
+      unawaited(home.ensureVisibilityCatalogLoaded());
     });
   }
 

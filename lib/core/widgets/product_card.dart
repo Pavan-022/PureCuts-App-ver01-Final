@@ -227,7 +227,6 @@ class _ProductCardState extends State<ProductCard> {
           product['stockCount'],
     );
 
-    // If stock is missing, treat as available (legacy docs).
     if (stock == null) return false;
     return stock <= 0;
   }
@@ -311,7 +310,6 @@ class _ProductCardState extends State<ProductCard> {
 
     if (path.startsWith('assets/')) return path;
 
-    // Raw storage object path, e.g. "products/image.png"
     return 'https://firebasestorage.googleapis.com/v0/b/purecuts-11a7c.firebasestorage.app/o/${Uri.encodeComponent(path)}?alt=media';
   }
 
@@ -403,7 +401,7 @@ class _ProductCardState extends State<ProductCard> {
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min, // ← key fix: don't expand unbounded
+          mainAxisSize: MainAxisSize.min,
           children: [
             // ── Image area ───────────────────────────────────────────
             Stack(
@@ -696,7 +694,7 @@ class _ProductCardState extends State<ProductCard> {
 
             // ── Product details ───────────────────────────────────────
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -784,7 +782,7 @@ class _ProductCardState extends State<ProductCard> {
                           ),
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2), // fixed: was 4
                   ],
 
                   // See more

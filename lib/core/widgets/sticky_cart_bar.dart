@@ -158,6 +158,7 @@ class _StickyCartBarState extends State<StickyCartBar>
       builder: (context, cart, _) {
         if (cart.itemCount == 0) return const SizedBox.shrink();
         final previews = cart.previewItems;
+        final isEditMode = cart.isEditSessionActive;
         final itemLabel = cart.itemCount == 1
             ? '1 item'
             : '${cart.itemCount} items';
@@ -217,8 +218,8 @@ class _StickyCartBarState extends State<StickyCartBar>
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'View cart',
+                            Text(
+                              isEditMode ? 'Edit order' : 'View cart',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w700,
@@ -228,7 +229,9 @@ class _StickyCartBarState extends State<StickyCartBar>
                             ),
                             const SizedBox(height: 1),
                             Text(
-                              itemLabel,
+                              isEditMode
+                                  ? '$itemLabel in edit cart'
+                                  : itemLabel,
                               style: TextStyle(
                                 color: Colors.white.withValues(alpha: 0.9),
                                 fontWeight: FontWeight.w500,

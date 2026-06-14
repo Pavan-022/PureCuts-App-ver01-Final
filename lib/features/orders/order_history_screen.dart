@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -452,6 +452,8 @@ class _BoughtOrderCard extends StatelessWidget {
         return const Color(0xFF0C9B4B);
       case 'cancelled':
         return const Color(0xFFC62828);
+      case 'edited':
+        return const Color(0xFF6D28D9);
       default:
         return AppColors.primary;
     }
@@ -463,6 +465,8 @@ class _BoughtOrderCard extends StatelessWidget {
         return const Color(0xFFE9F8EF);
       case 'cancelled':
         return const Color(0xFFFFEDEE);
+      case 'edited':
+        return const Color(0xFFF3E8FF);
       default:
         return const Color(0xFFF1ECFF);
     }
@@ -642,6 +646,8 @@ class _OrderCard extends StatelessWidget {
         return const Color(0xFF22C55E);
       case 'cancelled':
         return AppColors.error;
+      case 'edited':
+        return const Color(0xFF8B5CF6);
       case 'processing':
       case 'confirmed':
       case 'packed':
@@ -661,6 +667,8 @@ class _OrderCard extends StatelessWidget {
         return const Color(0xFFDCFCE7);
       case 'cancelled':
         return const Color(0xFFFFEEEE);
+      case 'edited':
+        return const Color(0xFFF3E8FF);
       case 'processing':
       case 'confirmed':
       case 'packed':

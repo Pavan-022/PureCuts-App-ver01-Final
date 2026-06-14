@@ -29,6 +29,7 @@ class HomeProvider extends ChangeNotifier {
   static Future<SharedPreferences>? _prefsFuture;
 
   List<ProductModel> _products = [];
+  List<Map<String, dynamic>>? _productMapsCache;
   List<Map<String, dynamic>> _banners = [];
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _subCategories = [];
@@ -117,7 +118,7 @@ class HomeProvider extends ChangeNotifier {
       // should not short-circuit network loading.
       if (cachedProducts.isEmpty) return false;
 
-      _products = cachedProducts;
+      _setProducts(cachedProducts);
       _banners = cachedBanners;
       if (cachedCategories.isNotEmpty) _categories = cachedCategories;
       if (cachedSubCategories.isNotEmpty) _subCategories = cachedSubCategories;
@@ -218,7 +219,7 @@ class HomeProvider extends ChangeNotifier {
 
     if (merged.isEmpty) return false;
 
-    _products = merged.values.toList(growable: false);
+    _setProducts(merged.values.toList(growable: false));
     _hasLoadedOnce = true;
     _hasAttemptedFullCatalogLoad =
         !hasMore || merged.length >= _homeMaxProductPool;
@@ -873,9 +874,20 @@ class HomeProvider extends ChangeNotifier {
     }
   }
 
+  void _invalidateProductMapsCache() {
+    _productMapsCache = null;
+  }
+
+  void _setProducts(List<ProductModel> products) {
+    _products = products;
+    _invalidateProductMapsCache();
+  }
+
   /// Returns all products as the legacy Map format (for widgets that expect Map)
   List<Map<String, dynamic>> get productMaps {
-    return _products.map((p) => p.toProductMap()).toList();
+    return _productMapsCache ??= _products
+        .map((p) => p.toProductMap())
+        .toList(growable: false);
   }
 
   /// Seed the catalog directly for unit tests without hitting Firestore.
@@ -885,7 +897,7 @@ class HomeProvider extends ChangeNotifier {
     List<ProductModel> products, {
     bool fullCatalogReady = true,
   }) {
-    _products = List.from(products);
+    _setProducts(List.from(products));
     _hasLoadedOnce = true;
     _hasAttemptedFullCatalogLoad = fullCatalogReady;
     _fullCatalogReady = fullCatalogReady;
@@ -1068,7 +1080,7 @@ class HomeProvider extends ChangeNotifier {
               _timedListFetch(_service.getBrands(), taxonomyTimeout),
           ]);
           if (fetched.isNotEmpty) {
-            _products = fetched;
+            _setProducts(fetched);
             _hasLoadedOnce = true;
           }
           _banners = results[0];
@@ -1094,14 +1106,14 @@ class HomeProvider extends ChangeNotifier {
         } on TimeoutException {
           _error = 'Home data load timed out. Please pull to refresh.';
           if (fetched.isNotEmpty) {
-            _products = fetched;
+            _setProducts(fetched);
             _hasLoadedOnce = true;
           }
           _hasAttemptedFullCatalogLoad = false;
           if (_products.isEmpty) {
             final fallback = await _fallbackProductsFetch(limit: 24);
             if (fallback.isNotEmpty) {
-              _products = fallback;
+              _setProducts(fallback);
               _error = null;
               _hasLoadedOnce = true;
               unawaited(_persistStartupCache());
@@ -1110,14 +1122,14 @@ class HomeProvider extends ChangeNotifier {
         } catch (e) {
           _error = e.toString();
           if (fetched.isNotEmpty) {
-            _products = fetched;
+            _setProducts(fetched);
             _hasLoadedOnce = true;
           }
           _hasAttemptedFullCatalogLoad = false;
           if (_products.isEmpty) {
             final fallback = await _fallbackProductsFetch(limit: 24);
             if (fallback.isNotEmpty) {
-              _products = fallback;
+              _setProducts(fallback);
               _error = null;
               _hasLoadedOnce = true;
               unawaited(_persistStartupCache());

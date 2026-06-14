@@ -306,6 +306,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     unawaited(_loadDeliverySettings());
 
     unawaited(_recoverPendingOnlinePayment());
+
+    final cart = context.read<CartModel>();
+    _productSuggestionController.text = cart.tempProductSuggestion;
+    _productSuggestionController.addListener(_onProductSuggestionChanged);
   }
 
   @override
@@ -322,8 +326,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     _mapLinkController.dispose();
     _receiverNameController.dispose();
     _phoneController.dispose();
+    _productSuggestionController.removeListener(_onProductSuggestionChanged);
     _productSuggestionController.dispose();
     super.dispose();
+  }
+
+  void _onProductSuggestionChanged() {
+    if (mounted) {
+      context.read<CartModel>().setTempProductSuggestion(_productSuggestionController.text);
+    }
   }
 
   String _baseProductId(String value) {

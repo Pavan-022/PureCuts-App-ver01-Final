@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -276,6 +278,42 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
     }
 
     try {
+      // If provider status is not fully authenticated yet, wait briefly.
+      if (auth.status != AuthStatus.authenticated) {
+        final deadline = DateTime.now().add(const Duration(seconds: 10));
+        while (DateTime.now().isBefore(deadline) && auth.status != AuthStatus.authenticated) {
+          await Future.delayed(const Duration(milliseconds: 300));
+        }
+      }
+
+      final expectedUid = user.uid;
+      fb_auth.User? firebaseUser = fb_auth.FirebaseAuth.instance.currentUser;
+      if (firebaseUser?.uid != expectedUid) {
+        try {
+          firebaseUser = await fb_auth.FirebaseAuth.instance
+              .authStateChanges()
+              .firstWhere((u) => u != null && u.uid == expectedUid)
+              .timeout(const Duration(seconds: 10));
+        } on TimeoutException {
+          firebaseUser = fb_auth.FirebaseAuth.instance.currentUser;
+        }
+      }
+
+      if (firebaseUser == null || firebaseUser.uid != expectedUid) {
+        throw FirebaseException(
+          plugin: 'firebase_auth',
+          message: 'Authenticated user mismatch or no active session',
+        );
+      }
+
+      await firebaseUser.getIdToken(true);
+      if (fb_auth.FirebaseAuth.instance.currentUser?.uid != expectedUid) {
+        throw FirebaseException(
+          plugin: 'firebase_auth',
+          message: 'Authenticated user mismatch after token refresh',
+        );
+      }
+
       final chatId = await _service.ensureSupportChat(
         uid: user.uid,
         userName: user.name,
@@ -289,13 +327,26 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
       await _service.markAdminMessagesSeen(uid: user.uid);
     } catch (e) {
       if (!mounted) return;
+      String userMessage = 'Unable to open support chat right now. Please try again.';
+
+      if (e is FirebaseException) {
+        final code = e.code; // may be null
+        final msg = (e.message ?? '').toLowerCase();
+        if (code == 'permission-denied' || msg.contains('permission-denied')) {
+          userMessage = 'Support chat access denied. Please sign in or contact support.';
+        } else if (msg.contains('authenticated user mismatch') || msg.contains('mismatch')) {
+          userMessage = 'Authentication problem detected. Please sign out and sign in again.';
+        } else {
+          userMessage = 'Support chat unavailable. ${e.message ?? ''}';
+        }
+      }
+
       setState(() {
-        _bootstrapError =
-            'Unable to open support chat right now. Please try again.';
+        _bootstrapError = userMessage;
       });
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Support chat error: $e')));
+      ).showSnackBar(SnackBar(content: Text('Support chat error: $userMessage')));
     }
   }
 
