@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:purecuts/core/config/env_config.dart';
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -58,6 +61,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
   bool _isEmergencyHydrating = false;
   String? _pagingError;
   String? _lastEmergencyHydrationKey;
+  bool _isSearchResultsFromAlgolia = false;
   Timer? _searchDebounceTimer;
   Timer? _searchHydrationTimer;
   final Map<int, _SearchTextIndex> _searchTextIndexCache =
@@ -68,6 +72,11 @@ class _ProductListScreenState extends State<ProductListScreen> {
   bool _shouldHydrateForQuery(String query) => query.trim().length >= 2;
 
   void _scheduleHydrationForCommittedQuery(String query) {
+    if (EnvConfig.algoliaAppId.isNotEmpty &&
+        EnvConfig.algoliaSearchApiKey.isNotEmpty) {
+      // Bypass Firestore catalog downloads since we search via Algolia
+      return;
+    }
     _searchHydrationTimer?.cancel();
 
     final trimmed = query.trim();
@@ -91,7 +100,16 @@ class _ProductListScreenState extends State<ProductListScreen> {
     if (_searchQuery == next) return;
     if (!mounted) return;
     setState(() => _searchQuery = next);
-    _scheduleHydrationForCommittedQuery(next);
+    
+    final trimmed = next.trim();
+    if (_shouldHydrateForQuery(trimmed) &&
+        EnvConfig.algoliaAppId.isNotEmpty &&
+        EnvConfig.algoliaSearchApiKey.isNotEmpty) {
+      _searchWithAlgolia(trimmed);
+    } else {
+      _isSearchResultsFromAlgolia = false;
+      _loadFirstPage();
+    }
   }
 
   void _onSearchInputChanged(String value) {
@@ -588,6 +606,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
   }
 
   bool _matchesSearchQuery(Map<String, dynamic> product, String rawQuery) {
+    if (_isSearchResultsFromAlgolia) return true;
     final normalizedQuery = _normalizeToken(rawQuery);
     if (normalizedQuery.isEmpty) return true;
 
@@ -723,6 +742,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
     List<Map<String, dynamic>> products, {
     required bool hasQuery,
   }) {
+    if (_isSearchResultsFromAlgolia) return;
     if (hasQuery) {
       final scoreCache = <int, int>{};
       int scoreOf(Map<String, dynamic> product) {
@@ -1014,8 +1034,84 @@ class _ProductListScreenState extends State<ProductListScreen> {
     });
   }
 
+  Future<void> _searchWithAlgolia(String queryText) async {
+    final appId = EnvConfig.algoliaAppId;
+    final apiKey = EnvConfig.algoliaSearchApiKey;
+    final indexName = EnvConfig.algoliaIndexName;
+
+    if (appId.isEmpty || apiKey.isEmpty) {
+      _isSearchResultsFromAlgolia = false;
+      return;
+    }
+
+    setState(() {
+      _isInitialLoading = true;
+      _pagingError = null;
+      _pagedProducts.clear();
+      _lastProductDoc = null;
+      _hasMoreProducts = false;
+    });
+
+    try {
+      final url = Uri.parse('https://$appId-dsn.algolia.net/1/indexes/$indexName/query');
+      final response = await http.post(
+        url,
+        headers: {
+          'X-Algolia-Application-Id': appId,
+          'X-Algolia-API-Key': apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'query': queryText,
+          'hitsPerPage': 100,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final List hits = data['hits'] ?? [];
+        final results = hits.map((hit) {
+          final productMap = Map<String, dynamic>.from(hit);
+          productMap['id'] = hit['objectID'] ?? hit['id'] ?? '';
+          return productMap;
+        }).toList();
+
+        if (!mounted) return;
+        setState(() {
+          _isSearchResultsFromAlgolia = true;
+          _pagedProducts.addAll(results);
+          _hasMoreProducts = false;
+        });
+      } else {
+        throw Exception('Failed to search Algolia: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isSearchResultsFromAlgolia = false;
+        _pagingError = e.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isInitialLoading = false;
+        });
+      }
+    }
+  }
+
   Future<void> _loadFirstPage() async {
     if (_isInitialLoading) return;
+
+    final queryText = _searchQuery.trim();
+    if (_shouldHydrateForQuery(queryText) &&
+        EnvConfig.algoliaAppId.isNotEmpty &&
+        EnvConfig.algoliaSearchApiKey.isNotEmpty) {
+      await _searchWithAlgolia(queryText);
+      return;
+    }
+
+    _isSearchResultsFromAlgolia = false;
     setState(() {
       _isInitialLoading = true;
       _pagingError = null;
@@ -1171,6 +1267,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
 
     final hasCategoryFilter = _selectedCategory.trim().toLowerCase() != 'all';
     if ((_shouldHydrateForQuery(_searchQuery) || hasCategoryFilter) &&
+        !_isSearchResultsFromAlgolia &&
         products.isEmpty &&
         !_isInitialLoading &&
         !_isSearchHydrating &&

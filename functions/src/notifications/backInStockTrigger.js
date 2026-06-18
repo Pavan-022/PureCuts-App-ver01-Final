@@ -1,6 +1,6 @@
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const logger = require("firebase-functions/logger");
-const { admin, db } = require("../shared");
+const { admin, db } = require("./shared");
 
 function parseStock(raw) {
   if (raw === null || raw === undefined) return null;

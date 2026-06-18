@@ -13,6 +13,12 @@ class EnvConfig {
   static String get firebaseMeasurementId =>
       dotenv.env['FIREBASE_MEASUREMENT_ID'] ?? '';
 
+  static String get algoliaAppId => dotenv.env['ALGOLIA_APP_ID'] ?? '';
+  static String get algoliaSearchApiKey =>
+      dotenv.env['ALGOLIA_SEARCH_API_KEY'] ?? '';
+  static String get algoliaIndexName =>
+      dotenv.env['ALGOLIA_INDEX_NAME'] ?? 'products';
+
   /// Initialize environment variables
   static Future<void> init() async {
     await dotenv.load();
