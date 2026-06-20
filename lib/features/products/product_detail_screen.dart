@@ -2475,8 +2475,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         bulkConfirmedCartItemId: _bulkConfirmedCartItemId,
         bulkConfirmedQty: _bulkConfirmedQty,
       ),
-      floatingActionButton: const SupportChatFab(),
-      body: SingleChildScrollView(
+      body: Stack(
+        children: [
+          SingleChildScrollView(
         controller: _contentScrollController,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3310,6 +3311,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             const SizedBox(height: 100),
           ],
         ),
+      ),
+          const SupportChatFab(),
+        ],
       ),
     );
   }

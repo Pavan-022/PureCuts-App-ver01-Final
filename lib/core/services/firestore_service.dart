@@ -381,9 +381,15 @@ class FirestoreService {
     return 'payu_${cleaned.isEmpty ? 'unknown' : cleaned}';
   }
 
-  String _editOrderDocId(String sourceKey) {
-    final cleaned = sourceKey.trim().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-    return 'edit_${cleaned.isEmpty ? 'unknown' : cleaned}';
+  int _safeNonNegativeInt(dynamic value, int fallback) {
+    if (value is int) return value < 0 ? fallback : value;
+    if (value is num) {
+      final casted = value.round();
+      return casted < 0 ? fallback : casted;
+    }
+    final parsed = int.tryParse((value ?? '').toString().trim());
+    if (parsed == null || parsed < 0) return fallback;
+    return parsed;
   }
 
   Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _queryOrdersByUid({
@@ -1271,7 +1277,7 @@ class FirestoreService {
     if (isEditOrder && sourceEditOrderDocId.isNotEmpty) {
       orderDoc = _db
           .collection(_ordersCollection)
-          .doc(_editOrderDocId(sourceEditOrderDocId));
+          .doc(sourceEditOrderDocId);
     } else {
       orderDoc = _db
           .collection(_ordersCollection)
@@ -1389,6 +1395,51 @@ class FirestoreService {
         })
         .toList(growable: false);
 
+    var finalTotal = total;
+    var finalItemTotal = billDetails?['itemTotal'] ?? total;
+    var finalDeliveryCharge = billDetails?['deliveryCharge'] ?? 0;
+    var finalGrandTotal = billDetails?['grandTotal'] ?? total;
+
+    if (isEditOrder && sourceEditOrderDocId.isNotEmpty) {
+      try {
+        final originalSnap = await _db.collection(_ordersCollection).doc(sourceEditOrderDocId).get();
+        if (originalSnap.exists) {
+          final originalData = originalSnap.data() ?? const <String, dynamic>{};
+          final originalBillDetails = originalData['billDetails'] is Map
+              ? Map<String, dynamic>.from(originalData['billDetails'])
+              : const <String, dynamic>{};
+          
+          final originalItemTotal = _safeNonNegativeInt(
+            originalBillDetails['itemTotal'] ??
+            originalData['totalAmount'] ??
+            originalData['grandTotal'] ??
+            0,
+            0,
+          );
+          final originalDeliveryCharge = _safeNonNegativeInt(originalBillDetails['deliveryCharge'] ?? 0, 0);
+
+          final additionalItemTotal = _safeNonNegativeInt(billDetails?['itemTotal'] ?? total, 0);
+          final additionalDeliveryCharge = _safeNonNegativeInt(billDetails?['deliveryCharge'] ?? 0, 0);
+
+          final isCod = paymentMethod == 'Cash on Delivery';
+
+          if (isCod) {
+            finalTotal = additionalItemTotal;
+            finalItemTotal = finalTotal;
+            finalDeliveryCharge = additionalDeliveryCharge;
+            finalGrandTotal = finalTotal + finalDeliveryCharge;
+          } else {
+            finalTotal = originalItemTotal + additionalItemTotal;
+            finalItemTotal = finalTotal;
+            finalDeliveryCharge = originalDeliveryCharge + additionalDeliveryCharge;
+            finalGrandTotal = finalTotal + finalDeliveryCharge;
+          }
+        }
+      } catch (e) {
+        debugPrint('[FirestoreService] Failed to load original order to calculate combined totals: $e');
+      }
+    }
+
     final payload = {
       'orderId': orderRef,
       'orderRef': orderRef,
@@ -1408,16 +1459,21 @@ class FirestoreService {
       'contactDetails': normalizedContactDetails,
       'paymentMethod': (paymentMethod ?? '').toString().trim(),
       'paymentTxnId': cleanPaymentTxnId,
-      'billDetails': {...?billDetails},
+      'billDetails': {
+        'itemTotal': finalItemTotal,
+        'deliveryCharge': finalDeliveryCharge,
+        'handlingCharge': 0,
+        'grandTotal': finalGrandTotal,
+      },
       'items': normalizedItems,
       'productIds': productIds,
       'itemCount': normalizedItems.length,
       'itemsCount': normalizedItems.length,
       'totalItems': totalItems,
-      'total': total,
-      'amount': total,
-      'totalAmount': total,
-      'grandTotal': total,
+      'total': finalTotal,
+      'amount': finalTotal,
+      'totalAmount': finalTotal,
+      'grandTotal': finalGrandTotal,
       'deliveryPlaced': true,
       'status': isEditOrder ? 'edited' : 'placed',
       'orderStatus': isEditOrder ? 'edited' : 'placed',
@@ -1433,7 +1489,7 @@ class FirestoreService {
         'originalOrderRef': normalizedEditMeta['sourceOrderRef'],
       if (normalizedEditMeta != null)
         'editWindowHours': normalizedEditMeta['windowHours'],
-      'createdAt': FieldValue.serverTimestamp(),
+      if (!isEditOrder) 'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     };
 

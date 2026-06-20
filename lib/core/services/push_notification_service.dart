@@ -6,8 +6,13 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'dart:convert';
 import 'package:purecuts/core/navigation/app_navigator.dart';
+import 'package:purecuts/core/models/order_model.dart';
 import 'package:purecuts/features/orders/checkout_screen.dart';
+import 'package:purecuts/features/products/product_detail_screen.dart';
+import 'package:purecuts/features/cart/cart_screen.dart';
+import 'package:purecuts/features/orders/order_details_screen.dart';
 
 class PushNotificationService {
   PushNotificationService._();
@@ -79,6 +84,7 @@ class PushNotificationService {
         debugPrint(
           '[PushNotificationService] Notification opened from background: ${message.notification?.title} | ${message.notification?.body} | data=${message.data}',
         );
+        _handleNotificationMessage(message);
       });
 
       final initialMessage = await _messaging.getInitialMessage();
@@ -86,6 +92,7 @@ class PushNotificationService {
         debugPrint(
           '[PushNotificationService] Notification opened from terminated state: ${initialMessage.notification?.title} | ${initialMessage.notification?.body} | data=${initialMessage.data}',
         );
+        _handleNotificationMessage(initialMessage);
       }
 
       _tokenRefreshSub?.cancel();
@@ -125,8 +132,118 @@ class PushNotificationService {
 
   void _onNotificationTap(NotificationResponse response) {
     final payload = (response.payload ?? '').trim();
-    if (!payload.startsWith(_payuRecoveryPayloadPrefix)) return;
-    unawaited(_openRecoveredPaymentCheckout());
+    if (payload.isEmpty) return;
+
+    if (payload.startsWith(_payuRecoveryPayloadPrefix)) {
+      unawaited(_openRecoveredPaymentCheckout());
+      return;
+    }
+
+    try {
+      final Map<String, dynamic> data = jsonDecode(payload);
+      final eventType = (data['eventType'] ?? '').toString().trim();
+      if (eventType.isEmpty) return;
+
+      if (eventType == 'back_in_stock') {
+        final productId = (data['productId'] ?? '').toString().trim();
+        if (productId.isNotEmpty) {
+          unawaited(_openProductDetailScreen(productId));
+        }
+      } else if (eventType == 'abandoned_cart') {
+        unawaited(_openCartScreen());
+      } else if (eventType == 'order_placed') {
+        final orderId = (data['orderId'] ?? '').toString().trim();
+        if (orderId.isNotEmpty) {
+          unawaited(_openOrderDetailsScreen(orderId));
+        }
+      }
+    } catch (e, st) {
+      debugPrint('[PushNotificationService] Failed to parse notification tap payload: $e\n$st');
+    }
+  }
+
+  void _handleNotificationMessage(RemoteMessage message) {
+    final data = message.data;
+    final eventType = (data['eventType'] ?? '').toString().trim();
+    if (eventType.isEmpty) return;
+
+    if (eventType == 'back_in_stock') {
+      final productId = (data['productId'] ?? '').toString().trim();
+      if (productId.isNotEmpty) {
+        unawaited(_openProductDetailScreen(productId));
+      }
+    } else if (eventType == 'abandoned_cart') {
+      unawaited(_openCartScreen());
+    } else if (eventType == 'order_placed') {
+      final orderId = (data['orderId'] ?? '').toString().trim();
+      if (orderId.isNotEmpty) {
+        unawaited(_openOrderDetailsScreen(orderId));
+      }
+    }
+  }
+
+  Future<void> _openProductDetailScreen(String productId, {int attempts = 0}) async {
+    final navigator = appNavigatorKey.currentState;
+    if (navigator == null) {
+      if (attempts >= 6) return;
+      await Future.delayed(const Duration(milliseconds: 350));
+      return _openProductDetailScreen(productId, attempts: attempts + 1);
+    }
+
+    try {
+      final snap = await _firestore.collection('products').doc(productId).get();
+      if (snap.exists) {
+        final productData = snap.data() ?? {};
+        productData['id'] = snap.id;
+        navigator.push(
+          MaterialPageRoute(
+            builder: (_) => ProductDetailScreen(product: productData),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[PushNotificationService] Failed to load product detail from notification redirect: $e');
+    }
+  }
+
+  Future<void> _openCartScreen({int attempts = 0}) async {
+    final navigator = appNavigatorKey.currentState;
+    if (navigator == null) {
+      if (attempts >= 6) return;
+      await Future.delayed(const Duration(milliseconds: 350));
+      return _openCartScreen(attempts: attempts + 1);
+    }
+
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) => const CartScreen(),
+      ),
+    );
+  }
+
+  Future<void> _openOrderDetailsScreen(String orderId, {int attempts = 0}) async {
+    final navigator = appNavigatorKey.currentState;
+    if (navigator == null) {
+      if (attempts >= 6) return;
+      await Future.delayed(const Duration(milliseconds: 350));
+      return _openOrderDetailsScreen(orderId, attempts: attempts + 1);
+    }
+
+    try {
+      final snap = await _firestore.collection('orders').doc(orderId).get();
+      if (snap.exists) {
+        final map = snap.data() ?? {};
+        map['id'] = snap.id;
+        final order = OrderModel.fromMap(map);
+        navigator.push(
+          MaterialPageRoute(
+            builder: (_) => OrderDetailsScreen(order: order),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[PushNotificationService] Failed to load order details from notification redirect: $e');
+    }
   }
 
   Future<void> _openRecoveredPaymentCheckout({int attempts = 0}) async {
@@ -152,6 +269,12 @@ class PushNotificationService {
     final body =
         notification?.body ?? message.data['message']?.toString() ?? '';
 
+    final payloadString = jsonEncode({
+      ...message.data,
+      'title': title,
+      'body': body,
+    });
+
     await _localNotifications.show(
       DateTime.now().millisecondsSinceEpoch ~/ 1000,
       title,
@@ -170,6 +293,7 @@ class PushNotificationService {
           presentSound: true,
         ),
       ),
+      payload: payloadString,
     );
   }
 

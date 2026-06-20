@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:purecuts/core/theme/app_theme.dart';
 import 'package:purecuts/features/home/home_screen.dart';
 import 'package:purecuts/features/previously_bought/previously_bought_screen.dart';
@@ -60,20 +60,20 @@ class _MainNavScreenState extends State<MainNavScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: PageView(
-        controller: _pageController,
-        physics: const NeverScrollableScrollPhysics(),
-        onPageChanged: (i) {
-          if (i == _index) return;
-          setState(() => _index = i);
-        },
-        children: _screens,
+      body: Stack(
+        children: [
+          PageView(
+            controller: _pageController,
+            physics: const NeverScrollableScrollPhysics(),
+            onPageChanged: (i) {
+              if (i == _index) return;
+              setState(() => _index = i);
+            },
+            children: _screens,
+          ),
+          const SupportChatFab(),
+        ],
       ),
-      floatingActionButton: const Padding(
-        padding: EdgeInsets.only(bottom: 58),
-        child: SupportChatFab(),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           color: Colors.white,

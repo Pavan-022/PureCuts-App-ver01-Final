@@ -370,10 +370,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     };
   }
 
+  OrderModel? get _effectiveEditOrder {
+    try {
+      return widget.editOrder ?? context.read<CartModel>().editSourceOrder;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Map<String, dynamic>? _buildEditMeta(CartModel cart) {
     if (!cart.isEditSessionActive) return null;
 
-    final order = widget.editOrder;
+    final order = _effectiveEditOrder;
     final sourceDocId = (order?.orderDocumentId ?? cart.editSourceOrderId ?? '')
         .trim();
     final sourceOrderRef = (order?.orderId ?? cart.editSourceOrderRef ?? '')
@@ -494,7 +502,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     };
   }
 
-  int _itemTotal(CartModel cart) => cart.totalPrice;
+  int _itemTotal(CartModel cart) {
+    if (cart.isEditSessionActive) {
+      if (_selectedPaymentMethod == _codPaymentMethod) {
+        return _combinedItemTotal(cart);
+      } else {
+        return cart.totalPrice;
+      }
+    }
+    return cart.totalPrice;
+  }
 
   Map<String, dynamic> _activeDeliveryAddress() {
     if (_savedAddresses.isNotEmpty &&
@@ -545,8 +562,27 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     return _maharashtraDeliveryCharge;
   }
 
+  int _combinedItemTotal(CartModel cart) {
+    return cart.items.fold<int>(0, (sum, item) => sum + item.price * item.quantity);
+  }
+
   int _calculateDeliveryCharge(int itemTotal) {
     final baseCharge = _regionalDeliveryCharge();
+    final order = _effectiveEditOrder;
+
+    if (order != null) {
+      final cart = context.read<CartModel>();
+      final combinedTotal = _combinedItemTotal(cart);
+      final combinedDelivery = combinedTotal >= _freeDeliveryThreshold ? 0 : baseCharge;
+      final int originalDelivery = int.tryParse(order.billDetails?['deliveryCharge']?.toString() ?? '0') ?? 0;
+      
+      if (_selectedPaymentMethod == _codPaymentMethod) {
+        return combinedDelivery;
+      } else {
+        final int additionalDelivery = combinedDelivery - originalDelivery;
+        return additionalDelivery > 0 ? additionalDelivery : 0;
+      }
+    }
 
     if (itemTotal >= _freeDeliveryThreshold) {
       return 0;

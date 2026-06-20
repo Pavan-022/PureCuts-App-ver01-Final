@@ -111,114 +111,173 @@ exports.createCodOrder = onCall(async (request) => {
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     const counterRef = db.doc(COUNTER_DOC_PATH);
-    const orderRef = db.collection("orders").doc();
 
     let createdOrderRef = "";
     let createdSeq = ORDER_SEQUENCE_START;
+    let orderDocRef;
 
     await db.runTransaction(async (tx) => {
-    const counterSnap = await tx.get(counterRef);
-    const currentSeq = counterSnap.exists
-      ? parsePositiveInt(counterSnap.data()?.globalSeq, ORDER_SEQUENCE_START - 1)
-      : ORDER_SEQUENCE_START - 1;
+      let isEdit = false;
+      let nextSeq = ORDER_SEQUENCE_START;
+      let nextOrderRef = "";
+      let originalOrderData = null;
 
-    const nextSeq = Math.max(currentSeq + 1, ORDER_SEQUENCE_START);
-    const nextOrderRef = buildOrderRef(nextSeq);
+      const editMeta = payload.editMeta && typeof payload.editMeta === "object" ? payload.editMeta : null;
+      if (editMeta && editMeta.isEditOrder === true && editMeta.sourceOrderDocumentId) {
+        orderDocRef = db.collection("orders").doc(cleanString(editMeta.sourceOrderDocumentId));
+        const originalSnap = await tx.get(orderDocRef);
+        if (originalSnap.exists) {
+          originalOrderData = originalSnap.data();
+          isEdit = true;
+        }
+      }
 
-    const { items, productIds, totalItems } = normalizeItems(payload.items, nextOrderRef);
-    if (items.length === 0) {
-      throw new HttpsError("invalid-argument", "At least one valid order item is required.");
-    }
+      if (isEdit && originalOrderData) {
+        nextSeq = parsePositiveInt(originalOrderData.orderSeq || originalOrderData.sequence, ORDER_SEQUENCE_START);
+        nextOrderRef = cleanString(originalOrderData.orderRef || originalOrderData.orderId || originalOrderData.orderNumber || editMeta.sourceOrderRef);
+      } else {
+        orderDocRef = db.collection("orders").doc();
+        const counterSnap = await tx.get(counterRef);
+        const currentSeq = counterSnap.exists
+          ? parsePositiveInt(counterSnap.data()?.globalSeq, ORDER_SEQUENCE_START - 1)
+          : ORDER_SEQUENCE_START - 1;
 
-    const billDetails =
-      payload.billDetails && typeof payload.billDetails === "object"
-        ? payload.billDetails
-        : {};
+        nextSeq = Math.max(currentSeq + 1, ORDER_SEQUENCE_START);
+        nextOrderRef = buildOrderRef(nextSeq);
+      }
 
-    const addressSummary = [
-      cleanString(deliveryAddress.line1),
-      cleanString(deliveryAddress.line2),
-      cleanString(deliveryAddress.city),
-      cleanString(deliveryAddress.state),
-      cleanString(deliveryAddress.pincode),
-    ]
-      .filter(Boolean)
-      .join(", ");
+      const { items, productIds, totalItems } = normalizeItems(payload.items, nextOrderRef);
+      if (items.length === 0) {
+        throw new HttpsError("invalid-argument", "At least one valid order item is required.");
+      }
 
-    const payloadToPersist = {
-      orderId: nextOrderRef,
-      orderRef: nextOrderRef,
-      orderNumber: nextOrderRef,
-      orderSeq: nextSeq,
-      orderSeqSource: "cod_cloud_function",
-      uid: authUid,
-      userId: authUid,
-      customerId: authUid,
-      customerName,
-      customerEmail,
-      customerPhone,
-      phone: customerPhone,
-      deliveryAddress,
-      address: addressSummary,
-      contactDetails,
-      paymentMethod: normalizePaymentMethod(payload.paymentMethod),
-      paymentTxnId: "",
-      billDetails,
-      items,
-      productIds,
-      itemCount: items.length,
-      itemsCount: items.length,
-      totalItems,
-      total,
-      amount: total,
-      totalAmount: total,
-      grandTotal: total,
-      deliveryPlaced: true,
-      status: "placed",
-      orderStatus: "placed",
-      paymentStatus: "pending",
-      createdAt: now,
-      updatedAt: now,
-    };
+      const billDetails =
+        payload.billDetails && typeof payload.billDetails === "object"
+          ? payload.billDetails
+          : {};
 
-    tx.set(orderRef, payloadToPersist, { merge: false });
-    tx.set(
-      counterRef,
-      {
-        globalSeq: nextSeq,
-        updatedAt: now,
-        createdAt: now,
-      },
-      { merge: true }
-    );
+      const addressSummary = [
+        cleanString(deliveryAddress.line1),
+        cleanString(deliveryAddress.line2),
+        cleanString(deliveryAddress.city),
+        cleanString(deliveryAddress.state),
+        cleanString(deliveryAddress.pincode),
+      ]
+        .filter(Boolean)
+        .join(", ");
 
-    tx.set(
-      db.collection("users").doc(authUid),
-      {
-        purchasedProductIds: admin.firestore.FieldValue.arrayUnion(...productIds),
-        deliveryAddressDetails: deliveryAddress,
+      let finalTotal = total;
+      let finalBillDetails = { ...billDetails };
+
+      if (isEdit && originalOrderData) {
+        const originalBillDetails = originalOrderData.billDetails || {};
+        const originalItemTotal = parsePositiveInt(originalBillDetails.itemTotal || originalOrderData.totalAmount || originalOrderData.grandTotal || 0, 0);
+        const originalDeliveryCharge = parsePositiveInt(originalBillDetails.deliveryCharge || 0, 0);
+
+        const additionalItemTotal = parsePositiveInt(billDetails.itemTotal || total, 0);
+        const additionalDeliveryCharge = parsePositiveInt(billDetails.deliveryCharge || 0, 0);
+
+        const isCod = normalizePaymentMethod(payload.paymentMethod) === "Cash on Delivery";
+
+        if (isCod) {
+          finalTotal = additionalItemTotal;
+          finalBillDetails = {
+            itemTotal: finalTotal,
+            deliveryCharge: additionalDeliveryCharge,
+            handlingCharge: 0,
+            grandTotal: finalTotal + additionalDeliveryCharge,
+          };
+        } else {
+          finalTotal = originalItemTotal + additionalItemTotal;
+          finalBillDetails = {
+            itemTotal: finalTotal,
+            deliveryCharge: originalDeliveryCharge + additionalDeliveryCharge,
+            handlingCharge: 0,
+            grandTotal: finalTotal + originalDeliveryCharge + additionalDeliveryCharge,
+          };
+        }
+      }
+
+      const payloadToPersist = {
+        orderId: nextOrderRef,
+        orderRef: nextOrderRef,
+        orderNumber: nextOrderRef,
+        orderSeq: nextSeq,
+        orderSeqSource: isEdit ? "cod_cloud_function_edit" : "cod_cloud_function",
+        uid: authUid,
+        userId: authUid,
+        customerId: authUid,
+        customerName,
+        customerEmail,
+        customerPhone,
+        phone: customerPhone,
+        deliveryAddress,
+        address: addressSummary,
         contactDetails,
-        deliveryDetails: {
-          deliveryAddress,
+        paymentMethod: normalizePaymentMethod(payload.paymentMethod),
+        paymentTxnId: "",
+        billDetails: finalBillDetails,
+        items,
+        productIds,
+        itemCount: items.length,
+        itemsCount: items.length,
+        totalItems,
+        total: finalTotal,
+        amount: finalTotal,
+        totalAmount: finalTotal,
+        grandTotal: finalBillDetails.grandTotal || finalTotal,
+        deliveryPlaced: true,
+        status: isEdit ? "edited" : "placed",
+        orderStatus: isEdit ? "edited" : "placed",
+        paymentStatus: "pending",
+        updatedAt: now,
+      };
+
+      if (!isEdit) {
+        payloadToPersist.createdAt = now;
+      }
+
+      tx.set(orderDocRef, payloadToPersist, { merge: isEdit });
+
+      if (!isEdit) {
+        tx.set(
+          counterRef,
+          {
+            globalSeq: nextSeq,
+            updatedAt: now,
+            createdAt: now,
+          },
+          { merge: true }
+        );
+      }
+
+      tx.set(
+        db.collection("users").doc(authUid),
+        {
+          purchasedProductIds: admin.firestore.FieldValue.arrayUnion(...productIds),
+          deliveryAddressDetails: deliveryAddress,
           contactDetails,
+          deliveryDetails: {
+            deliveryAddress,
+            contactDetails,
+            deliveryPlaced: true,
+            lastOrderRef: nextOrderRef,
+            updatedAt: now,
+          },
           deliveryPlaced: true,
-          lastOrderRef: nextOrderRef,
           updatedAt: now,
         },
-        deliveryPlaced: true,
-        updatedAt: now,
-      },
-      { merge: true }
-    );
+        { merge: true }
+      );
 
-    createdOrderRef = nextOrderRef;
-    createdSeq = nextSeq;
-  });
+      createdOrderRef = nextOrderRef;
+      createdSeq = nextSeq;
+    });
 
     return {
       ok: true,
       orderRef: createdOrderRef,
-      orderId: orderRef.id,
+      orderId: orderDocRef.id,
       orderSeq: createdSeq,
     };
   } catch (error) {

@@ -85,6 +85,7 @@ class CartModel extends ChangeNotifier {
   String? _lastAddedImage;
   String? _editSourceOrderId;
   String? _editSourceOrderRef;
+  OrderModel? _editSourceOrder;
   String _activeUserKey = 'guest';
   StreamSubscription<fb_auth.User?>? _authSub;
   String _tempProductSuggestion = '';
@@ -166,6 +167,8 @@ class CartModel extends ChangeNotifier {
   String? get editSourceOrderId => _editSourceOrderId;
 
   String? get editSourceOrderRef => _editSourceOrderRef;
+
+  OrderModel? get editSourceOrder => _editSourceOrder;
 
   Map<String, int> get editLockedQuantities =>
       Map.unmodifiable(_lockedQuantities);
@@ -277,6 +280,7 @@ class CartModel extends ChangeNotifier {
 
   void startEditSession(OrderModel order) {
     clearEditSession();
+    _editSourceOrder = order;
     _items.clear();
     _previewOrder.clear();
 
@@ -326,6 +330,7 @@ class CartModel extends ChangeNotifier {
     _lockedQuantities.clear();
     _editSourceOrderId = null;
     _editSourceOrderRef = null;
+    _editSourceOrder = null;
   }
 
   void add(Map<String, dynamic> product) {

@@ -21,12 +21,14 @@ class ProductListScreen extends StatefulWidget {
   final String? initialBrand;
   final String? initialTag;
   final String? initialQuery;
+  final bool autoFocusSearch;
   const ProductListScreen({
     super.key,
     this.initialCategory,
     this.initialBrand,
     this.initialTag,
     this.initialQuery,
+    this.autoFocusSearch = false,
   });
 
   @override
@@ -42,6 +44,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
   String? _selectedTag;
   String _sort = 'popular';
   final _searchCtrl = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final FirestoreService _firestoreService = FirestoreService();
   final stt.SpeechToText _speech = stt.SpeechToText();
@@ -1210,6 +1213,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      if (widget.autoFocusSearch) {
+        _searchFocusNode.requestFocus();
+      }
       final home = context.read<HomeProvider>();
       unawaited(
         Future<void>(() async {
@@ -1231,6 +1237,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
     _searchHydrationTimer?.cancel();
     _scrollController.removeListener(_onScroll);
     _searchCtrl.dispose();
+    _searchFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -1368,14 +1375,17 @@ class _ProductListScreenState extends State<ProductListScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
+          Column(
+            children: [
           // Search bar
           Container(
             color: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: TextField(
               controller: _searchCtrl,
+              focusNode: _searchFocusNode,
               onChanged: _onSearchInputChanged,
               decoration: InputDecoration(
                 hintText: 'Search products...',
@@ -1682,9 +1692,11 @@ class _ProductListScreenState extends State<ProductListScreen> {
             ),
           ),
           const StickyCartBar(),
+            ],
+          ),
+          const SupportChatFab(),
         ],
       ),
-      floatingActionButton: const SupportChatFab(),
     );
   }
 }

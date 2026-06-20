@@ -119,6 +119,7 @@ function sanitizeOrderDraft(raw = {}) {
       handlingCharge: Number.isFinite(handlingCharge) ? handlingCharge : 0,
       grandTotal: Number.isFinite(grandTotal) ? grandTotal : 0,
     },
+    editMeta: raw.editMeta && typeof raw.editMeta === "object" ? raw.editMeta : null,
     items,
   };
 }
@@ -249,8 +250,16 @@ async function createOrderFromPaymentSuccess(txnid) {
     return { placed: false, reason: "missing-order-draft" };
   }
 
-  const orderDoc = db.collection("orders").doc(buildOrderDocIdFromTxn(cleanTxnId));
-  const orderRef = cleanString(draft.orderRef) || generateOrderRefFromTxn(cleanTxnId);
+  const editMeta = draft && draft.editMeta && typeof draft.editMeta === "object" ? draft.editMeta : null;
+  const isEdit = editMeta && editMeta.isEditOrder === true && editMeta.sourceOrderDocumentId;
+
+  const orderDoc = isEdit
+    ? db.collection("orders").doc(cleanString(editMeta.sourceOrderDocumentId))
+    : db.collection("orders").doc(buildOrderDocIdFromTxn(cleanTxnId));
+
+  const orderRef = isEdit
+    ? cleanString(editMeta.sourceOrderRef)
+    : (cleanString(draft.orderRef) || generateOrderRefFromTxn(cleanTxnId));
 
   let totalItems = 0;
   const normalizedItems = draft.items.map((item, index) => {
@@ -293,10 +302,11 @@ async function createOrderFromPaymentSuccess(txnid) {
   let existingOrderRef = "";
   await db.runTransaction(async (tx) => {
     const existingSnap = await tx.get(orderDoc);
-    if (existingSnap.exists) {
-      const existingData = existingSnap.data() || {};
+    const originalOrderData = existingSnap.exists ? existingSnap.data() || {} : null;
+
+    if (existingSnap.exists && !isEdit) {
       existingOrderRef = cleanString(
-        existingData.orderRef || existingData.orderId || existingData.orderNumber || orderRef
+        originalOrderData.orderRef || originalOrderData.orderId || originalOrderData.orderNumber || orderRef
       );
       tx.set(
         orderDoc,
@@ -309,10 +319,30 @@ async function createOrderFromPaymentSuccess(txnid) {
       return;
     }
 
-    tx.set(orderDoc, {
-      orderId: orderRef,
-      orderRef,
-      orderNumber: orderRef,
+    let finalTotal = grandTotal;
+    let finalBillDetails = { ...draft.billDetails };
+
+    if (isEdit && originalOrderData) {
+      const originalBillDetails = originalOrderData.billDetails || {};
+      const originalItemTotal = parsePositiveNumber(originalBillDetails.itemTotal || originalOrderData.totalAmount || originalOrderData.grandTotal || 0);
+      const originalDeliveryCharge = parsePositiveNumber(originalBillDetails.deliveryCharge || 0);
+
+      const additionalItemTotal = parsePositiveNumber(draft.billDetails?.itemTotal || grandTotal);
+      const additionalDeliveryCharge = parsePositiveNumber(draft.billDetails?.deliveryCharge || 0);
+
+      finalTotal = originalItemTotal + additionalItemTotal;
+      finalBillDetails = {
+        itemTotal: finalTotal,
+        deliveryCharge: originalDeliveryCharge + additionalDeliveryCharge,
+        handlingCharge: 0,
+        grandTotal: finalTotal + originalDeliveryCharge + additionalDeliveryCharge,
+      };
+    }
+
+    const payload = {
+      orderId: isEdit ? (originalOrderData?.orderId || orderRef) : orderRef,
+      orderRef: isEdit ? (originalOrderData?.orderRef || orderRef) : orderRef,
+      orderNumber: isEdit ? (originalOrderData?.orderNumber || orderRef) : orderRef,
       uid: draft.uid,
       userId: draft.userId,
       customerId: draft.customerId,
@@ -326,22 +356,29 @@ async function createOrderFromPaymentSuccess(txnid) {
       paymentMethod,
       paymentTxnId: cleanTxnId,
       paymentStatus: "paid",
-      billDetails: draft.billDetails,
+      billDetails: finalBillDetails,
       items: normalizedItems,
       productIds,
       itemCount: normalizedItems.length,
       itemsCount: normalizedItems.length,
       totalItems,
-      total: grandTotal,
-      amount: grandTotal,
-      totalAmount: grandTotal,
-      grandTotal,
+      total: finalTotal,
+      amount: finalTotal,
+      totalAmount: finalTotal,
+      grandTotal: finalBillDetails.grandTotal || finalTotal,
       deliveryPlaced: true,
-      status: "placed",
-      orderStatus: "placed",
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      status: isEdit ? "edited" : "placed",
+      orderStatus: isEdit ? "edited" : "placed",
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    };
+
+    if (!isEdit) {
+      payload.createdAt = admin.firestore.FieldValue.serverTimestamp();
+    } else if (originalOrderData && originalOrderData.createdAt) {
+      payload.createdAt = originalOrderData.createdAt;
+    }
+
+    tx.set(orderDoc, payload, { merge: isEdit });
   });
 
   const effectiveOrderRef = existingOrderRef || orderRef;

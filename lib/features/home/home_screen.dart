@@ -369,13 +369,15 @@ class _HomeScreenState extends State<HomeScreen>
     return null;
   }
 
-  void _openProductSearch({String? query}) {
+  void _openProductSearch({String? query, bool autoFocus = false}) {
     final trimmed = query?.trim() ?? '';
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            ProductListScreen(initialQuery: trimmed.isEmpty ? null : trimmed),
+        builder: (_) => ProductListScreen(
+          initialQuery: trimmed.isEmpty ? null : trimmed,
+          autoFocusSearch: autoFocus,
+        ),
       ),
     );
   }
@@ -1438,7 +1440,7 @@ class _HomeScreenState extends State<HomeScreen>
             Expanded(
               child: InkWell(
                 borderRadius: BorderRadius.circular(24),
-                onTap: () => _openProductSearch(),
+                onTap: () => _openProductSearch(autoFocus: true),
                 child: const Row(
                   children: [
                     Padding(
@@ -1830,7 +1832,7 @@ class _HomeScreenState extends State<HomeScreen>
                   Expanded(
                     child: InkWell(
                       borderRadius: BorderRadius.circular(24),
-                      onTap: () => _openProductSearch(),
+                      onTap: () => _openProductSearch(autoFocus: true),
                       child: const Row(
                         children: [
                           Padding(
